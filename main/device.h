@@ -54,11 +54,11 @@ extern uint32_t eos_drivers_count;
     if (eos_drivers_count >= EOS_MAX_DRIVERS) {                                \
       abort();                                                                 \
     }                                                                          \
-    eos_driver_t drv = {.init = SCOPE##_##NAME##_init,                         \
-                        .read = SCOPE##_##NAME##_read,                         \
-                        .write = SCOPE##_##NAME##_write,                       \
-                        .ioctl = SCOPE##_##NAME##_ioctl,                       \
-                        .shutdown = SCOPE##_##NAME##_shutdown};                \
+    eos_driver_t drv = {.init = driver_##SCOPE##_##NAME##_init,                \
+                        .read = driver_##SCOPE##_##NAME##_read,                \
+                        .write = driver_##SCOPE##_##NAME##_write,              \
+                        .ioctl = driver_##SCOPE##_##NAME##_ioctl,              \
+                        .shutdown = driver_##SCOPE##_##NAME##_shutdown};       \
     eos_drivers[eos_drivers_count] = drv;                                      \
     eos_drivers_count++;                                                       \
   }
