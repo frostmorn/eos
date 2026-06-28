@@ -2,21 +2,15 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
-
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdarg.h>
-
+#include "includes.h"
 #include "strlimits.h"
-
-
-typedef struct eos_dev_t eos_dev_t;
-typedef struct eos_dev_driver_t eos_dev_driver_t;
 
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
 ///////////////////////////////////////////////////////
-struct eos_dev_driver_t{
+typedef struct eos_dev_t eos_dev_t;
+typedef struct eos_driver_t eos_driver_t;
+struct eos_driver_t{
  // Initializes device
  int (*init) (eos_dev_t *dev);
  // Basic IO operations:
@@ -43,7 +37,7 @@ struct eos_dev_t{
   // Size of device data in bytes
   uint32_t size;
   // Pointer to driver working with this device
-  eos_dev_driver_t *driver;
+  eos_driver_t *driver;
 };
 //============================================(^_^)==\~
 
@@ -55,3 +49,4 @@ struct eos_dev_t{
 #define EOS_DEV_TYPE_BUTTON    5
 #define EOS_DEV_TYPE_SENSOR    6  
 
+eos_driver_t eos_drivers[EOS_DRIVER_COUNT];
