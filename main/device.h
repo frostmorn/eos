@@ -2,36 +2,38 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
+
 #include "includes.h"
-#include "strlimits.h"
 
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
 ///////////////////////////////////////////////////////
 typedef struct eos_dev_t eos_dev_t;
 typedef struct eos_driver_t eos_driver_t;
-struct eos_driver_t{
- // Initializes device
- int (*init) (eos_dev_t *dev);
- // Basic IO operations:
- int (*read)(eos_dev_t *dev, void *buf, size_t len);
- int (*write)(eos_dev_t *dev, void *buf, size_t len);
- // Specific device options whose can't be represented 
- // by basic IO
- int (*ioctl)(eos_dev_t *dev, int cmd, va_list args);
- // Deinitializes device
- void (*shutdown)(eos_dev_t *dev);
+
+struct eos_driver_t {
+  // Initializes device
+  int (*init)(eos_dev_t *dev);
+  // Basic IO operations:
+  int (*read)(eos_dev_t *dev, void *buf, size_t len);
+  int (*write)(eos_dev_t *dev, void *buf, size_t len);
+  // Specific device options whose can't be represented
+  // by basic IO
+  int (*ioctl)(eos_dev_t *dev, int cmd, va_list args);
+  // Deinitializes device
+  void (*shutdown)(eos_dev_t *dev);
 };
+
 //============================================(^_^)==\~
 
 ///////////////////////////////////////////////////////
 // Structure representing device in EOS dev list
 ///////////////////////////////////////////////////////
-struct eos_dev_t{
+struct eos_dev_t {
   // Device name for representation on a filesystem
   char name[EOS_SMALL_STR_LEN];
   // EOS_DEV_TYPE_
-  uint8_t type; 
+  uint8_t type;
   // Unique identifier in a system
   uint32_t id;
   // Size of device data in bytes
@@ -41,12 +43,22 @@ struct eos_dev_t{
 };
 //============================================(^_^)==\~
 
-#define EOS_DEV_TYPE_ROOT      0
-#define EOS_DEV_TYPE_CPU       1
-#define EOS_DEV_TYPE_MEMORY    2
-#define EOS_DEV_TYPE_STORAGE   3
-#define EOS_DEV_TYPE_DISPLAY   4
-#define EOS_DEV_TYPE_BUTTON    5
-#define EOS_DEV_TYPE_SENSOR    6  
+eos_driver_t eos_drivers[EOS_MAX_DRIVERS];
 
-eos_driver_t eos_drivers[EOS_DRIVER_COUNT];
+extern uint32_t eos_drivers_count;
+
+// Driver registration macro
+#define EOS_DRIVER_REG(SCOPE, NAME)                                            \
+  static void __attribute__((constructor(EOS_INIT_DRIVERS_PRIO)))              \
+  eos_driver_register_##SCOPE##_##NAME(void) {                                 \
+    if (eos_drivers_count >= EOS_MAX_DRIVERS) {                                \
+      abort();                                                                 \
+    }                                                                          \
+    eos_driver_t drv = {.init = SCOPE##_##NAME##_init,                         \
+                        .read = SCOPE##_##NAME##_read,                         \
+                        .write = SCOPE##_##NAME##_write,                       \
+                        .ioctl = SCOPE##_##NAME##_ioctl,                       \
+                        .shutdown = SCOPE##_##NAME##_shutdown};                \
+    eos_drivers[eos_drivers_count] = drv;                                      \
+    eos_drivers_count++;                                                       \
+  }
