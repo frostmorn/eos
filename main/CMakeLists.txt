@@ -1,2 +1,6 @@
-idf_component_register(SRCS "eos.c"
-                    INCLUDE_DIRS ".")
+file(GLOB_RECURSE EOS_SRCS "*.c")
+
+idf_component_register(
+    SRCS ${EOS_SRCS}
+    INCLUDE_DIRS "."
+)
