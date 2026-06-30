@@ -12,6 +12,6 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {}
 
 void driver_storage_sd_shutdown(eos_dev_t *dev) {}
 
-EOS_DRIVER_REG(storage, sd);
+EOS_DRIVER_REG(storage, sd, EOS_INIT_DRIVERS_PRIO);
 
 #endif
