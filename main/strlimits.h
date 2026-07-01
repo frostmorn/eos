@@ -1,4 +1,9 @@
 #pragma once
+///////////////////////////////////////////////////////
+// EOS Project header file
+///////////////////////////////////////////////////////
+
+// Imposes global memory limits to cstring for all EOS system
 
 #define EOS_SMALL_STR_LEN 32
 #define EOS_MID_STR_LEN 256
