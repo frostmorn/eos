@@ -19,11 +19,12 @@ struct eos_dev_t {
   void *config;
   // Device state maintained by driver
   void *state;
-
   // Device tree pointers
   eos_dev_t *parent;
   eos_dev_t *child;
   eos_dev_t *next;
+  // Indicates if device slot is in use
+  bool inUse;
 };
 
 // Initializes device tree
