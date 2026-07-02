@@ -4,6 +4,7 @@
 // scripts
 
 #define EOS_MAX_DRIVERS 16
+#define EOS_MAX_DEVICES 32
 
 #define DRIVER_STORAGE_SD_ENABLED
 #define DRIVER_BUS_SPI_ENABLED
