@@ -1,8 +1,8 @@
 #include "includes.h"
 #ifdef DRIVER_STORAGE_SD_ENABLED
 
-#include "driver.h"
-int driver_storage_sd_init() { return 0; }
+#include "sys/driver.h"
+int driver_storage_sd_init(eos_dev_t *dev) { return 0; }
 
 int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) { return 0;}
 

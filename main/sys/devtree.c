@@ -1,5 +1,5 @@
 #include "devtree.h"
-#include "driver.h"
+#include "sys/driver.h"
 
 #define EOS_ROOT_DEV eos_devices[0]
 

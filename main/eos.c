@@ -1,5 +1,5 @@
 #include <stdio.h>
-#include "devtree.h"
+#include "sys/devtree.h"
 
 
 void app_main(void)
