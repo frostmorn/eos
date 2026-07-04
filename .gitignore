@@ -1,1 +1,4 @@
 build/*
+trace/*
+.vscode/*
+.clangd
