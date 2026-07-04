@@ -19,6 +19,9 @@
 // Limitations for C-strings across all EOS
 #include "misc/strlimits.h"
 
+// Popular macroses used across EOS
+#include "misc/fancymacro.h"
+
 // Default libraries
 #include <stdarg.h>
 #include <stdbool.h>
@@ -26,3 +29,4 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
+#include <string.h>

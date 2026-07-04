@@ -27,6 +27,8 @@ struct eos_dev_t {
   bool inUse;
 };
 
+extern eos_dev_t eos_devices[EOS_MAX_DEVICES];
+
 // Initializes device tree
 void eos_devtree_init();
 
