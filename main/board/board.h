@@ -2,4 +2,4 @@
 #include "sys/devtree.h"
 
 // Per board specific initialization
-extern void board_init();
+extern void eos_board_init();
