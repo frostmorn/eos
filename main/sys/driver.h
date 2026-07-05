@@ -48,3 +48,6 @@ extern uint32_t eos_drivers_count;
         driver_##SCOPE##_##NAME##_shutdown;                                    \
     eos_drivers_count++;                                                       \
   }
+
+
+extern eos_driver_t *eos_driver_find(char *scope, char *name);

@@ -1,3 +1,4 @@
+#include "board/board.h"
 #include "sys/devtree.h"
 #include <stdio.h>
 
