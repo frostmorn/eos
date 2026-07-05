@@ -4,6 +4,7 @@
 ///////////////////////////////////////////////////////
 
 #include "includes.h"
+#include "misc/types.h"
 
 ///////////////////////////////////////////////////////
 // Structure representing device in EOS dev tree
@@ -14,15 +15,20 @@ typedef struct eos_dev_t eos_dev_t;
 struct eos_dev_t {
   // Driver to be used to control device
   eos_driver_t *driver;
-  // Static device config, further reconfiguring, should be
-  // maintained through ioctl provided routines
-  void *config;
+  
+  // Device pinmap
+  eos_pin_t *pins; // {"miso", 13}, {"mosi", 11}, {NULL, 0}
+  
+  // Device config
+  eos_cfg_t *cfg; // {"speed", "80000000"}, {NULL, NULL}
   // Device state maintained by driver
   void *state;
+
   // Device tree pointers
   eos_dev_t *parent;
   eos_dev_t *child;
   eos_dev_t *next;
+
   // Indicates if device slot is in use
   bool in_use;
 };
