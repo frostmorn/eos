@@ -24,7 +24,7 @@ struct eos_dev_t {
   eos_dev_t *child;
   eos_dev_t *next;
   // Indicates if device slot is in use
-  bool inUse;
+  bool in_use;
 };
 
 extern eos_dev_t eos_devices[EOS_MAX_DEVICES];

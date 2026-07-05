@@ -11,7 +11,7 @@ void eos_devtree_init() {
 
   // Setup root device
   EOS_ROOT_DEV.driver = &eos_drivers[0];
-  EOS_ROOT_DEV.inUse = true;
+  EOS_ROOT_DEV.in_use = true;
 }
 
 eos_dev_t *eos_devtree_root() { return &EOS_ROOT_DEV; }
@@ -19,10 +19,10 @@ eos_dev_t *eos_devtree_root() { return &EOS_ROOT_DEV; }
 eos_dev_t *eos_dev_alloc() {
   // Find empty device slot
   for (size_t i = 1; i < EOS_MAX_DEVICES; i++)
-    if (eos_devices[i].inUse == false) {
+    if (eos_devices[i].in_use == false) {
       // Prepare slot for usage
       bzero(&eos_devices[i], sizeof(eos_dev_t));
-      eos_devices[i].inUse = true;
+      eos_devices[i].in_use = true;
 
       return &eos_devices[i];
     }
@@ -35,9 +35,9 @@ eos_dev_t *eos_dev_alloc() {
 // Attaches device to EOS device tree
 eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   // Args check
-  if (dev == NULL || (!dev->inUse))
+  if (dev == NULL || (!dev->in_use))
     return EOS_DEVICE_INVALID;
-  if (dev_bus == NULL || (!dev_bus->inUse))
+  if (dev_bus == NULL || (!dev_bus->in_use))
     return EOS_DEVICE_BUS_INVALID;
   if (dev == dev_bus)
     return EOS_DEVICE_INVALID;
@@ -69,7 +69,7 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
 
 // Detaches device and all it's childs from EOS device tree
 eos_error_t eos_dev_detach(eos_dev_t *dev) {
-  if (dev == NULL || (!dev->inUse))
+  if (dev == NULL || (!dev->in_use))
     return EOS_DEVICE_INVALID;
 
   // Already detached (or root node)
