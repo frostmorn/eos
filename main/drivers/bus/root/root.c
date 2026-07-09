@@ -14,7 +14,7 @@ int driver_bus_root_write(eos_dev_t *dev_bus, void *buf, size_t len) {
   return 0;
 }
 
-int driver_bus_root_ioctl(eos_dev_t *dev_bus, int cmd, va_list args) {
+int driver_bus_root_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   switch (cmd) {
     // ROOT BUS always accepts all ATTACH/DETACH requests
   case EOS_BUS_IOCTL_KID_ATTACH: {

@@ -20,7 +20,7 @@ struct eos_driver_t {
   int (*write)(eos_dev_t *dev, void *buf, size_t len);
   // Specific driver options whose can't be represented
   // by basic IO
-  int (*ioctl)(eos_dev_t *dev, int cmd, va_list args);
+  int (*ioctl)(eos_dev_t *dev, int cmd, ...);
   // Deinitializes device
   void (*shutdown)(eos_dev_t *dev);
 };
