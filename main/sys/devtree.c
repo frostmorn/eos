@@ -1,4 +1,5 @@
 #include "devtree.h"
+#include "drivers/bus/bus.h"
 #include "sys/driver.h"
 
 #define EOS_ROOT_DEV eos_devices[0]
@@ -50,6 +51,14 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   dev->parent = dev_bus;
   dev->next = NULL;
 
+  // Inform bus through ioctl or other way about new device
+  bool attachmentAllowed =
+      dev_bus->driver->ioctl(dev_bus, EOS_BUS_IOCTL_KID_ATTACH, dev);
+
+  // Skip if bus not allowed attachment
+  if (!attachmentAllowed)
+    return EOS_DEVICE_ATTACH_DECLINED_BY_BUS;
+
   // Seek for a correct place
   if (dev_bus->child == NULL) {
     dev_bus->child = dev;
@@ -61,8 +70,6 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
 
     cur->next = dev;
   }
-
-  // TODO: inform bus through ioctl or other way about new device
 
   return EOS_NO_ERROR;
 }
