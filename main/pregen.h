@@ -12,8 +12,9 @@
 #define EOS_MAX_DEVICES 32
 
 // Enabled drivers:
-#define DRIVER_STORAGE_SD_ENABLED
-#define DRIVER_BUS_SPI_ENABLED
+#define EOS_DRIVER_STORAGE_SD_ENABLED
+#define EOS_DRIVER_BUS_SPI_ENABLED
+#define EOS_DRIVER_BUS_GPIO_ENABLED
 
 // Pin configuration:
 
