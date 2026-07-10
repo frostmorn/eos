@@ -47,10 +47,6 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   if (dev->parent != NULL)
     return EOS_DEVICE_ALREADY_ATTACHED;
 
-  // Preparing device for an attachment
-  dev->parent = dev_bus;
-  dev->next = NULL;
-
   // Inform bus through ioctl or other way about new device
   bool attachmentAllowed =
       dev_bus->driver->ioctl(dev_bus, EOS_BUS_IOCTL_KID_ATTACH, dev);
@@ -58,6 +54,10 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   // Skip if bus not allowed attachment
   if (!attachmentAllowed)
     return EOS_DEVICE_ATTACH_DECLINED_BY_BUS;
+
+  // Preparing device for an attachment
+  dev->parent = dev_bus;
+  dev->next = NULL;
 
   // Seek for a correct place
   if (dev_bus->child == NULL) {
