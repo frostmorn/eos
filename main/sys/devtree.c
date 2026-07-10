@@ -86,6 +86,13 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   if (dev->parent == NULL)
     return EOS_NO_ERROR;
 
+  // Ask bus permission to detach device
+  bool detachAllowed =
+      dev->parent->driver->ioctl(dev->parent, EOS_BUS_IOCTL_KID_DETACH, dev);
+
+  if (!detachAllowed)
+    return EOS_DEVICE_DETACH_DECLINED_BY_BUS;
+
   // Recursively detach all children first
   eos_dev_t *child = dev->child;
   while (child != NULL) {
@@ -93,13 +100,6 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
     eos_dev_detach(child);
     child = next;
   }
-
-  // Ask bus permission to detach device
-  bool detachAllowed =
-      dev->parent->driver->ioctl(dev->parent, EOS_BUS_IOCTL_KID_DETACH, dev);
-
-  if (!detachAllowed)
-    return EOS_DEVICE_DETACH_DECLINED_BY_BUS;
 
   // Shutdown device driver
   dev->driver->shutdown(dev);
