@@ -36,6 +36,8 @@ extern uint32_t eos_drivers_count;
   void __attribute__((constructor(INIT_ORDER)))                                \
   eos_driver_register_##SCOPE##_##NAME(void) {                                 \
     if (eos_drivers_count >= EOS_MAX_DRIVERS) {                                \
+      EOS_LOGE("Not enough slots to init driver for %s/%s\n", EOS_STR(SCOPE),  \
+               EOS_STR(NAME));                                                 \
       abort();                                                                 \
     }                                                                          \
     strcpy(eos_drivers[eos_drivers_count].name, EOS_STR(NAME));                \
@@ -48,6 +50,5 @@ extern uint32_t eos_drivers_count;
         driver_##SCOPE##_##NAME##_shutdown;                                    \
     eos_drivers_count++;                                                       \
   }
-
 
 extern eos_driver_t *eos_driver_find(char *scope, char *name);
