@@ -71,6 +71,9 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
     cur->next = dev;
   }
 
+  // Launch driver
+  dev->driver->init(dev);
+
   return EOS_NO_ERROR;
 }
 
