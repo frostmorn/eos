@@ -22,12 +22,12 @@ New scope = write that agreement down first, then write the driver.
 Every driver file wraps itself in an `#ifdef`:
 
 ```c
-#ifdef DRIVER_STORAGE_SD_ENABLED
+#ifdef EOS_DRIVER_STORAGE_SD_ENABLED
 ...
 #endif
 ```
 
-The flag name is always `DRIVER_<SCOPE>_<NAME>_ENABLED`, uppercased. This
+The flag name is always `EOS_DRIVER_<SCOPE>_<NAME>_ENABLED`, uppercased. This
 is how a board/config decides which drivers actually end up in the
 binary — disabled drivers cost nothing, not even dead code, since they're
 never compiled.

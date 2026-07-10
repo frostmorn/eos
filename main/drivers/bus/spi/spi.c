@@ -1,5 +1,5 @@
 #include "includes.h"
-#ifdef DRIVER_BUS_SPI_ENABLED
+#ifdef EOS_DRIVER_BUS_SPI_ENABLED
 
 #include "drivers/bus/bus.h"
 #include "sys/driver.h"
