@@ -1,6 +1,6 @@
 #include "pregen.h"
 #ifdef EOS_TARGET_LILKAV2
-#include "board.h"
+#include "board/board.h"
 
 void eos_board_init() {
   // ===================== SPI bus =====================
