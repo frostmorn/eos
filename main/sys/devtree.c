@@ -99,7 +99,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
       dev->parent->driver->ioctl(dev->parent, EOS_BUS_IOCTL_KID_DETACH, dev);
 
   if (!detachAllowed)
-    return;
+    return EOS_DEVICE_DETACH_DECLINED_BY_BUS;
 
   // Shutdown device driver
   dev->driver->shutdown(dev);
