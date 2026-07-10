@@ -6,6 +6,8 @@
 // This file is generated per target chip + board.
 // Target: ESP32-S3(LILKAV2)
 
+#include <soc/soc_caps.h>
+
 #define EOS_TARGET_LILKAV2
 
 #define EOS_MAX_DRIVERS 16
@@ -16,12 +18,14 @@
 #define EOS_DRIVER_BUS_SPI_ENABLED
 #define EOS_DRIVER_BUS_GPIO_ENABLED
 
+// CPU Core count
+#define EOS_CPU_COUNT SOC_CPU_CORES_NUM
 // Pin configuration:
 
 // ESP32-S3 has GPIO0..GPIO48 in numbering,
 // but GPIO22-GPIO25 do not exist on the chip.
 // Using 49 as count so pin number == array index directly.
-#define EOS_PIN_COUNT 49
+#define EOS_PIN_COUNT SOC_GPIO_PIN_COUNT
 
 // Reserved pins — claiming these will be rejected by eos_pin_claim().
 // Covers:
@@ -34,3 +38,18 @@
 #define EOS_PIN_RESERVED                                                       \
   {0,  3,  19, 20, 22, 23, 24, 25, 26, 27, 28, 29,                             \
    30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45, 46}
+
+// I2C
+#define EOS_I2C_COUNT SOC_I2C_NUM
+#define EOS_I2C_RESERVED                                                       \
+  {                                                                            \
+  }
+
+// SPI:
+// First SPI interface is reserved for an external memory usage
+#define EOS_SPI_COUNT SOC_SPI_PERIPH_NUM
+#define EOS_SPI_RESERVED {0}
+
+// UART:
+#define EOS_UART_COUNT SOC_UART_NUM
+#define EOS_UART_RESERVED {0}
