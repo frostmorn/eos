@@ -11,7 +11,7 @@ void eos_devtree_init() {
   bzero(eos_devices, sizeof(eos_devices));
 
   // Setup root device
-  EOS_ROOT_DEV.driver = &eos_drivers[0];
+  EOS_ROOT_DEV.driver = eos_driver_find("bus", "root");
   EOS_ROOT_DEV.in_use = true;
 }
 
