@@ -16,9 +16,9 @@ Only bus-scoped devices can have children. `eos_dev_attach` checks
 Before linking a child into the tree, EOS calls the parent's `ioctl`
 with `EOS_BUS_IOCTL_KID_ATTACH` (see `bus.h`). The bus can decline —
 e.g. GPIO checking whether a pin is already claimed — by returning
-anything other than `EOS_NO_ERROR`; the attach aborts and the child
+anything other than `EOS_ERR_NO_ERROR`; the attach aborts and the child
 never enters the tree. A bus with nothing to check (root) must still
-explicitly return `EOS_NO_ERROR`, not silently ignore the command.
+explicitly return `EOS_ERR_NO_ERROR`, not silently ignore the command.
 
 On success, the bus may assign the child an index via the ioctl's
 out-param — this becomes `child->index`, stable for the child's
@@ -34,7 +34,7 @@ concurrently (SPI is the canonical case) must implement
 `EOS_BUS_IOCTL_LOCK`/`UNLOCK`. Drivers for devices on such a bus must
 lock before `read`/`write` and unlock after. Buses without this
 requirement (GPIO, root) still implement both as no-ops returning
-`EOS_NO_ERROR`, so device drivers can call lock/unlock unconditionally
+`EOS_ERR_NO_ERROR`, so device drivers can call lock/unlock unconditionally
 without needing to know which kind of bus they're on.
 
 ## Reserved ioctl range
