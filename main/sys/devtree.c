@@ -29,7 +29,7 @@ eos_dev_t *eos_dev_alloc() {
     }
 
   // No slot found
-  eos_errno = EOS_DEVICE_COUNT_QUOTA_EXCEED;
+  eos_errno = EOS_ERR_DEVICE_COUNT_QUOTA_EXCEED;
   return NULL;
 }
 
@@ -37,15 +37,15 @@ eos_dev_t *eos_dev_alloc() {
 eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   // Args check
   if (dev == NULL || (!dev->in_use))
-    return EOS_DEVICE_INVALID;
+    return EOS_ERR_DEVICE_INVALID;
   if (dev_bus == NULL || (!dev_bus->in_use))
-    return EOS_DEVICE_BUS_INVALID;
+    return EOS_ERR_DEVICE_BUS_INVALID;
   if (dev == dev_bus)
-    return EOS_DEVICE_INVALID;
+    return EOS_ERR_DEVICE_INVALID;
 
   // Check if device already attached
   if (dev->parent != NULL)
-    return EOS_DEVICE_ALREADY_ATTACHED;
+    return EOS_ERR_DEVICE_ALREADY_ATTACHED;
 
   // Inform bus through ioctl or other way about new device
   bool attachmentAllowed =
@@ -53,7 +53,7 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
 
   // Skip if bus not allowed attachment
   if (!attachmentAllowed)
-    return EOS_DEVICE_ATTACH_DECLINED_BY_BUS;
+    return EOS_ERR_DEVICE_ATTACH_DECLINED_BY_BUS;
 
   // Preparing device for an attachment
   dev->parent = dev_bus;
@@ -74,24 +74,24 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   // Launch driver
   dev->driver->init(dev);
 
-  return EOS_NO_ERROR;
+  return EOS_ERR_NO_ERROR;
 }
 
 // Detaches device and all it's childs from EOS device tree
 eos_error_t eos_dev_detach(eos_dev_t *dev) {
   if (dev == NULL || (!dev->in_use))
-    return EOS_DEVICE_INVALID;
+    return EOS_ERR_DEVICE_INVALID;
 
   // Already detached (or root node)
   if (dev->parent == NULL)
-    return EOS_NO_ERROR;
+    return EOS_ERR_NO_ERROR;
 
   // Ask bus permission to detach device
   bool detachAllowed =
       dev->parent->driver->ioctl(dev->parent, EOS_BUS_IOCTL_KID_DETACH, dev);
 
   if (!detachAllowed)
-    return EOS_DEVICE_DETACH_DECLINED_BY_BUS;
+    return EOS_ERR_DEVICE_DETACH_DECLINED_BY_BUS;
 
   // Recursively detach all children first
   eos_dev_t *child = dev->child;
@@ -118,5 +118,5 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   // Cleanup
   bzero(dev, sizeof(eos_dev_t));
 
-  return EOS_NO_ERROR;
+  return EOS_ERR_NO_ERROR;
 }
