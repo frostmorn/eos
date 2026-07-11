@@ -22,18 +22,10 @@ static const uint32_t eos_cap_reserved[][16] = {
 };
 
 static const uint32_t eos_cap_counts[] = {
-#ifdef EOS_GPIO_RESERVED
     [EOS_CAPS_GPIO] = EOS_GPIO_COUNT,
-#endif
-#ifdef EOS_I2C_RESERVED
     [EOS_CAPS_I2C] = EOS_I2C_COUNT,
-#endif
-#ifdef EOS_SPI_RESERVED
     [EOS_CAPS_SPI] = EOS_SPI_COUNT,
-#endif
-#ifdef EOS_UART_RESERVED
     [EOS_CAPS_UART] = EOS_UART_COUNT,
-#endif
 };
 
 bool eos_cap_alloc(eos_cap_t cap, uint32_t cap_no, eos_dev_t *owner_dev) {
