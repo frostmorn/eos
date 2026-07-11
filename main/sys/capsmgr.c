@@ -31,7 +31,7 @@ static bool eos_cap_claim_slot(eos_cap_t cap, int32_t cap_no,
 #define EOS_CAP_ALLOC_FN(CAP_TYPE, CAP_ENUM, COUNT, RESERVED)                  \
   static const int32_t eos_cap_##CAP_TYPE##_reserved[] = RESERVED;             \
   static bool eos_cap_alloc_##CAP_TYPE(int32_t cap_no, eos_dev_t *owner_dev) { \
-    if (cap_no >= COUNT) {                                                     \
+    if ((cap_no < 0) || (cap_no >= COUNT)) {                                   \
       eos_errno = EOS_ERR_CAP_NO_INVALID;                                      \
       return false;                                                            \
     }                                                                          \
@@ -77,7 +77,7 @@ bool eos_cap_alloc(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev) {
     eos_errno = EOS_ERR_CAP_COUNT_QUOTA_EXCEED;
     return false;
   }
-  if (cap_no >= eos_cap_counts[cap]) {
+  if ((cap_no < 0) || (cap_no >= eos_cap_counts[cap])) {
     eos_errno = EOS_ERR_CAP_NO_INVALID;
     return false;
   }
