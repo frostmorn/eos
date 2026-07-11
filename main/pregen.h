@@ -43,9 +43,9 @@
 
 // I2C
 #define EOS_I2C_COUNT SOC_I2C_NUM
-#define EOS_I2C_RESERVED                                                       \
-  {                                                                            \
-  }
+
+// If nothing reserved, just not define it to skip checks
+// #define EOS_I2C_RESERVED                                                  {}
 
 // SPI:
 // First SPI interface is reserved for an external memory usage
