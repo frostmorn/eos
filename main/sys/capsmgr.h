@@ -10,7 +10,8 @@ typedef enum {
   EOS_CAPS_I2C,
   EOS_CAPS_SPI,
   EOS_CAPS_UART,
-  EOS_CAPS_PWM // LEDC in esp idf
+  EOS_CAPS_PWM, // LEDC in esp idf
+  EOS_CAPS_COUNT
 } eos_cap_t;
 
 typedef struct {

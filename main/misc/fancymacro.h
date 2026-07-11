@@ -4,3 +4,5 @@
 #define EOS_STR(x) EOS_STR_HELPER(x)
 
 #define EOS_LOGE(format, ...) ESP_LOGE(__FILE__, format, ##__VA_ARGS__)
+
+#define EOS_ARR_COUNT(ARR) (sizeof(ARR) / sizeof(ARR[0]))

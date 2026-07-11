@@ -27,7 +27,7 @@
 // ESP32-S3 has GPIO0..GPIO48 in numbering,
 // but GPIO22-GPIO25 do not exist on the chip.
 // Using 49 as count so pin number == array index directly.
-#define EOS_PIN_COUNT SOC_GPIO_PIN_COUNT
+#define EOS_GPIO_COUNT SOC_GPIO_PIN_COUNT
 
 // Reserved pins — claiming these will be rejected by eos_pin_claim().
 // Covers:
@@ -37,7 +37,7 @@
 //   33..37        — Octal PSRAM (reserved if using R8 or higher variant)
 //   43, 44        — UART0 TX/RX (used by ROM/bootloader console)
 //   22, 23, 24, 25 — do not exist on ESP32-S3 silicon
-#define EOS_PIN_RESERVED                                                       \
+#define EOS_GPIO_RESERVED                                                      \
   {0,  3,  19, 20, 22, 23, 24, 25, 26, 27, 28, 29,                             \
    30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45, 46}
 
