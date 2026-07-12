@@ -3,8 +3,11 @@
 #define EOS_STR_HELPER(x) #x
 #define EOS_STR(x) EOS_STR_HELPER(x)
 
-#define EOS_LOGE(format, ...) ESP_LOGE(__FILE__, format, ##__VA_ARGS__)
-#define EOS_LOGW(format, ...) ESP_LOGW(__FILE__, format, ##__VA_ARGS__)
-#define EOS_LOGI(format, ...) ESP_LOGI(__FILE__, format, ##__VA_ARGS__)
+#define EOS_LOGE(format, ...)                                                  \
+  ESP_LOGE(__FILE__ ":" EOS_STR(__LINE__), format, ##__VA_ARGS__)
+#define EOS_LOGW(format, ...)                                                  \
+  ESP_LOGW(__FILE__ ":" EOS_STR(__LINE__), format, ##__VA_ARGS__)
+#define EOS_LOGI(format, ...)                                                  \
+  ESP_LOGI(__FILE__ ":" EOS_STR(__LINE__), format, ##__VA_ARGS__)
 
 #define EOS_ARR_COUNT(ARR) (sizeof(ARR) / sizeof(ARR[0]))
