@@ -9,7 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "drivers/bus/bus.h"
+#include "drivers/display/display.h"
 #include "sys/capsmgr.h"
 #include "sys/driver.h"
 
@@ -256,8 +256,10 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, ...) {
   int ret = 0;
 
   switch (cmd) {
-  case EOS_BUS_IOCTL_KID_ATTACH:
-  case EOS_BUS_IOCTL_KID_DETACH:
+  case EOS_DISPLAY_IOCTL_GET_WIDTH:
+    return ((st7789_state_t *)dev->state)->width;
+  case EOS_DISPLAY_IOCTL_GET_HEIGHT:
+    return ((st7789_state_t *)dev->state)->height;
     ret = false; // display is not a bus
     break;
   }
