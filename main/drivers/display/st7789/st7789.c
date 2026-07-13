@@ -13,54 +13,18 @@
 #include "sys/capsmgr.h"
 #include "sys/driver.h"
 
-typedef struct {
-  bool swap_xy;
-  bool mirror_x;
-  bool mirror_y;
-  bool swap_dims;
-  int16_t x_gap;
-  int16_t y_gap;
-} st7789_rotation_t;
+// Actual Display dimensions maxima defined by st7789 datasheets
+// We need to know those values to deduce an x/y shifts to make it actually work
+#define ST7789_GRAM_WIDTH 240
+#define ST7789_GRAM_HEIGHT 320
 
-// Rotation 1 (90° CW)
-
-static const st7789_rotation_t st7789_rotations[] = {
-    {
-        .swap_xy = true,
-        .mirror_x = true,
-        .mirror_y = false,
-        .swap_dims = true,
-        .x_gap = 0,
-        .y_gap = 20,
-    },
-
-    // Rotation 2 (180°)
-    {
-        .swap_xy = false,
-        .mirror_x = true,
-        .mirror_y = true,
-        .swap_dims = false,
-        .x_gap = 20,
-        .y_gap = 0,
-    },
-
-    // Rotation 3 (270° CW)
-    {
-        .swap_xy = true,
-        .mirror_x = false,
-        .mirror_y = true,
-        .swap_dims = true,
-        .x_gap = 20,
-        .y_gap = 0,
-    },
-};
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
   esp_lcd_panel_io_handle_t io;
   esp_lcd_panel_handle_t panel;
-  int32_t width;  // effective width after rotation
-  int32_t height; // effective height after rotation
+  int32_t width;  // width after rotation
+  int32_t height; // height after rotation
   uint8_t rotation;
 } st7789_state_t;
 
@@ -146,25 +110,44 @@ static void st7789_test2(eos_dev_t *dev) {
   free(buf);
 }
 
-// ── Rotation ──────────────────────────────────────────────────
-
-static void st7789_apply_rotation(st7789_state_t *state, int32_t native_w,
-                                  int32_t native_h, uint8_t rotation) {
-  const st7789_rotation_t *r = &st7789_rotations[rotation & 3];
-
-  state->rotation = rotation & 3;
-
-  if (r->swap_dims) {
-    state->width = native_h;
-    state->height = native_w;
-  } else {
+// Placement options
+static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
+                                   int32_t native_h, int32_t native_gap_x,
+                                   int32_t native_gap_y, uint8_t rotation) {
+  switch (rotation & 3) {
+  case 0:
+  default:
+    esp_lcd_panel_swap_xy(state->panel, false);
+    esp_lcd_panel_mirror(state->panel, false, false);
+    esp_lcd_panel_set_gap(state->panel, native_gap_x, native_gap_y);
     state->width = native_w;
     state->height = native_h;
-  }
+    break;
 
-  esp_lcd_panel_set_gap(state->panel, r->x_gap, r->y_gap);
-  esp_lcd_panel_swap_xy(state->panel, r->swap_xy);
-  esp_lcd_panel_mirror(state->panel, r->mirror_x, r->mirror_y);
+  case 1:
+    esp_lcd_panel_swap_xy(state->panel, true);
+    esp_lcd_panel_mirror(state->panel, true, false);
+    esp_lcd_panel_set_gap(state->panel, native_gap_y, native_gap_x);
+    state->width = native_h;
+    state->height = native_w;
+    break;
+
+  case 2:
+    esp_lcd_panel_swap_xy(state->panel, false);
+    esp_lcd_panel_mirror(state->panel, true, true);
+    esp_lcd_panel_set_gap(state->panel, native_gap_x, native_gap_y);
+    state->width = native_w;
+    state->height = native_h;
+    break;
+
+  case 3:
+    esp_lcd_panel_swap_xy(state->panel, true);
+    esp_lcd_panel_mirror(state->panel, false, true);
+    esp_lcd_panel_set_gap(state->panel, native_gap_y, native_gap_x);
+    state->width = native_h;
+    state->height = native_w;
+    break;
+  }
 }
 // ── Driver functions ──────────────────────────────────────────
 
@@ -177,6 +160,11 @@ int driver_display_st7789_init(eos_dev_t *dev) {
   // Native dimensions from config (before rotation)
   int32_t native_w = eos_cfg_get_i(dev->cfg, "width", 240);
   int32_t native_h = eos_cfg_get_i(dev->cfg, "height", 280);
+  int32_t native_gap_x =
+      eos_cfg_get_i(dev->cfg, "gap_x", (ST7789_GRAM_WIDTH - native_w) / 2);
+  int32_t native_gap_y =
+      eos_cfg_get_i(dev->cfg, "gap_y", (ST7789_GRAM_HEIGHT - native_h) / 2);
+
   uint8_t rotation = eos_cfg_get_i(dev->cfg, "rotation", 0);
 
   int32_t cs_pin = eos_pin_get_no(dev->pins, "cs_ena_pretrans");
@@ -240,12 +228,13 @@ int driver_display_st7789_init(eos_dev_t *dev) {
   esp_lcd_panel_reset(state->panel);
   esp_lcd_panel_init(state->panel);
 
-  st7789_apply_rotation(state, native_w, native_h, rotation);
+  st7789_apply_placement(state, native_w, native_h, native_gap_x, native_gap_y,
+                         rotation);
 
   esp_lcd_panel_disp_on_off(state->panel, true);
 
   st7789_test(dev);
-  // st7789_test2(dev);
+  st7789_test2(dev);
   return 0;
 }
 
