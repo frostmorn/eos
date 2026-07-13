@@ -21,6 +21,9 @@
 #define EOS_DRIVER_BUS_GPIO_ENABLED
 #define EOS_DRIVER_DISPLAY_ST7789_ENABLED
 
+// Tests to be run:
+#define EOS_DRIVER_DISPLAY_ST7789_TEST
+
 // CPU Core count
 #define EOS_CPU_COUNT SOC_CPU_CORES_NUM
 // Pin configuration:

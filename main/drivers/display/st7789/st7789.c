@@ -29,7 +29,7 @@ typedef struct {
 } st7789_state_t;
 
 // ── Test ──────────────────────────────────────────────────────
-
+#ifdef EOS_DRIVER_DISPLAY_ST7789_TEST
 static void st7789_test(eos_dev_t *dev) {
   st7789_state_t *state = dev->state;
   int32_t w = state->width;
@@ -109,6 +109,7 @@ static void st7789_test2(eos_dev_t *dev) {
 
   free(buf);
 }
+#endif
 
 // Placement options
 static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
@@ -232,9 +233,10 @@ int driver_display_st7789_init(eos_dev_t *dev) {
                          rotation);
 
   esp_lcd_panel_disp_on_off(state->panel, true);
-
+#ifdef EOS_DRIVER_DISPLAY_ST7789_TEST
   st7789_test(dev);
   st7789_test2(dev);
+#endif
   return 0;
 }
 
