@@ -4,7 +4,7 @@
 
 #define EOS_ROOT_DEV eos_devices[0]
 
-eos_dev_t eos_devices[EOS_MAX_DEVICES];
+EXT_RAM_BSS_ATTR eos_dev_t eos_devices[EOS_MAX_DEVICES];
 
 void eos_devtree_init() {
   // Inital cleanup

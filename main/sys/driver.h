@@ -27,28 +27,28 @@ struct eos_driver_t {
 
 //============================================(^_^)==\~
 
-extern eos_driver_t eos_drivers[EOS_MAX_DRIVERS];
+extern eos_driver_t eos_driver_slots[EOS_MAX_DRIVERS];
 
-extern uint32_t eos_drivers_count;
+extern uint32_t eos_driver_slot_count;
 
 // Driver registration macro
 #define EOS_DRIVER_REG(SCOPE, NAME, INIT_ORDER)                                \
   void __attribute__((constructor(INIT_ORDER)))                                \
   eos_driver_register_##SCOPE##_##NAME(void) {                                 \
-    if (eos_drivers_count >= EOS_MAX_DRIVERS) {                                \
+    if (eos_driver_slot_count >= EOS_MAX_DRIVERS) {                                \
       EOS_LOGE("Not enough slots to init driver for %s/%s\n", EOS_STR(SCOPE),  \
                EOS_STR(NAME));                                                 \
       abort();                                                                 \
     }                                                                          \
-    strcpy(eos_drivers[eos_drivers_count].name, EOS_STR(NAME));                \
-    strcpy(eos_drivers[eos_drivers_count].scope, EOS_STR(SCOPE));              \
-    eos_drivers[eos_drivers_count].init = driver_##SCOPE##_##NAME##_init;      \
-    eos_drivers[eos_drivers_count].read = driver_##SCOPE##_##NAME##_read;      \
-    eos_drivers[eos_drivers_count].write = driver_##SCOPE##_##NAME##_write;    \
-    eos_drivers[eos_drivers_count].ioctl = driver_##SCOPE##_##NAME##_ioctl;    \
-    eos_drivers[eos_drivers_count].shutdown =                                  \
+    strcpy(eos_driver_slots[eos_driver_slot_count].name, EOS_STR(NAME));                \
+    strcpy(eos_driver_slots[eos_driver_slot_count].scope, EOS_STR(SCOPE));              \
+    eos_driver_slots[eos_driver_slot_count].init = driver_##SCOPE##_##NAME##_init;      \
+    eos_driver_slots[eos_driver_slot_count].read = driver_##SCOPE##_##NAME##_read;      \
+    eos_driver_slots[eos_driver_slot_count].write = driver_##SCOPE##_##NAME##_write;    \
+    eos_driver_slots[eos_driver_slot_count].ioctl = driver_##SCOPE##_##NAME##_ioctl;    \
+    eos_driver_slots[eos_driver_slot_count].shutdown =                                  \
         driver_##SCOPE##_##NAME##_shutdown;                                    \
-    eos_drivers_count++;                                                       \
+    eos_driver_slot_count++;                                                       \
   }
 
 extern eos_driver_t *eos_driver_find(char *scope, char *name);

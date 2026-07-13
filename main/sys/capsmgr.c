@@ -3,7 +3,7 @@
 #include "misc/fancymacro.h"
 #include "pregen.h"
 
-eos_cap_slot_t eos_cap_slots[EOS_MAX_CAPS];
+EXT_RAM_BSS_ATTR eos_cap_slot_t eos_cap_slots[EOS_MAX_CAPS];
 int32_t eos_cap_slot_count = 0;
 
 // ── Shared slot operations ─────────────────────────────────────
