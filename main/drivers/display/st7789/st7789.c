@@ -275,10 +275,10 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   if (!state)
     return;
 
-  int32_t en_pin = eos_pin_get_no(dev->pins, "en_io_num");
-  int32_t cs_pin = eos_pin_get_no(dev->pins, "cs_ena_pretrans");
-  int32_t dc_pin = eos_pin_get_no(dev->pins, "dc_io_num");
-  int32_t rst_pin = eos_pin_get_no(dev->pins, "rst_io_num");
+  int32_t en_pin = eos_pin_get_no(dev->pins, "en");
+  int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
+  int32_t dc_pin = eos_pin_get_no(dev->pins, "dc");
+  int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
   if (en_pin >= 0) {
     gpio_set_level(en_pin, 0);
