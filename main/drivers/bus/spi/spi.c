@@ -2,19 +2,151 @@
 #ifdef EOS_DRIVER_BUS_SPI_ENABLED
 
 #include "drivers/bus/bus.h"
+#include "sys/capsmgr.h"
 #include "sys/driver.h"
+#include <driver/spi_master.h>
 
-int driver_bus_spi_init(eos_dev_t *dev_bus) { return 0; }
+// ── State ─────────────────────────────────────────────────────
 
-int driver_bus_spi_read(eos_dev_t *dev_bus, void *buf, size_t len) { return 0; }
+typedef struct {
+  spi_host_device_t host;
+  spi_bus_config_t bus_cfg;
+} spi_state_t;
 
-int driver_bus_spi_write(eos_dev_t *dev_bus, void *buf, size_t len) {
+typedef struct {
+  spi_device_handle_t handle;
+  spi_device_interface_config_t dev_cfg;
+} spi_dev_state_t;
+
+// ── Init / Shutdown ───────────────────────────────────────────
+
+int driver_bus_spi_init(eos_dev_t *dev) {
+  spi_state_t *state = malloc(sizeof(spi_state_t));
+  if (!state)
+    return -1;
+  dev->state = state;
+
+  state->host = eos_cfg_get_i(dev->cfg, "host", SPI2_HOST);
+
+  state->bus_cfg = (spi_bus_config_t){
+      .sclk_io_num = eos_pin_get_no(dev->pins, "sclk_io_num"),
+      .mosi_io_num = eos_pin_get_no(dev->pins, "mosi_io_num"),
+      .miso_io_num = eos_pin_get_no(dev->pins, "miso_io_num"),
+      .quadwp_io_num = -1,
+      .quadhd_io_num = -1,
+  };
+
+  // Claim SPI peripheral
+  if (!eos_cap_alloc(EOS_CAPS_SPI, state->host, dev)) {
+    free(state);
+    return -1;
+  }
+
+  // Claim pins
+  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
+  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
+  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
+
+  esp_err_t err =
+      spi_bus_initialize(state->host, &state->bus_cfg, SPI_DMA_CH_AUTO);
+  if (err != ESP_OK) {
+    eos_cap_free(EOS_CAPS_SPI, state->host, dev);
+    free(state);
+    return -1;
+  }
+
   return 0;
 }
 
-int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) { return 0; }
+void driver_bus_spi_shutdown(eos_dev_t *dev) {
+  spi_state_t *state = dev->state;
+  if (!state)
+    return;
 
-void driver_bus_spi_shutdown(eos_dev_t *dev_bus) {}
+  spi_bus_free(state->host);
+  eos_cap_free(EOS_CAPS_SPI, state->host, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
+  free(state);
+  dev->state = NULL;
+}
+
+// ── IO ────────────────────────────────────────────────────────
+
+int driver_bus_spi_read(eos_dev_t *dev, void *buf, size_t len) {
+  return -1; // reads happen per-device via ioctl transaction
+}
+
+int driver_bus_spi_write(eos_dev_t *dev, void *buf, size_t len) {
+  return -1; // writes happen per-device via ioctl transaction
+}
+
+// ── ioctl ─────────────────────────────────────────────────────
+
+int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
+  va_list args;
+  va_start(args, cmd);
+  spi_state_t *state = dev_bus->state;
+
+  switch (cmd) {
+  case EOS_BUS_IOCTL_KID_ATTACH: {
+    // eos_dev_t *child = va_arg(args, eos_dev_t *);
+
+    // // Claim CS pin for child
+    // int32_t cs = eos_pin_get_no(child->pins, "cs_ena_pretrans");
+    // if (!eos_cap_alloc(EOS_CAPS_GPIO, cs, child)) {
+    //   va_end(args);
+    //   return false;
+    // }
+
+    // // Add device to SPI bus
+    // spi_dev_state_t *dev_state = malloc(sizeof(spi_dev_state_t));
+    // if (!dev_state) {
+    //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
+    //   va_end(args);
+    //   return false;
+    // }
+
+    // dev_state->dev_cfg = (spi_device_interface_config_t){
+    //     .clock_speed_hz =
+    //         eos_cfg_get_i(child->cfg, "clock_speed_hz", SPI_MASTER_FREQ_8M),
+    //     .spics_io_num = cs,
+    //     .queue_size = 1,
+    // };
+
+    // esp_err_t err = spi_bus_add_device(state->host, &dev_state->dev_cfg,
+    //                                    &dev_state->handle);
+    // if (err != ESP_OK) {
+    //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
+    //   free(dev_state);
+    //   va_end(args);
+    //   return false;
+    // }
+
+    // child->state = dev_state;
+    // va_end(args);
+    return true;
+  }
+
+  case EOS_BUS_IOCTL_KID_DETACH: {
+    eos_dev_t *child = va_arg(args, eos_dev_t *);
+    spi_dev_state_t *dev_state = child->state;
+    if (dev_state) {
+      spi_bus_remove_device(dev_state->handle);
+      eos_cap_free(EOS_CAPS_GPIO,
+                   eos_pin_get_no(child->pins, "cs_ena_pretrans"), child);
+      free(dev_state);
+      child->state = NULL;
+    }
+    va_end(args);
+    return true;
+  }
+  }
+
+  va_end(args);
+  return 0;
+}
 
 EOS_DRIVER_REG(bus, spi, EOS_INIT_DRIVERS_BUS);
 

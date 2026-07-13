@@ -17,8 +17,8 @@ void eos_board_init() {
   // ================= Display ST7789 ==================
   eos_dev_t *display = eos_dev_alloc();
   display->driver = eos_driver_find("display", "st7789");
-  display->pins =
-      (eos_pin_t[]){{"cs_ena_pretrans", 7}, {"dc_io_num", 15}, {NULL, 0}};
+  display->pins = (eos_pin_t[]){
+      {"cs_ena_pretrans", 7}, {"dc_io_num", 15}, {"en_io_num", 46}, {NULL, 0}};
   display->cfg = (eos_cfg_t[]){
       {"clock_speed_hz", EOS_CFG_INT, .val.i = SPI_MASTER_FREQ_80M},
       {"rotation", EOS_CFG_INT, .val.i = 3},
@@ -41,16 +41,17 @@ void eos_board_init() {
   eos_dev_attach(gpio, eos_devtree_root());
 
   // ================== Input keyboard =================
-  eos_dev_t *kbd = eos_dev_alloc();
-  kbd->driver = eos_driver_find("input", "keyboard");
-  kbd->pins =
-      (eos_pin_t[]){{"up", 38},    {"down", 41}, {"left", 39},  {"right", 40},
-                    {"select", 0}, {"start", 4}, {"a", 5},      {"b", 6},
-                    {"c", 10},     {"d", 9},     {"sleep", 46}, {NULL, 0}};
-  kbd->cfg = (eos_cfg_t[]){{"mode", EOS_CFG_INT, .val.i = GPIO_MODE_INPUT},
-                           {"pull", EOS_CFG_INT, .val.i = GPIO_PULLUP_ONLY},
-                           {NULL}};
-  eos_dev_attach(kbd, gpio);
+  // eos_dev_t *kbd = eos_dev_alloc();
+  // kbd->driver = eos_driver_find("input", "keyboard");
+  // kbd->pins =
+  //     (eos_pin_t[]){{"up", 38},    {"down", 41}, {"left", 39},  {"right",
+  //     40},
+  //                   {"select", 0}, {"start", 4}, {"a", 5},      {"b", 6},
+  //                   {"c", 10},     {"d", 9},     {"sleep", 46}, {NULL, 0}};
+  // kbd->cfg = (eos_cfg_t[]){{"mode", EOS_CFG_INT, .val.i = GPIO_MODE_INPUT},
+  //                          {"pull", EOS_CFG_INT, .val.i = GPIO_PULLUP_ONLY},
+  //                          {NULL}};
+  // eos_dev_attach(kbd, gpio);
 
   // ==================== Buzzer =======================
   // eos_dev_t *buzzer = eos_dev_alloc();
