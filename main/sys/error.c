@@ -11,6 +11,7 @@ static const char *eos_error_strings[] = {
     [EOS_ERR_DEVICE_ALREADY_ATTACHED] = "device already attached",
     [EOS_ERR_DEVICE_ATTACH_DECLINED_BY_BUS] = "attach declined by bus",
     [EOS_ERR_DEVICE_DETACH_DECLINED_BY_BUS] = "detach declined by bus",
+    [EOS_ERR_DEVICE_INIT_FAILED] = "device driver init failed",
     [EOS_ERR_CAP_INVALID] = "invalid capability id provided",
     [EOS_ERR_CAP_COUNT_QUOTA_EXCEED] = "not capability block slots left",
     [EOS_ERR_CAP_NO_INVALID] = "wrong capability number provided",

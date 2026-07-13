@@ -72,8 +72,10 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   }
 
   // Launch driver
-  if (!dev->driver->init(dev))
+  if (!dev->driver->init(dev)) {
     eos_dev_detach(dev);
+    return EOS_ERR_DEVICE_INIT_FAILED;
+  }
 
   return EOS_ERR_NO_ERROR;
 }

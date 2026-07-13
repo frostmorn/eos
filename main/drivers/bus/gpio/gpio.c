@@ -4,7 +4,7 @@
 #include "drivers/bus/bus.h"
 #include "sys/driver.h"
 
-int driver_bus_gpio_init(eos_dev_t *dev_bus) { return 0; }
+bool driver_bus_gpio_init(eos_dev_t *dev_bus) { return 0; }
 
 int driver_bus_gpio_read(eos_dev_t *dev_bus, void *buf, size_t len) {
   return 0;

@@ -4,7 +4,7 @@
 // This driver is always enabled,
 // and represents root bus which is an origin point of our device tree
 
-int driver_bus_root_init(eos_dev_t *dev_bus) { return 0; }
+bool driver_bus_root_init(eos_dev_t *dev_bus) { return true; }
 
 int driver_bus_root_read(eos_dev_t *dev_bus, void *buf, size_t len) {
   return 0;

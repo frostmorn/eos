@@ -2,7 +2,7 @@
 #ifdef EOS_DRIVER_STORAGE_SD_ENABLED
 
 #include "sys/driver.h"
-int driver_storage_sd_init(eos_dev_t *dev) { return 0; }
+bool driver_storage_sd_init(eos_dev_t *dev) { return 0; }
 
 int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) { return 0; }
 
