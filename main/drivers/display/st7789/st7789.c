@@ -152,7 +152,7 @@ static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
 }
 // ── Driver functions ──────────────────────────────────────────
 
-int driver_display_st7789_init(eos_dev_t *dev) {
+bool driver_display_st7789_init(eos_dev_t *dev) {
   st7789_state_t *state = malloc(sizeof(st7789_state_t));
   if (!state)
     return false;
