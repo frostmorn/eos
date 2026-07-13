@@ -29,9 +29,9 @@ int driver_bus_spi_init(eos_dev_t *dev) {
   state->host = eos_cfg_get_i(dev->cfg, "host", SPI2_HOST);
 
   state->bus_cfg = (spi_bus_config_t){
-      .sclk_io_num = eos_pin_get_no(dev->pins, "sclk_io_num"),
-      .mosi_io_num = eos_pin_get_no(dev->pins, "mosi_io_num"),
-      .miso_io_num = eos_pin_get_no(dev->pins, "miso_io_num"),
+      .sclk_io_num = eos_pin_get_no(dev->pins, "sclk"),
+      .mosi_io_num = eos_pin_get_no(dev->pins, "mosi"),
+      .miso_io_num = eos_pin_get_no(dev->pins, "miso"),
       .quadwp_io_num = -1,
       .quadhd_io_num = -1,
   };

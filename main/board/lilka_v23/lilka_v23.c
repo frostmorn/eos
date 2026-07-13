@@ -8,7 +8,7 @@ void eos_board_init() {
   eos_dev_t *spi = eos_dev_alloc();
   spi->driver = eos_driver_find("bus", "spi");
   spi->pins = (eos_pin_t[]){
-      {"sclk_io_num", 18}, {"mosi_io_num", 17}, {"miso_io_num", 8}, {NULL, 0}};
+      {"sclk", 18}, {"mosi", 17}, {"miso", 8}, {NULL, 0}};
   spi->cfg = (eos_cfg_t[]){{"host", EOS_CFG_INT, .val.i = SPI2_HOST},
                            {"dma", EOS_CFG_INT, .val.i = SPI_DMA_CH_AUTO},
                            {NULL}};
