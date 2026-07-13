@@ -20,7 +20,7 @@ typedef struct {
 
 // ── Init / Shutdown ───────────────────────────────────────────
 
-int driver_bus_spi_init(eos_dev_t *dev) {
+bool driver_bus_spi_init(eos_dev_t *dev) {
   spi_state_t *state = malloc(sizeof(spi_state_t));
   if (!state)
     return false;
