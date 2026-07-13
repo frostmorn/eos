@@ -13,48 +13,47 @@
 #include "sys/capsmgr.h"
 #include "sys/driver.h"
 
-// ── Register definitions ──────────────────────────────────────
-
-#define ST7789_SLPOUT 0x11
-#define ST7789_NORON 0x13
-#define ST7789_INVOFF 0x20
-#define ST7789_INVON 0x21
-#define ST7789_DISPON 0x29
-#define ST7789_CASET 0x2A
-#define ST7789_RASET 0x2B
-#define ST7789_RAMWR 0x2C
-#define ST7789_COLMOD 0x3A
-#define ST7789_MADCTL 0x36
-
-#define ST7789_MADCTL_MY 0x80
-#define ST7789_MADCTL_MX 0x40
-#define ST7789_MADCTL_MV 0x20
-#define ST7789_MADCTL_ML 0x10
-#define ST7789_MADCTL_RGB 0x00
-
-#define ST7789_SLPOUT_DELAY_MS 120
-#define ST7789_COLOR_MODE_16BIT 0x55
-
-// ── Rotation table ────────────────────────────────────────────
-// Each entry: {madctl_byte, swap_dims}
-// Native display is portrait (240 wide x 280 tall)
-// Rotations 1 and 3 are landscape — swap w/h
-
 typedef struct {
-  uint8_t madctl;
+  bool swap_xy;
+  bool mirror_x;
+  bool mirror_y;
   bool swap_dims;
+  int16_t x_gap;
+  int16_t y_gap;
 } st7789_rotation_t;
 
-static const st7789_rotation_t st7789_rotations[] = {
-    [0] = {ST7789_MADCTL_RGB, false}, // portrait
-    [1] = {ST7789_MADCTL_MX | ST7789_MADCTL_MV | ST7789_MADCTL_RGB,
-           true}, // landscape CW
-    [2] = {ST7789_MADCTL_MX | ST7789_MADCTL_MY | ST7789_MADCTL_RGB,
-           false}, // portrait inverted
-    [3] = {ST7789_MADCTL_MY | ST7789_MADCTL_MV | ST7789_MADCTL_RGB,
-           true}, // landscape CCW
-};
+// Rotation 1 (90° CW)
 
+static const st7789_rotation_t st7789_rotations[] = {
+    {
+        .swap_xy = true,
+        .mirror_x = true,
+        .mirror_y = false,
+        .swap_dims = true,
+        .x_gap = 0,
+        .y_gap = 20,
+    },
+
+    // Rotation 2 (180°)
+    {
+        .swap_xy = false,
+        .mirror_x = true,
+        .mirror_y = true,
+        .swap_dims = false,
+        .x_gap = 20,
+        .y_gap = 0,
+    },
+
+    // Rotation 3 (270° CW)
+    {
+        .swap_xy = true,
+        .mirror_x = false,
+        .mirror_y = true,
+        .swap_dims = true,
+        .x_gap = 20,
+        .y_gap = 0,
+    },
+};
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
@@ -103,54 +102,58 @@ static void st7789_test(eos_dev_t *dev) {
   free(buf);
 }
 
-// ── Init sequence ─────────────────────────────────────────────
+static void st7789_test2(eos_dev_t *dev) {
+  st7789_state_t *state = dev->state;
+  int32_t w = state->width;
+  int32_t h = state->height;
 
-static void st7789_run_init(esp_lcd_panel_io_handle_t io) {
-  esp_lcd_panel_io_tx_param(io, ST7789_SLPOUT, NULL, 0);
-  vTaskDelay(pdMS_TO_TICKS(ST7789_SLPOUT_DELAY_MS));
+  uint16_t *buf = malloc(w * h * sizeof(uint16_t));
+  if (!buf)
+    return;
 
-  // Color mode 16-bit — MADCTL omitted, set via st7789_apply_rotation
-  esp_lcd_panel_io_tx_param(io, ST7789_COLMOD,
-                            (uint8_t[]){ST7789_COLOR_MODE_16BIT}, 1);
+  // RGB565 color bars
+  for (int y = 0; y < h; y++) {
+    for (int x = 0; x < w; x++) {
+      uint16_t c;
 
-  esp_lcd_panel_io_tx_param(io, 0xB2, (uint8_t[]){0x0C, 0x0C, 0x00, 0x33, 0x33},
-                            5);
+      if (x < w / 6)
+        c = 0xF800; // red
+      else if (x < w * 2 / 6)
+        c = 0x07E0; // green
+      else if (x < w * 3 / 6)
+        c = 0x001F; // blue
+      else if (x < w * 4 / 6)
+        c = 0xFFE0; // yellow
+      else if (x < w * 5 / 6)
+        c = 0xF81F; // magenta
+      else
+        c = 0x07FF; // cyan
 
-  esp_lcd_panel_io_tx_param(io, 0xB7, (uint8_t[]){0x35}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xBB, (uint8_t[]){0x19}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xC0, (uint8_t[]){0x2C}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xC2, (uint8_t[]){0x01}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xC3, (uint8_t[]){0x12}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xC4, (uint8_t[]){0x20}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xC6, (uint8_t[]){0x0F}, 1);
-  esp_lcd_panel_io_tx_param(io, 0xD0, (uint8_t[]){0xA4, 0xA1}, 2);
+      // 1-pixel white border
+      if (x == 0 || y == 0 || x == w - 1 || y == h - 1)
+        c = 0xFFFF;
 
-  esp_lcd_panel_io_tx_param(io, 0xE0,
-                            (uint8_t[]){0xF0, 0x09, 0x13, 0x12, 0x12, 0x2B,
-                                        0x3C, 0x44, 0x4B, 0x1B, 0x18, 0x17,
-                                        0x1D, 0x21},
-                            14);
+      // White diagonals
+      if (x == y || x == (w - 1 - y))
+        c = 0xFFFF;
 
-  esp_lcd_panel_io_tx_param(io, 0xE1,
-                            (uint8_t[]){0xF0, 0x09, 0x13, 0x0C, 0x0D, 0x27,
-                                        0x3B, 0x44, 0x4D, 0x0B, 0x17, 0x17,
-                                        0x1D, 0x21},
-                            14);
+      buf[y * w + x] = c;
+    }
+  }
 
-  esp_lcd_panel_io_tx_param(io, ST7789_NORON, NULL, 0);
-  vTaskDelay(pdMS_TO_TICKS(10));
+  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
 
-  esp_lcd_panel_io_tx_param(io, ST7789_DISPON, NULL, 0);
+  free(buf);
 }
 
 // ── Rotation ──────────────────────────────────────────────────
 
 static void st7789_apply_rotation(st7789_state_t *state, int32_t native_w,
                                   int32_t native_h, uint8_t rotation) {
-  const st7789_rotation_t *r = &st7789_rotations[rotation % 4];
-  state->rotation = rotation % 4;
+  const st7789_rotation_t *r = &st7789_rotations[rotation & 3];
 
-  // Swap effective dimensions for landscape rotations
+  state->rotation = rotation & 3;
+
   if (r->swap_dims) {
     state->width = native_h;
     state->height = native_w;
@@ -159,10 +162,10 @@ static void st7789_apply_rotation(st7789_state_t *state, int32_t native_w,
     state->height = native_h;
   }
 
-  esp_lcd_panel_io_tx_param(state->io, ST7789_MADCTL, (uint8_t[]){r->madctl},
-                            1);
+  esp_lcd_panel_set_gap(state->panel, r->x_gap, r->y_gap);
+  esp_lcd_panel_swap_xy(state->panel, r->swap_xy);
+  esp_lcd_panel_mirror(state->panel, r->mirror_x, r->mirror_y);
 }
-
 // ── Driver functions ──────────────────────────────────────────
 
 int driver_display_st7789_init(eos_dev_t *dev) {
@@ -235,12 +238,14 @@ int driver_display_st7789_init(eos_dev_t *dev) {
   }
 
   esp_lcd_panel_reset(state->panel);
-  st7789_run_init(state->io);
+  esp_lcd_panel_init(state->panel);
 
-  // Apply rotation last — sets MADCTL and effective dimensions
   st7789_apply_rotation(state, native_w, native_h, rotation);
 
+  esp_lcd_panel_disp_on_off(state->panel, true);
+
   st7789_test(dev);
+  // st7789_test2(dev);
   return 0;
 }
 
