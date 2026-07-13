@@ -30,3 +30,6 @@ bool eos_cap_alloc(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev);
 // Deallocates capability/peripheral for EOS device.
 // Returns false if deallocation failed  and sets eos_errno in case of error
 bool eos_cap_free(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev);
+
+// Inits capsmgr
+void eos_capsmgr_init();

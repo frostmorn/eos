@@ -130,3 +130,8 @@ bool eos_cap_free(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev) {
   eos_errno = EOS_ERR_CAP_NO_INVALID;
   return false;
 }
+
+void eos_capsmgr_init() {
+  // Inital cleanup
+  bzero(eos_cap_slots, sizeof(eos_cap_slots));
+}
