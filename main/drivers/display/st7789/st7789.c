@@ -155,7 +155,7 @@ static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
 int driver_display_st7789_init(eos_dev_t *dev) {
   st7789_state_t *state = malloc(sizeof(st7789_state_t));
   if (!state)
-    return -1;
+    return false;
   dev->state = state;
 
   // Native dimensions from config (before rotation)
@@ -174,12 +174,16 @@ int driver_display_st7789_init(eos_dev_t *dev) {
   int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
   // Claim pins
-  eos_cap_alloc(EOS_CAPS_GPIO, cs_pin, dev);
-  eos_cap_alloc(EOS_CAPS_GPIO, dc_pin, dev);
+  if (!eos_cap_alloc(EOS_CAPS_GPIO, cs_pin, dev))
+    return false;
+  if (!eos_cap_alloc(EOS_CAPS_GPIO, dc_pin, dev))
+    return false;
   if (en_pin >= 0)
-    eos_cap_alloc(EOS_CAPS_GPIO, en_pin, dev);
+    if (!eos_cap_alloc(EOS_CAPS_GPIO, en_pin, dev))
+      return false;
   if (rst_pin >= 0)
-    eos_cap_alloc(EOS_CAPS_GPIO, rst_pin, dev);
+    if (!eos_cap_alloc(EOS_CAPS_GPIO, rst_pin, dev))
+      return false;
 
   // Enable display power before anything else
   if (en_pin >= 0) {
@@ -208,7 +212,7 @@ int driver_display_st7789_init(eos_dev_t *dev) {
     if (en_pin >= 0)
       gpio_set_level(en_pin, 0);
     free(state);
-    return -1;
+    return false;
   }
 
   esp_lcd_panel_dev_config_t panel_cfg = {
@@ -223,7 +227,7 @@ int driver_display_st7789_init(eos_dev_t *dev) {
       gpio_set_level(en_pin, 0);
     esp_lcd_panel_io_del(state->io);
     free(state);
-    return -1;
+    return false;
   }
 
   esp_lcd_panel_reset(state->panel);
@@ -237,7 +241,7 @@ int driver_display_st7789_init(eos_dev_t *dev) {
   st7789_test(dev);
   st7789_test2(dev);
 #endif
-  return 0;
+  return true;
 }
 
 int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {

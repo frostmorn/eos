@@ -23,7 +23,7 @@ typedef struct {
 int driver_bus_spi_init(eos_dev_t *dev) {
   spi_state_t *state = malloc(sizeof(spi_state_t));
   if (!state)
-    return -1;
+    return false;
   dev->state = state;
 
   state->host = eos_cfg_get_i(dev->cfg, "host", SPI2_HOST);
@@ -39,7 +39,7 @@ int driver_bus_spi_init(eos_dev_t *dev) {
   // Claim SPI peripheral
   if (!eos_cap_alloc(EOS_CAPS_SPI, state->host, dev)) {
     free(state);
-    return -1;
+    return false;
   }
 
   // Claim pins
@@ -52,10 +52,10 @@ int driver_bus_spi_init(eos_dev_t *dev) {
   if (err != ESP_OK) {
     eos_cap_free(EOS_CAPS_SPI, state->host, dev);
     free(state);
-    return -1;
+    return false;
   }
 
-  return 0;
+  return true;
 }
 
 void driver_bus_spi_shutdown(eos_dev_t *dev) {
