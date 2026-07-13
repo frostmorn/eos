@@ -17,8 +17,7 @@ void eos_board_init() {
   // ================= Display ST7789 ==================
   eos_dev_t *display = eos_dev_alloc();
   display->driver = eos_driver_find("display", "st7789");
-  display->pins = (eos_pin_t[]){
-      {"cs_ena_pretrans", 7}, {"dc_io_num", 15}, {"en_io_num", 46}, {NULL, 0}};
+  display->pins = (eos_pin_t[]){{"cs", 7}, {"dc", 15}, {"en", 46}, {NULL, 0}};
   display->cfg = (eos_cfg_t[]){
       {"clock_speed_hz", EOS_CFG_INT, .val.i = SPI_MASTER_FREQ_80M},
       {"rotation", EOS_CFG_INT, .val.i = 3},
@@ -30,7 +29,7 @@ void eos_board_init() {
   // ==================== SD card ======================
   eos_dev_t *sd = eos_dev_alloc();
   sd->driver = eos_driver_find("storage", "sd");
-  sd->pins = (eos_pin_t[]){{"gpio_cs", 16}, {NULL, 0}};
+  sd->pins = (eos_pin_t[]){{"cs", 16}, {NULL, 0}};
   sd->cfg = (eos_cfg_t[]){
       {"clock_speed_hz", EOS_CFG_INT, .val.i = SPI_MASTER_FREQ_20M}, {NULL}};
   eos_dev_attach(sd, spi);
