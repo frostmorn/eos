@@ -134,8 +134,7 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
     spi_dev_state_t *dev_state = child->state;
     if (dev_state) {
       spi_bus_remove_device(dev_state->handle);
-      eos_cap_free(EOS_CAPS_GPIO,
-                   eos_pin_get_no(child->pins, "cs_ena_pretrans"), child);
+      eos_cap_free(EOS_CAPS_GPIO, eos_pin_get_no(child->pins, "cs"), child);
       free(dev_state);
       child->state = NULL;
     }
