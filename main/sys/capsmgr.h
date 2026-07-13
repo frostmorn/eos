@@ -2,6 +2,11 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
+// Provides resources(capabilities in esp-idf) management
+// by blocking theoretical pin/dma/bus/etc. usage in case
+// it's already reserved by something
+// (o_O)==\~
+
 #include "pregen.h"
 #include "sys/devtree.h"
 
