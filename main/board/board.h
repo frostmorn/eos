@@ -1,5 +1,5 @@
 #pragma once
-#include "sys/devtree.h"
+#include "sys/device.h"
 #include "sys/driver.h"
 #include <driver/spi_master.h>
 #include <driver/i2s_std.h>

@@ -1,6 +1,6 @@
 #include "board/board.h"
 #include "sys/capsmgr.h"
-#include "sys/devtree.h"
+#include "sys/device.h"
 #include <stdio.h>
 
 void app_main(void) {

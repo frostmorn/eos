@@ -8,7 +8,7 @@
 // (o_O)==\~
 
 #include "pregen.h"
-#include "sys/devtree.h"
+#include "sys/device.h"
 
 typedef enum {
   EOS_CAPS_GPIO,

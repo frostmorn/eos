@@ -1,6 +1,6 @@
 #include "sys/driver.h"
 #include "misc/fancymacro.h"
-#include "sys/devtree.h"
+#include "sys/device.h"
 
 EXT_RAM_BSS_ATTR eos_driver_t *eos_driver_slots[EOS_MAX_DRIVERS];
 

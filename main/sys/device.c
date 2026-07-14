@@ -1,4 +1,4 @@
-#include "devtree.h"
+#include "device.h"
 #include "drivers/bus/bus.h"
 #include "sys/driver.h"
 
