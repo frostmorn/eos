@@ -124,8 +124,14 @@ int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
              : -1;
 }
 
-int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, ...) { return 0; }
+EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
+    .scope = "storage",
+    .name = "sd",
+    .init = driver_storage_sd_init,
+    .write = driver_storage_sd_write,
+    .read = driver_storage_sd_read,
+    .shutdown = driver_storage_sd_shutdown};
 
-EOS_DRIVER_REG(storage, sd, EOS_INIT_DRIVERS_PRIO);
+EOS_DRIVER_REG(driver_storage_sd, EOS_INIT_DRIVERS_PRIO);
 
 #endif

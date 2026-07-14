@@ -252,10 +252,6 @@ int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
              : -1;
 }
 
-int driver_display_st7789_read(eos_dev_t *dev, void *buf, size_t len) {
-  return -1; // ST7789 is write-only
-}
-
 int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, ...) {
   va_list args;
   va_start(args, cmd);
@@ -301,6 +297,14 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   dev->state = NULL;
 }
 
-EOS_DRIVER_REG(display, st7789, EOS_INIT_DRIVERS_PRIO);
+EOS_DRIVER_ATTR eos_driver_t driver_display_st7789 = {
+    .scope = "display",
+    .name = "st7789",
+    .init = driver_display_st7789_init,
+    .write = driver_display_st7789_write,
+    .ioctl = driver_display_st7789_ioctl,
+    .shutdown = driver_display_st7789_shutdown};
+
+EOS_DRIVER_REG(driver_display_st7789, EOS_INIT_DRIVERS_PRIO);
 
 #endif

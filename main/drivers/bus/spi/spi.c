@@ -58,30 +58,6 @@ bool driver_bus_spi_init(eos_dev_t *dev) {
   return true;
 }
 
-void driver_bus_spi_shutdown(eos_dev_t *dev) {
-  spi_state_t *state = dev->state;
-  if (!state)
-    return;
-
-  spi_bus_free(state->host);
-  eos_cap_free(EOS_CAPS_SPI, state->host, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
-  free(state);
-  dev->state = NULL;
-}
-
-// ── IO ────────────────────────────────────────────────────────
-
-int driver_bus_spi_read(eos_dev_t *dev, void *buf, size_t len) {
-  return -1; // reads happen per-device via ioctl transaction
-}
-
-int driver_bus_spi_write(eos_dev_t *dev, void *buf, size_t len) {
-  return -1; // writes happen per-device via ioctl transaction
-}
-
 // ── ioctl ─────────────────────────────────────────────────────
 
 int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
@@ -147,6 +123,27 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   return 0;
 }
 
-EOS_DRIVER_REG(bus, spi, EOS_INIT_DRIVERS_BUS);
+void driver_bus_spi_shutdown(eos_dev_t *dev) {
+  spi_state_t *state = dev->state;
+  if (!state)
+    return;
+
+  spi_bus_free(state->host);
+  eos_cap_free(EOS_CAPS_SPI, state->host, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
+  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
+  free(state);
+  dev->state = NULL;
+}
+
+EOS_DRIVER_ATTR eos_driver_t driver_bus_spi = {.scope = "bus",
+                                               .name = "spi",
+                                               .init = driver_bus_spi_init,
+                                               .ioctl = driver_bus_spi_ioctl,
+                                               .shutdown =
+                                                   driver_bus_spi_shutdown};
+
+EOS_DRIVER_REG(driver_bus_spi, EOS_INIT_DRIVERS_BUS);
 
 #endif

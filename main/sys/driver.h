@@ -4,6 +4,7 @@
 ///////////////////////////////////////////////////////
 
 #include "includes.h"
+#include <esp_vfs.h>
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
 ///////////////////////////////////////////////////////
@@ -11,8 +12,8 @@ typedef struct eos_dev_t eos_dev_t;
 
 typedef struct eos_driver_t eos_driver_t;
 struct eos_driver_t {
-  char name[EOS_SMALL_STR_LEN];
   char scope[EOS_SMALL_STR_LEN];
+  char name[EOS_SMALL_STR_LEN];
   // Initializes device
   bool (*init)(eos_dev_t *dev);
   // Basic IO operations:
@@ -27,32 +28,27 @@ struct eos_driver_t {
 
 //============================================(^_^)==\~
 
-extern eos_driver_t eos_driver_slots[EOS_MAX_DRIVERS];
+extern eos_driver_t *eos_driver_slots[EOS_MAX_DRIVERS];
 
-extern uint32_t eos_driver_slot_count;
-
-// Driver registration macro
-#define EOS_DRIVER_REG(SCOPE, NAME, INIT_ORDER)                                \
-  void __attribute__((constructor(INIT_ORDER)))                                \
-  eos_driver_register_##SCOPE##_##NAME(void) {                                 \
-    if (eos_driver_slot_count >= EOS_MAX_DRIVERS) {                            \
-      EOS_LOGE("Not enough slots to init driver for %s/%s\n", EOS_STR(SCOPE),  \
-               EOS_STR(NAME));                                                 \
-      abort();                                                                 \
-    }                                                                          \
-    strcpy(eos_driver_slots[eos_driver_slot_count].name, EOS_STR(NAME));       \
-    strcpy(eos_driver_slots[eos_driver_slot_count].scope, EOS_STR(SCOPE));     \
-    eos_driver_slots[eos_driver_slot_count].init =                             \
-        driver_##SCOPE##_##NAME##_init;                                        \
-    eos_driver_slots[eos_driver_slot_count].read =                             \
-        driver_##SCOPE##_##NAME##_read;                                        \
-    eos_driver_slots[eos_driver_slot_count].write =                            \
-        driver_##SCOPE##_##NAME##_write;                                       \
-    eos_driver_slots[eos_driver_slot_count].ioctl =                            \
-        driver_##SCOPE##_##NAME##_ioctl;                                       \
-    eos_driver_slots[eos_driver_slot_count].shutdown =                         \
-        driver_##SCOPE##_##NAME##_shutdown;                                    \
-    eos_driver_slot_count++;                                                   \
+// Compile time driver registration macro
+#define EOS_DRIVER_REG(DRV, INIT_ORDER)                                        \
+  void __attribute__((constructor(INIT_ORDER))) eos_driver_register_##DRV(     \
+      void) {                                                                  \
+    eos_error_t err = eos_driver_reg(&(DRV));                                  \
+    if (err != EOS_ERR_NO_ERROR)                                               \
+      EOS_LOGE("%s", eos_error_to_str(err));                                   \
   }
 
-extern eos_driver_t *eos_driver_find(char *scope, char *name);
+#define EOS_DRIVER_ATTR
+
+extern eos_driver_t *eos_driver_find(const char *scope, const char *name);
+
+extern eos_error_t eos_driver_reg(eos_driver_t *driver);
+
+// Default placeholders for cases when driver do not implement one or more
+// calls;
+extern bool eos_driver_init_empty(eos_dev_t *dev);
+extern int eos_driver_read_empty(eos_dev_t *dev, void *buf, size_t len);
+extern int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len);
+extern int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...);
+extern void eos_driver_shutdown_empty(eos_dev_t *dev);
