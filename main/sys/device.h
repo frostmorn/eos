@@ -4,6 +4,7 @@
 ///////////////////////////////////////////////////////
 
 #include "includes.h"
+#include "misc/strlimits.h"
 #include "misc/types.h"
 
 ///////////////////////////////////////////////////////
@@ -35,6 +36,8 @@ struct eos_dev_t {
   // Way to identify a specific device on a bus,
   // also does it's part in dev path name generation on a filesystem
   uint32_t id;
+
+  char name[EOS_SMALL_STR_LEN];
 };
 
 // Initializes device tree
