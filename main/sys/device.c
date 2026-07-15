@@ -34,7 +34,7 @@ eos_dev_t *eos_dev_alloc() {
 }
 
 // Assings per scope id to device
-uint32_t eos_dev_assign_id(eos_dev_t *dev) {
+void eos_dev_assign_id(eos_dev_t *dev) {
   uint32_t idx = 0;
   while (true) {
     bool taken = false;
@@ -54,7 +54,7 @@ uint32_t eos_dev_assign_id(eos_dev_t *dev) {
       }
     }
     if (!taken)
-      return idx;
+      dev = idx;
     idx++;
   }
 }
