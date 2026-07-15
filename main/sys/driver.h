@@ -5,6 +5,7 @@
 
 #include "includes.h"
 #include <esp_vfs.h>
+
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
 ///////////////////////////////////////////////////////
@@ -28,8 +29,6 @@ struct eos_driver_t {
 
 //============================================(^_^)==\~
 
-extern eos_driver_t *eos_driver_slots[EOS_MAX_DRIVERS];
-
 // Compile time driver registration macro
 #define EOS_DRIVER_REG(DRV, INIT_ORDER)                                        \
   void __attribute__((constructor(INIT_ORDER))) eos_driver_register_##DRV(     \
@@ -39,16 +38,11 @@ extern eos_driver_t *eos_driver_slots[EOS_MAX_DRIVERS];
       EOS_LOGE("%s", eos_error_to_str(err));                                   \
   }
 
+// Attribute to be used for static eos_driver_t allocation
 #define EOS_DRIVER_ATTR
 
-extern eos_driver_t *eos_driver_find(const char *scope, const char *name);
+// Seeks for driver with particular scope/name/pair
+eos_driver_t *eos_driver_find(const char *scope, const char *name);
 
-extern eos_error_t eos_driver_reg(eos_driver_t *driver);
-
-// Default placeholders for cases when driver do not implement one or more
-// calls;
-extern bool eos_driver_init_empty(eos_dev_t *dev);
-extern int eos_driver_read_empty(eos_dev_t *dev, void *buf, size_t len);
-extern int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len);
-extern int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...);
-extern void eos_driver_shutdown_empty(eos_dev_t *dev);
+// Registers a new driver in EOS
+eos_error_t eos_driver_reg(eos_driver_t *driver);
