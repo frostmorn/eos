@@ -33,6 +33,75 @@ eos_dev_t *eos_dev_alloc() {
   return NULL;
 }
 
+// Assings per scope id to device
+static uint32_t eos_dev_assign_id(eos_dev_t *dev) {
+  uint32_t idx = 0;
+  while (true) {
+    bool taken = false;
+    for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
+      eos_dev_t *d = &eos_devices[i];
+      if (!d->in_use)
+        continue;
+      if (d == dev)
+        continue;
+      if (d->parent != dev->parent)
+        continue;
+      if (strcmp(d->driver->scope, dev->driver->scope) != 0)
+        continue;
+      if (d->id == idx) {
+        taken = true;
+        break;
+      }
+    }
+    if (!taken)
+      return idx;
+    idx++;
+  }
+}
+
+/*
+void eos_dev_to_path(eos_dev_t *dev, char *buf, size_t len) {
+  if (!dev || !buf || len == 0)
+    return;
+
+  // collect nodes from device up to root
+  eos_dev_t *nodes[EOS_MAX_DEVICES];
+  uint32_t depth = 0;
+
+  eos_dev_t *cur = dev;
+  while (cur && cur->parent) { // stop at root — root has no parent
+    nodes[depth++] = cur;
+    cur = cur->parent;
+  }
+
+  // build path from root down
+  buf[0] = '\0';
+  strlcat(buf, "/dev", len);
+
+  for (int32_t i = depth - 1; i >= 0; i--) {
+    eos_dev_t *node = nodes[i];
+
+    // ask driver for custom name first
+    // TODO: implement device name/scope gathering through ioctl
+    char name[EOS_SMALL_STR_LEN] = {0};
+    node->driver->ioctl(node, EOS_IOCTL_GET_NAME, name, sizeof(name));
+
+    strlcat(buf, "/", len);
+
+    if (name[0] != '\0') {
+      // driver returned a custom name
+      strlcat(buf, name, len);
+    } else {
+      // fallback to scope+id
+      char segment[EOS_SMALL_STR_LEN];
+      snprintf(segment, sizeof(segment), "%s%lu", node->driver->scope,
+               (unsigned long)node->id);
+      strlcat(buf, segment, len);
+    }
+  }
+}
+*/
+
 // Attaches device to EOS device tree
 eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
   // Args check
@@ -70,6 +139,9 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
 
     cur->next = dev;
   }
+
+  // Assign device id
+  eos_dev_assign_id(dev);
 
   // Launch driver
   if (!dev->driver->init(dev)) {

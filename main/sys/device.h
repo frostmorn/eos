@@ -15,10 +15,10 @@ typedef struct eos_dev_t eos_dev_t;
 struct eos_dev_t {
   // Driver to be used to control device
   eos_driver_t *driver;
-  
+
   // Device pinmap
   eos_pin_t *pins; // {"miso", 13}, {"mosi", 11}, {NULL, 0}
-  
+
   // Device config
   eos_cfg_t *cfg; // {"speed", "80000000"}, {NULL, NULL}
   // Device state maintained by driver
@@ -31,9 +31,11 @@ struct eos_dev_t {
 
   // Indicates if device slot is in use
   bool in_use;
-};
 
-extern eos_dev_t eos_devices[EOS_MAX_DEVICES];
+  // Way to identify a specific device on a bus,
+  // also does it's part in dev path name generation on a filesystem
+  uint32_t id;
+};
 
 // Initializes device tree
 void eos_devtree_init();
