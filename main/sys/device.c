@@ -24,6 +24,7 @@ eos_dev_t *eos_dev_alloc() {
       // Prepare slot for usage
       bzero(&eos_devices[i], sizeof(eos_dev_t));
       eos_devices[i].in_use = true;
+      eos_devices[i].fd = -1; // indicates not in use
 
       return &eos_devices[i];
     }
@@ -54,7 +55,7 @@ void eos_dev_assign_id(eos_dev_t *dev) {
       }
     }
     if (!taken)
-      dev = idx;
+      dev->id = idx;
     idx++;
   }
 }

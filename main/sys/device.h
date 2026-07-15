@@ -35,10 +35,19 @@ struct eos_dev_t {
 
   // Way to identify a specific device on a bus,
   // also does it's part in dev path name generation on a filesystem
+
+  // devfs
   uint32_t id;
 
+  // devfs
   char name[EOS_SMALL_STR_LEN];
+
+  // devfs
+  int fd;
 };
+
+// Mostly for devfs usage. Do not use for other purposes
+extern eos_dev_t eos_devices[EOS_MAX_DEVICES];
 
 // Initializes device tree
 void eos_devtree_init();
