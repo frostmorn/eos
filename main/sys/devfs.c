@@ -97,6 +97,7 @@ static eos_dev_t *eos_devfs_path_to_dev(const char *path) {
 // ── Dir state ─────────────────────────────────────────────────
 
 typedef struct {
+  uint32_t esp_idf_fs_index;
   eos_dev_t *cur;
   struct dirent entry;
 } devfs_dir_t;
@@ -191,8 +192,10 @@ static struct dirent *devfs_readdir(void *ctx, DIR *pdir) {
   if (!dir->cur)
     return NULL;
 
-  strlcpy(dir->entry.d_name, dir->cur->name, sizeof(dir->entry.d_name));
+  memset(&dir->entry, 0, sizeof(dir->entry));
+  dir->entry.d_ino = (ino_t)(dir->cur - eos_devices);
   dir->entry.d_type = dir->cur->child ? DT_DIR : DT_CHR;
+  strlcpy(dir->entry.d_name, dir->cur->name, EOS_SMALL_STR_LEN);
 
   dir->cur = dir->cur->next;
   return &dir->entry;
