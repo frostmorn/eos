@@ -1,4 +1,4 @@
-#include "sys/driver.h"
+#include "driver/driver.h"
 #include "misc/fancymacro.h"
 #include "sys/device.h"
 

@@ -1,6 +1,6 @@
-#include "drivers/bus/bus.h"
+#include "driver/bus/bus.h"
 #include "includes.h"
-#include "sys/driver.h"
+#include "driver/driver.h"
 // This driver is always enabled,
 // and represents root bus which is an origin point of our device tree
 

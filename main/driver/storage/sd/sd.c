@@ -6,7 +6,7 @@
 #include <sdmmc_cmd.h>
 
 #include "sys/capsmgr.h"
-#include "sys/driver.h"
+#include "driver/driver.h"
 
 // ── State ─────────────────────────────────────────────────────
 

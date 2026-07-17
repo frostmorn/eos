@@ -1,9 +1,9 @@
 #include "includes.h"
 #ifdef EOS_DRIVER_BUS_SPI_ENABLED
 
-#include "drivers/bus/bus.h"
+#include "driver/bus/bus.h"
 #include "sys/capsmgr.h"
-#include "sys/driver.h"
+#include "driver/driver.h"
 #include <driver/spi_master.h>
 
 // ── State ─────────────────────────────────────────────────────

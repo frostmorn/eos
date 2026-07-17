@@ -45,7 +45,7 @@ mode, GPIO direction, ...) must start at `EOS_BUS_IOCTL_USER_BASE`.
 
 ## Adding a bus driver
 
-Standard process from `drivers/Readme.md`: guard with
+Standard process from `driver/Readme.md`: guard with
 `EOS_DRIVER_BUS_<NAME>_ENABLED`, register with `EOS_DRIVER_REG(bus, <name>,
 priority)`. Buses other devices attach to at boot should register
 early — see `initprio.h`.

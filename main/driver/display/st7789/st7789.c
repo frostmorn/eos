@@ -9,9 +9,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "drivers/display/display.h"
+#include "driver/display/display.h"
 #include "sys/capsmgr.h"
-#include "sys/driver.h"
+#include "driver/driver.h"
 
 // Actual Display dimensions maxima defined by st7789 datasheets
 // We need to know those values to deduce an x/y shifts to make it actually work

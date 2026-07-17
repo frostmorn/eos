@@ -1,7 +1,7 @@
 #include "devfs.h"
 #include "misc/fancymacro.h"
 #include "sys/device.h"
-#include "sys/driver.h"
+#include "driver/driver.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>

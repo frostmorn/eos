@@ -1,6 +1,6 @@
 #include "device.h"
-#include "drivers/bus/bus.h"
-#include "sys/driver.h"
+#include "driver/bus/bus.h"
+#include "driver/driver.h"
 
 #define EOS_ROOT_DEV eos_devices[0]
 
