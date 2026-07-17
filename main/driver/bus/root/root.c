@@ -1,6 +1,6 @@
 #include "driver/bus/bus.h"
-#include "includes.h"
 #include "driver/driver.h"
+#include "includes.h"
 // This driver is always enabled,
 // and represents root bus which is an origin point of our device tree
 
@@ -20,7 +20,6 @@ int driver_bus_root_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   return 0;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_bus_root = {
-    .scope = "bus", .name = "root", .ioctl = driver_bus_root_ioctl};
-
-EOS_DRIVER_REG(driver_bus_root, EOS_INIT_DRIVERS_ROOT_BUS);
+EOS_DRIVER_ATTR eos_driver_t driver_bus_root = {EOS_DRIVER_INIT, .scope = "bus",
+                                                .name = "root",
+                                                .ioctl = driver_bus_root_ioctl};

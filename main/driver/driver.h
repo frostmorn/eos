@@ -22,6 +22,7 @@ struct eos_driver_t {
   int (*write)(eos_dev_t *dev, void *buf, size_t len);
   // Specific driver options whose can't be represented
   // by basic IO
+  // TODO: potential ABI problems, standard to design
   int (*ioctl)(eos_dev_t *dev, int cmd, ...);
 
   off_t (*lseek)(eos_dev_t *dev, off_t offset, int whence);
@@ -31,20 +32,29 @@ struct eos_driver_t {
 
 //============================================(^_^)==\~
 
-// Compile time driver registration macro
-#define EOS_DRIVER_REG(DRV, INIT_ORDER)                                        \
-  void __attribute__((constructor(INIT_ORDER))) eos_driver_register_##DRV(     \
-      void) {                                                                  \
-    eos_error_t err = eos_driver_reg(&(DRV));                                  \
-    if (err != EOS_ERR_NO_ERROR)                                               \
-      EOS_LOGE("%s", eos_error_to_str(err));                                   \
-  }
-
 // Attribute to be used for static eos_driver_t allocation
-#define EOS_DRIVER_ATTR
+#define EOS_DRIVER_ATTR __attribute__((section(".eos_drivers"))) const
+
+extern const eos_driver_t _eos_drivers_start[];
+extern const eos_driver_t _eos_drivers_end[];
+
+#define EOS_DRIVER_INIT                                                        \
+  .init = eos_driver_init_empty, .read = eos_driver_read_empty,                \
+  .write = eos_driver_write_empty, .ioctl = eos_driver_ioctl_empty,            \
+  .lseek = eos_driver_lseek_empty, .shutdown = eos_driver_shutdown_empty
 
 // Seeks for driver with particular scope/name/pair
 eos_driver_t *eos_driver_find(const char *scope, const char *name);
 
-// Registers a new driver in EOS
-eos_error_t eos_driver_reg(eos_driver_t *driver);
+// DEFAULT
+bool eos_driver_init_empty(eos_dev_t *dev);
+
+int eos_driver_read_empty(eos_dev_t *dev, void *buf, size_t len);
+
+int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len);
+
+int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...);
+
+off_t eos_driver_lseek_empty(eos_dev_t *dev, off_t offset, int whence);
+
+void eos_driver_shutdown_empty(eos_dev_t *dev);

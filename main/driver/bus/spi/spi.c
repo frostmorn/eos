@@ -2,8 +2,8 @@
 #ifdef EOS_DRIVER_BUS_SPI_ENABLED
 
 #include "driver/bus/bus.h"
-#include "sys/capsmgr.h"
 #include "driver/driver.h"
+#include "sys/capsmgr.h"
 #include <driver/spi_master.h>
 
 // ── State ─────────────────────────────────────────────────────
@@ -137,13 +137,12 @@ void driver_bus_spi_shutdown(eos_dev_t *dev) {
   dev->state = NULL;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_bus_spi = {.scope = "bus",
+EOS_DRIVER_ATTR eos_driver_t driver_bus_spi = {EOS_DRIVER_INIT,
+                                               .scope = "bus",
                                                .name = "spi",
                                                .init = driver_bus_spi_init,
                                                .ioctl = driver_bus_spi_ioctl,
                                                .shutdown =
                                                    driver_bus_spi_shutdown};
-
-EOS_DRIVER_REG(driver_bus_spi, EOS_INIT_DRIVERS_BUS);
 
 #endif

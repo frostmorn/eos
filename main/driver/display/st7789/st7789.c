@@ -10,8 +10,8 @@
 #include <freertos/task.h>
 
 #include "driver/display/display.h"
-#include "sys/capsmgr.h"
 #include "driver/driver.h"
+#include "sys/capsmgr.h"
 
 // Actual Display dimensions maxima defined by st7789 datasheets
 // We need to know those values to deduce an x/y shifts to make it actually work
@@ -298,13 +298,12 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
 }
 
 EOS_DRIVER_ATTR eos_driver_t driver_display_st7789 = {
+    EOS_DRIVER_INIT,
     .scope = "display",
     .name = "st7789",
     .init = driver_display_st7789_init,
     .write = driver_display_st7789_write,
     .ioctl = driver_display_st7789_ioctl,
     .shutdown = driver_display_st7789_shutdown};
-
-EOS_DRIVER_REG(driver_display_st7789, EOS_INIT_DRIVERS_PRIO);
 
 #endif

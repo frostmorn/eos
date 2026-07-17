@@ -20,9 +20,8 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   return 0;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_bus_gpio = {
-    .scope = "bus", .name = "gpio", .ioctl = driver_bus_gpio_ioctl};
-
-EOS_DRIVER_REG(driver_bus_gpio, EOS_INIT_DRIVERS_BUS);
+EOS_DRIVER_ATTR eos_driver_t driver_bus_gpio = {EOS_DRIVER_INIT, .scope = "bus",
+                                                .name = "gpio",
+                                                .ioctl = driver_bus_gpio_ioctl};
 
 #endif

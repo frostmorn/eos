@@ -10,7 +10,6 @@
 
 #define EOS_TARGET_LILKAV2
 
-#define EOS_MAX_DRIVERS 16
 #define EOS_MAX_DEVICES 32
 
 #define EOS_MAX_CAPS 256
