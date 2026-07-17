@@ -13,8 +13,8 @@ typedef struct eos_dev_t eos_dev_t;
 
 typedef struct eos_driver_t eos_driver_t;
 struct eos_driver_t {
-  char scope[EOS_SMALL_STR_LEN];
-  char name[EOS_SMALL_STR_LEN];
+  char scope[EOS_XSMALL_STR_LEN];
+  char name[EOS_XSMALL_STR_LEN];
   // Initializes device
   bool (*init)(eos_dev_t *dev);
   // Basic IO operations:
