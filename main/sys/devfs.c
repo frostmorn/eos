@@ -162,10 +162,6 @@ static off_t devfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     errno = EBADF;
     return -1;
   }
-  if (!dev->driver->lseek) {
-    errno = ESPIPE;
-    return -1;
-  }
   return dev->driver->lseek(dev, offset, whence);
 }
 

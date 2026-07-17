@@ -23,6 +23,8 @@ struct eos_driver_t {
   // Specific driver options whose can't be represented
   // by basic IO
   int (*ioctl)(eos_dev_t *dev, int cmd, ...);
+
+  off_t (*lseek)(eos_dev_t *dev, off_t offset, int whence);
   // Deinitializes device
   void (*shutdown)(eos_dev_t *dev);
 };

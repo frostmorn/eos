@@ -4,8 +4,6 @@
 
 EXT_RAM_BSS_ATTR eos_driver_t *eos_driver_slots[EOS_MAX_DRIVERS];
 
-
-
 bool eos_driver_init_empty(eos_dev_t *dev) {
   EOS_LOGW("Call init() not implemented for driver %s/%s", dev->driver->scope,
            dev->driver->name);
@@ -26,6 +24,12 @@ int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len) {
 
 int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...) {
   EOS_LOGW("Call ioctl() not implemented for driver %s/%s", dev->driver->scope,
+           dev->driver->name);
+  return 0;
+}
+
+off_t eos_driver_lseek_empty(eos_dev_t *dev, off_t offset, int whence) {
+  EOS_LOGW("Call lseek() not implemented for driver %s/%s", dev->driver->scope,
            dev->driver->name);
   return 0;
 }
@@ -92,6 +96,9 @@ eos_error_t eos_driver_reg(eos_driver_t *driver) {
 
   if (driver->ioctl == NULL)
     driver->ioctl = eos_driver_ioctl_empty;
+
+  if (driver->lseek == NULL)
+    driver->lseek = eos_driver_lseek_empty;
 
   if (driver->shutdown == NULL)
     driver->shutdown = eos_driver_shutdown_empty;
