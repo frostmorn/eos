@@ -6,34 +6,6 @@
 
 EXT_RAM_BSS_ATTR eos_dev_t eos_devices[EOS_MAX_DEVICES];
 
-void eos_devtree_init() {
-  // Inital cleanup
-  bzero(eos_devices, sizeof(eos_devices));
-
-  // Setup root device
-  EOS_ROOT_DEV.driver = eos_driver_find("bus", "root");
-  EOS_ROOT_DEV.in_use = true;
-}
-
-eos_dev_t *eos_devtree_root() { return &EOS_ROOT_DEV; }
-
-eos_dev_t *eos_dev_alloc() {
-  // Find empty device slot
-  for (size_t i = 1; i < EOS_MAX_DEVICES; i++)
-    if (eos_devices[i].in_use == false) {
-      // Prepare slot for usage
-      bzero(&eos_devices[i], sizeof(eos_dev_t));
-      eos_devices[i].in_use = true;
-      eos_devices[i].fd = -1; // indicates not in use
-
-      return &eos_devices[i];
-    }
-
-  // No slot found
-  eos_errno = EOS_ERR_DEVICE_COUNT_QUOTA_EXCEED;
-  return NULL;
-}
-
 // Assings per scope id to device
 void eos_dev_assign_id(eos_dev_t *dev) {
   uint32_t idx = 0;
@@ -54,8 +26,10 @@ void eos_dev_assign_id(eos_dev_t *dev) {
         break;
       }
     }
-    if (!taken)
+    if (!taken) {
       dev->id = idx;
+      return;
+    }
     idx++;
   }
 }
@@ -63,6 +37,36 @@ void eos_dev_assign_id(eos_dev_t *dev) {
 void eos_dev_assign_name(eos_dev_t *dev) {
   snprintf(dev->name, EOS_SMALL_STR_LEN, "%s%" PRIu32, dev->driver->scope,
            dev->id);
+}
+
+void eos_devtree_init() {
+  // Inital cleanup
+  bzero(eos_devices, sizeof(eos_devices));
+
+  // Setup root device
+  EOS_ROOT_DEV.driver = eos_driver_find("bus", "root");
+  EOS_ROOT_DEV.in_use = true;
+  eos_dev_assign_id(&EOS_ROOT_DEV);
+  eos_dev_assign_name(&EOS_ROOT_DEV);
+}
+
+eos_dev_t *eos_devtree_root() { return &EOS_ROOT_DEV; }
+
+eos_dev_t *eos_dev_alloc() {
+  // Find empty device slot
+  for (size_t i = 1; i < EOS_MAX_DEVICES; i++)
+    if (eos_devices[i].in_use == false) {
+      // Prepare slot for usage
+      bzero(&eos_devices[i], sizeof(eos_dev_t));
+      eos_devices[i].in_use = true;
+      eos_devices[i].fd = -1; // indicates not in use
+
+      return &eos_devices[i];
+    }
+
+  // No slot found
+  eos_errno = EOS_ERR_DEVICE_COUNT_QUOTA_EXCEED;
+  return NULL;
 }
 
 // Attaches device to EOS device tree
