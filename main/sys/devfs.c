@@ -1,7 +1,7 @@
 #include "devfs.h"
+#include "driver/driver.h"
 #include "misc/fancymacro.h"
 #include "sys/device.h"
-#include "driver/driver.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
@@ -10,8 +10,6 @@
 
 // ── Internal: fd → device ─────────────────────────────────────
 
-// fd stored directly on a device itself, which limits usage of device to one
-// user, completely okie
 static eos_dev_t *eos_devfs_fd_to_dev(int fd) {
   for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++)
     if (eos_devices[i].in_use && eos_devices[i].fd == fd)
@@ -21,84 +19,36 @@ static eos_dev_t *eos_devfs_fd_to_dev(int fd) {
 
 // ── Internal: path → device ───────────────────────────────────
 
-// Traversal by devtree, seeking for a device
+// Flat lookup — find leaf device by name directly
 static eos_dev_t *eos_devfs_path_to_dev(const char *path) {
   if (!path)
     return NULL;
 
-  // esp_vfs passes path with prefix stripped — starts with '/' or empty
-  const char *rest = path;
-  if (*rest == '/')
-    rest++;
-  if (*rest == '\0')
-    return eos_devtree_root();
+  const char *name = path;
+  if (*name == '/')
+    name++;
+  if (*name == '\0')
+    return NULL;
 
-  eos_dev_t *cur = eos_devtree_root()->child;
-
-  while (cur && *rest) {
-    // extract next segment
-    char segment[EOS_SMALL_STR_LEN];
-    const char *slash = strchr(rest, '/');
-    if (slash) {
-      size_t seg_len = slash - rest;
-      strlcpy(segment, rest, seg_len + 1);
-      rest = slash + 1;
-    } else {
-      strlcpy(segment, rest, sizeof(segment));
-      rest += strlen(rest);
-    }
-
-    // find sibling matching segment
-    eos_dev_t *match = NULL;
-    eos_dev_t *sib = cur;
-    while (sib) {
-      if (strcmp(sib->name, segment) == 0) {
-        match = sib;
-        break;
-      }
-      sib = sib->next;
-    }
-
-    if (!match)
-      return NULL;
-    if (*rest == '\0')
-      return match;
-    cur = match->child;
+  for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
+    eos_dev_t *dev = &eos_devices[i];
+    if (!dev->in_use)
+      continue;
+    if (!dev->driver)
+      continue;
+    if (dev->child)
+      continue; // buses not openable
+    if (strcmp(dev->name, name) == 0)
+      return dev;
   }
-
   return NULL;
 }
-
-// ── Internal: device → path ───────────────────────────────────
-// TODo: probably we do not really need it at all, maybe save it, commented out
-// temporary static void eos_devfs_dev_to_path(eos_dev_t *dev, char *buf, size_t
-// len) {
-//   if (!dev || !buf || len == 0)
-//     return;
-
-//   eos_dev_t *nodes[EOS_MAX_DEVICES];
-//   uint32_t depth = 0;
-
-//   eos_dev_t *cur = dev;
-//   while (cur && cur->parent) {
-//     nodes[depth++] = cur;
-//     cur = cur->parent;
-//   }
-
-//   buf[0] = '\0';
-//   strlcat(buf, EOS_DEVFS_ROOT, len);
-
-//   for (int32_t i = depth - 1; i >= 0; i--) {
-//     strlcat(buf, "/", len);
-//     strlcat(buf, nodes[i]->name, len);
-//   }
-// }
 
 // ── Dir state ─────────────────────────────────────────────────
 
 typedef struct {
   uint32_t esp_idf_fs_index;
-  eos_dev_t *cur;
+  uint32_t dev_idx;
   struct dirent entry;
 } devfs_dir_t;
 
@@ -110,6 +60,10 @@ static int devfs_open(void *ctx, const char *path, int flags, int mode) {
     errno = ENOENT;
     return -1;
   }
+  if (dev->child) {
+    errno = EISDIR;
+    return -1;
+  } // buses not openable
   if (dev->fd >= 0) {
     errno = EBUSY;
     return -1;
@@ -167,38 +121,48 @@ static off_t devfs_lseek(void *ctx, int fd, off_t offset, int whence) {
 }
 
 static DIR *devfs_opendir(void *ctx, const char *path) {
-  eos_dev_t *dev = eos_devfs_path_to_dev(path);
-  if (!dev) {
-    errno = ENOENT;
-    return NULL;
-  }
-
   devfs_dir_t *dir = malloc(sizeof(devfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;
   }
-
-  dir->cur = dev->child;
+  dir->dev_idx = 0;
   return (DIR *)dir;
 }
 
-// TODO: replace with static allocated dirent list
-// maybe store it on a device itself instead of storing just name
-// if struct entry.d_type == DT_DIR, it would mean that driver have own opendir
-// sharing own files, otherwise it should work as DT_CHR
 static struct dirent *devfs_readdir(void *ctx, DIR *pdir) {
   devfs_dir_t *dir = (devfs_dir_t *)pdir;
-  if (!dir->cur)
-    return NULL;
 
-  memset(&dir->entry, 0, sizeof(dir->entry));
-  dir->entry.d_ino = (ino_t)(dir->cur - eos_devices);
-  dir->entry.d_type = dir->cur->child ? DT_DIR : DT_CHR;
-  strlcpy(dir->entry.d_name, dir->cur->name, EOS_SMALL_STR_LEN);
+  // walk flat eos_devices[], yield only leaf devices
+  while (dir->dev_idx < EOS_MAX_DEVICES) {
+    eos_dev_t *dev = &eos_devices[dir->dev_idx++];
+    if (!dev->in_use)
+      continue;
+    if (!dev->driver)
+      continue;
+    if (dev->child)
+      continue; // skip buses
+    if (!dev->parent)
+      continue; // skip root
 
-  dir->cur = dir->cur->next;
-  return &dir->entry;
+    memset(&dir->entry, 0, sizeof(dir->entry));
+    dir->entry.d_ino = dir->dev_idx - 1;
+    dir->entry.d_type = DT_CHR;
+    strlcpy(dir->entry.d_name, dev->name, EOS_SMALL_STR_LEN);
+    return &dir->entry;
+  }
+
+  return NULL;
+}
+
+static void devfs_seekdir(void *ctx, DIR *pdir, long offset) {
+  devfs_dir_t *dir = (devfs_dir_t *)pdir;
+  dir->dev_idx = (uint32_t)offset;
+}
+
+static long devfs_telldir(void *ctx, DIR *pdir) {
+  devfs_dir_t *dir = (devfs_dir_t *)pdir;
+  return (long)dir->dev_idx;
 }
 
 static int devfs_closedir(void *ctx, DIR *pdir) {
@@ -209,7 +173,6 @@ static int devfs_closedir(void *ctx, DIR *pdir) {
 // ── Init ──────────────────────────────────────────────────────
 
 void eos_devfs_init() {
-  // Initialize all device fds to -1
   for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++)
     if (eos_devices[i].in_use)
       eos_devices[i].fd = -1;
@@ -224,6 +187,8 @@ void eos_devfs_init() {
       .lseek_p = devfs_lseek,
       .opendir_p = devfs_opendir,
       .readdir_p = devfs_readdir,
+      .seekdir_p = devfs_seekdir,
+      .telldir_p = devfs_telldir,
       .closedir_p = devfs_closedir,
   };
 
