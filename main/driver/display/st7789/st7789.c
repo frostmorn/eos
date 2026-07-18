@@ -6,8 +6,7 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
+
 
 #include "driver/display/display.h"
 #include "driver/driver.h"
@@ -27,89 +26,6 @@ typedef struct {
   int32_t height; // height after rotation
   uint8_t rotation;
 } st7789_state_t;
-
-// ── Test ──────────────────────────────────────────────────────
-#ifdef EOS_DRIVER_DISPLAY_ST7789_TEST
-static void st7789_test(eos_dev_t *dev) {
-  st7789_state_t *state = dev->state;
-  int32_t w = state->width;
-  int32_t h = state->height;
-
-  uint16_t *buf = malloc(w * h * sizeof(uint16_t));
-  if (!buf)
-    return;
-
-  // Red
-  for (int i = 0; i < w * h; i++)
-    buf[i] = 0xF800;
-  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
-  vTaskDelay(pdMS_TO_TICKS(500));
-
-  // Green
-  for (int i = 0; i < w * h; i++)
-    buf[i] = 0x07E0;
-  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
-  vTaskDelay(pdMS_TO_TICKS(500));
-
-  // Blue
-  for (int i = 0; i < w * h; i++)
-    buf[i] = 0x001F;
-  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
-  vTaskDelay(pdMS_TO_TICKS(500));
-
-  // Gradient
-  for (int y = 0; y < h; y++)
-    for (int x = 0; x < w; x++)
-      buf[y * w + x] = ((x * 31 / w) << 11) | ((y * 63 / h) << 5);
-  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
-
-  free(buf);
-}
-
-static void st7789_test2(eos_dev_t *dev) {
-  st7789_state_t *state = dev->state;
-  int32_t w = state->width;
-  int32_t h = state->height;
-
-  uint16_t *buf = malloc(w * h * sizeof(uint16_t));
-  if (!buf)
-    return;
-
-  // RGB565 color bars
-  for (int y = 0; y < h; y++) {
-    for (int x = 0; x < w; x++) {
-      uint16_t c;
-
-      if (x < w / 6)
-        c = 0xF800; // red
-      else if (x < w * 2 / 6)
-        c = 0x07E0; // green
-      else if (x < w * 3 / 6)
-        c = 0x001F; // blue
-      else if (x < w * 4 / 6)
-        c = 0xFFE0; // yellow
-      else if (x < w * 5 / 6)
-        c = 0xF81F; // magenta
-      else
-        c = 0x07FF; // cyan
-
-      // 1-pixel white border
-      if (x == 0 || y == 0 || x == w - 1 || y == h - 1)
-        c = 0xFFFF;
-
-      // White diagonals
-      if (x == y || x == (w - 1 - y))
-        c = 0xFFFF;
-
-      buf[y * w + x] = c;
-    }
-  }
-
-  dev->driver->write(dev, buf, w * h * sizeof(uint16_t));
-
-  free(buf);
-}
-#endif
 
 // Placement options
 static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
@@ -239,7 +155,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   esp_lcd_panel_disp_on_off(state->panel, true);
 #ifdef EOS_DRIVER_DISPLAY_ST7789_TEST
   st7789_test(dev);
-  st7789_test2(dev);
+  // st7789_test2(dev);
 #endif
   return true;
 }
