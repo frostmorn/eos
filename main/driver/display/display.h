@@ -11,4 +11,4 @@ typedef enum {
   EOS_DISPLAY_IOCTL_GET_WIDTH = 0, // returns display width
   EOS_DISPLAY_IOCTL_GET_HEIGHT,    // returns display height
   EOS_DISPLAY_IOCTL_USER_BASE = 100
-} eos_bus_ioctl_t;
+} eos_display_ioctl_t;

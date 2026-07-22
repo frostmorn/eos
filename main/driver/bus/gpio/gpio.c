@@ -6,7 +6,6 @@
 
 int driver_bus_gpio_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   switch (cmd) {
-    // ROOT BUS always accepts all ATTACH/DETACH requests
   case EOS_BUS_IOCTL_KID_ATTACH: {
     return true;
     break;
