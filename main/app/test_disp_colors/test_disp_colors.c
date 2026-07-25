@@ -1,10 +1,11 @@
 #include <stdio.h>
 
 #include "app/app.h"
-#include "disp_test_colors.h"
 #include "driver/display/display.h"
+#include <errno.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <string.h>
 #include <sys/ioctl.h>
 
 static void test_colors(FILE *f) {
@@ -45,7 +46,7 @@ static void test_colors(FILE *f) {
   free(buf);
 }
 
-int disp_test_colors_main(int argc, char **argv) {
+int test_disp_colors_main(int argc, char **argv) {
   if (argc < 2) {
     printf("usage: disp_test_colors <path>\n");
     return 1;
@@ -54,6 +55,12 @@ int disp_test_colors_main(int argc, char **argv) {
   const char *path = argv[1];
 
   FILE *f = fopen(path, "w");
+
+  if (!f) {
+    perror(strerror(errno));
+    return -1;
+  }
+
   test_colors(f);
 
   fclose(f);
@@ -62,5 +69,5 @@ int disp_test_colors_main(int argc, char **argv) {
 }
 
 EOS_NATIVE_APP_ATTR eos_native_app_manifest_t disp_test_colors = {
-    EOS_NATIVE_APP_INIT, .filename = "disp_test_colors",
-    .name = "disp_test_colors", .entry_point = disp_test_colors_main};
+    EOS_NATIVE_APP_INIT, .filename = "test_disp_colors",
+    .name = "test_disp_colors", .entry_point = test_disp_colors_main};

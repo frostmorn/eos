@@ -1,3 +1,4 @@
+#include "app/app.h"
 #include "board/board.h"
 #include "sys/binfs.h"
 #include "sys/capsmgr.h"
@@ -12,5 +13,7 @@ void app_main(void) {
   eos_board_init();
   eos_devfs_init();
   eos_binfs_init();
-  eos_tests_init();
+
+  // Run shell
+  eos_system("ush");
 }

@@ -1,8 +1,9 @@
 #include <stdio.h>
 
 #include "app/app.h"
-#include "disp_test_bars.h"
 #include "driver/display/display.h"
+#include <errno.h>
+#include <string.h>
 #include <sys/ioctl.h>
 
 static void draw_bars(FILE *f) {
@@ -51,15 +52,20 @@ static void draw_bars(FILE *f) {
   free(buf);
 }
 
-int disp_test_bars_main(int argc, char **argv) {
+int test_disp_bars_main(int argc, char **argv) {
   if (argc < 2) {
-    printf("usage: disp_test_bars <path>\n");
+    printf("usage: test_disp_bars <path>\n");
     return 1;
   }
 
   const char *path = argv[1];
 
   FILE *f = fopen(path, "w");
+  if (!f) {
+    perror(strerror(errno));
+    return -1;
+  }
+
   draw_bars(f);
 
   fclose(f);
@@ -67,6 +73,6 @@ int disp_test_bars_main(int argc, char **argv) {
   return 0;
 }
 
-EOS_NATIVE_APP_ATTR eos_native_app_manifest_t disp_test_bars = {
-    EOS_NATIVE_APP_INIT, .filename = "disp_test_bars", .name = "disp_test_bars",
-    .entry_point = disp_test_bars_main};
+EOS_NATIVE_APP_ATTR eos_native_app_manifest_t test_disp_bars = {
+    EOS_NATIVE_APP_INIT, .filename = "test_disp_bars", .name = "test_disp_bars",
+    .entry_point = test_disp_bars_main};

@@ -109,7 +109,7 @@ int eos_system(const char *cmdline) {
     fread(&manifest, sizeof(manifest), 1, f);
     fclose(f);
 
-    EOS_LOGI("eos_system() launching: %s", manifest.name);
+    // EOS_LOGI("eos_system() launching: %s", manifest.name);
     int ret = manifest.entry_point(argc, argv);
     free(argv);
     free(buf);
