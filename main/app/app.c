@@ -115,27 +115,28 @@ int eos_system(const char *cmdline) {
     free(buf);
     return ret;
   }
+  /*
+    // shebang script
+    rewind(f);
+    char shebang[EOS_SMALL_STR_LEN] = {0};
+    fgets(shebang, sizeof(shebang), f);
+    fclose(f);
 
-  // shebang script
-  rewind(f);
-  char shebang[EOS_SMALL_STR_LEN] = {0};
-  fgets(shebang, sizeof(shebang), f);
-  fclose(f);
+    if (shebang[0] == '#' && shebang[1] == '!') {
+      char *interp = shebang + 2;
+      interp[strcspn(interp, "\n\r")] = '\0';
+      while (*interp == ' ')
+        interp++;
 
-  if (shebang[0] == '#' && shebang[1] == '!') {
-    char *interp = shebang + 2;
-    interp[strcspn(interp, "\n\r")] = '\0';
-    while (*interp == ' ')
-      interp++;
+      char interp_cmd[PATH_MAX];
+      snprintf(interp_cmd, sizeof(interp_cmd), "%s %s", interp, cmdline);
 
-    char interp_cmd[PATH_MAX];
-    snprintf(interp_cmd, sizeof(interp_cmd), "%s %s", interp, cmdline);
-
-    EOS_LOGI("eos_system() shebang: %s -> %s", path, interp);
-    free(argv);
-    free(buf);
-    return eos_system(interp_cmd);
-  }
+      EOS_LOGI("eos_system() shebang: %s -> %s", path, interp);
+      free(argv);
+      free(buf);
+      return eos_system(interp_cmd);
+    }
+      */
 
   EOS_LOGE("eos_system() unknown format: %s", path);
   free(argv);

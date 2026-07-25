@@ -11,4 +11,7 @@ void eos_tests_init() {
 
   // Display test bars
   eos_system("disp_test_bars /dev/display0");
+
+  // Run shell
+  eos_system("ush");
 }
