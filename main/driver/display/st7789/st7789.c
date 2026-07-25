@@ -7,7 +7,6 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 
-
 #include "driver/display/display.h"
 #include "driver/driver.h"
 #include "sys/capsmgr.h"
@@ -134,6 +133,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   esp_lcd_panel_dev_config_t panel_cfg = {
       .reset_gpio_num = rst_pin,
       .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+      .data_endian = LCD_RGB_DATA_ENDIAN_LITTLE,
       .bits_per_pixel = 16,
   };
 
@@ -148,6 +148,8 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
   esp_lcd_panel_reset(state->panel);
   esp_lcd_panel_init(state->panel);
+
+  esp_lcd_panel_invert_color(state->panel, true);
 
   st7789_apply_placement(state, native_w, native_h, native_gap_x, native_gap_y,
                          rotation);
