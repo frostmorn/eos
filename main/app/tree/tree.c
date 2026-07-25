@@ -77,4 +77,6 @@ int tree_main(int argc, char **argv) {
   return 0;
 }
 
-EOS_NATIVE_APP_ATTR eos_native_app_manifest_t tree = {EOS_NATIVE_APP_INIT};
+EOS_NATIVE_APP_ATTR eos_native_app_manifest_t tree = {
+    EOS_NATIVE_APP_INIT, .filename = "tree", .name = "Tree",
+    .entry_point = tree_main};

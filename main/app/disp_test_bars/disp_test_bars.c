@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+#include "app/app.h"
 #include "disp_test_bars.h"
 #include "driver/display/display.h"
 #include <sys/ioctl.h>
@@ -65,3 +66,7 @@ int disp_test_bars_main(int argc, char **argv) {
 
   return 0;
 }
+
+EOS_NATIVE_APP_ATTR eos_native_app_manifest_t disp_test_bars = {
+    EOS_NATIVE_APP_INIT, .filename = "disp_test_bars", .name = "disp_test_bars",
+    .entry_point = disp_test_bars_main};

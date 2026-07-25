@@ -45,7 +45,7 @@
 
 typedef struct {
   uint32_t magic;
-  char filename[EOS_XSMALL_STR_LEN];
+  char filename[EOS_SMALL_STR_LEN];
   char name[EOS_SMALL_STR_LEN];
   char group[EOS_XSMALL_STR_LEN];
   char description[EOS_MID_STR_LEN];

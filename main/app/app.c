@@ -1,5 +1,6 @@
 #include "app.h"
 #include "misc/fancymacro.h"
+#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 
@@ -14,45 +15,19 @@ int eos_native_app_entry_point_empty(int argc, char **argv) {
   return -1;
 }
 
-// ── Tokenizer — handles quotes and backslash escapes ──────────
+static char *skip_ws(char *p) {
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  return *p ? p : NULL;
+}
 
-static char *next_token(char **p) {
-  char *src = *p;
-
-  while (*src == ' ')
-    src++;
-  if (!*src) {
-    *p = src;
-    return NULL;
-  }
-
-  char *dst = src;
-  char *token_start = src;
-  char in_quote = 0;
-
-  while (*src) {
-    if (*src == '\\' && *(src + 1)) {
-      src++;
-      *dst++ = *src++;
-    } else if (!in_quote && (*src == '"' || *src == '\'')) {
-      in_quote = *src++;
-    } else if (in_quote && *src == in_quote) {
-      in_quote = 0;
-      src++;
-    } else if (!in_quote && *src == ' ') {
-      break;
-    } else {
-      *dst++ = *src++;
-    }
-  }
-
-  *dst = '\0';
-  *p = src;
-  return token_start;
+static char *token_end(char *p) {
+  while (*p && !isspace((unsigned char)*p))
+    p++;
+  return p;
 }
 
 // ── Path resolution ───────────────────────────────────────────
-
 static void resolve_path(const char *name, char *out, size_t len) {
   if (name[0] == '/') {
     strlcpy(out, name, len);
@@ -61,9 +36,12 @@ static void resolve_path(const char *name, char *out, size_t len) {
   }
 }
 
+// resolve path
+char path[PATH_MAX];
 // ── eos_system ────────────────────────────────────────────────
 int eos_system(const char *cmdline) {
 
+  // ALL OF features mentioned below require an actual AST
   // TODO: pipeline
   // TODO: cmd detach
   // TODO: redirect outputs
@@ -72,29 +50,35 @@ int eos_system(const char *cmdline) {
     EOS_LOGE("eos_system() called with null cmdline");
     return -1;
   }
-
-  // copy cmdline — tokenizer mutates in-place
+  // Copy command line
   char *buf = strdup(cmdline);
   if (!buf) {
     EOS_LOGE("eos_system() out of memory");
     return -1;
   }
 
-  // max args bounded by cmdline length
-  int max_args = strlen(cmdline) / 2 + 2;
-  char **argv = malloc(max_args * sizeof(char *));
-  if (!argv) {
-    EOS_LOGE("eos_system() out of memory");
-    free(buf);
-    return -1;
+  // count
+  int argc = 0;
+  char *p = skip_ws(buf);
+  while (p) {
+    argc++;
+    char *end = token_end(p);
+    p = *end ? skip_ws(end) : NULL;
   }
 
-  // build argv
-  int argc = 0;
-  char *p = buf;
-  char *tok;
-  while ((tok = next_token(&p)) != NULL && argc < max_args)
-    argv[argc++] = tok;
+  // build
+  char **argv = calloc(argc + 1, sizeof(*argv));
+  argc = 0;
+  p = skip_ws(buf);
+  while (p) {
+    char *end = token_end(p);
+    argv[argc++] = p;
+    if (*end) {
+      *end = '\0';
+      p = skip_ws(end + 1);
+    } else
+      p = NULL;
+  }
   argv[argc] = NULL;
 
   if (argc == 0) {
@@ -103,8 +87,6 @@ int eos_system(const char *cmdline) {
     return 0;
   }
 
-  // resolve path
-  char path[PATH_MAX];
   resolve_path(argv[0], path, sizeof(path));
 
   // open file

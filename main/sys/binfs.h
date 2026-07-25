@@ -13,5 +13,9 @@
 #define EOS_BINFS_ROOT "/bin"
 #endif
 
+#ifndef EOS_BINFS_MAX_FDS
+#define EOS_BINFS_MAX_FDS 16
+#endif
+
 // Inits EOS binfs
-void eos_binfs_init();
+void eos_binfs_init(void);
