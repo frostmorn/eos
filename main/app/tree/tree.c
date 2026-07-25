@@ -1,6 +1,5 @@
 #include "app/app.h"
 #include "misc/fancymacro.h"
-#include "tests/tests.h"
 #include <dirent.h>
 #include <limits.h>
 #include <stdio.h>
