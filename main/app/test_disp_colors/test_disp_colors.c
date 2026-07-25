@@ -68,6 +68,6 @@ int test_disp_colors_main(int argc, char **argv) {
   return 0;
 }
 
-EOS_NATIVE_APP_ATTR eos_native_app_manifest_t disp_test_colors = {
+EOS_NATIVE_APP_ATTR eos_native_app_manifest_t test_disp_colors = {
     EOS_NATIVE_APP_INIT, .filename = "test_disp_colors",
     .name = "test_disp_colors", .entry_point = test_disp_colors_main};
