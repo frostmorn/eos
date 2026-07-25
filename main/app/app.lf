@@ -1,0 +1,14 @@
+[sections:eos_apps]
+entries:
+    .eos_apps+
+
+[scheme:eos_psram]
+entries:
+    eos_apps -> flash_rodata
+
+[mapping:eos]
+archive: libmain.a
+
+entries:
+    * (eos_psram);
+        eos_apps -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_drivers)

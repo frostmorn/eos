@@ -5,4 +5,5 @@ idf_component_register(
     INCLUDE_DIRS "."
     WHOLE_ARCHIVE 
     LDFRAGMENTS "driver/driver.lf"
+    LDFRAGMENTS "app/app.lf"
 )

@@ -1,3 +1,4 @@
+#include "app/app.h"
 #include "misc/fancymacro.h"
 #include "tests/tests.h"
 #include <dirent.h>
@@ -75,3 +76,5 @@ int tree_main(int argc, char **argv) {
   printf("\n");
   return 0;
 }
+
+EOS_NATIVE_APP_ATTR eos_native_app_manifest_t tree = {EOS_NATIVE_APP_INIT};
