@@ -2,13 +2,13 @@
 entries:
     .eos_drivers+
 
-[scheme:eos_psram]
+[scheme:eos_drivers_psram]
 entries:
     eos_drivers -> flash_rodata
 
-[mapping:eos]
+[mapping:eos_drivers]
 archive: libmain.a
 
 entries:
-    * (eos_psram);
+    * (eos_drivers_psram);
         eos_drivers -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_drivers)

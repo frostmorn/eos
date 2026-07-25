@@ -2,13 +2,13 @@
 entries:
     .eos_apps+
 
-[scheme:eos_psram]
+[scheme:eos_apps_psram]
 entries:
     eos_apps -> flash_rodata
 
-[mapping:eos]
+[mapping:eos_apps]
 archive: libmain.a
 
 entries:
-    * (eos_psram);
+    * (eos_apps_psram);
         eos_apps -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_apps)
