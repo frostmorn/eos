@@ -11,4 +11,4 @@ archive: libmain.a
 
 entries:
     * (eos_psram);
-        eos_apps -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_drivers)
+        eos_apps -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_apps)
