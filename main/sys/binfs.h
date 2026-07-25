@@ -1,0 +1,17 @@
+#pragma once
+///////////////////////////////////////////////////////
+// EOS Project header file
+///////////////////////////////////////////////////////
+
+// This component of EOS is responsible for a filesystem
+// representation of native apps in a form of
+// native manifest files
+
+#include "app/app.h"
+
+#ifndef EOS_BINFS_ROOT
+#define EOS_BINFS_ROOT "/bin"
+#endif
+
+// Inits EOS binfs
+void eos_binfs_init();
