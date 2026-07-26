@@ -22,7 +22,7 @@ I/O model can't express.
 
 Every device is backed by a **driver** (`eos_driver_t`) implementing
 `init`, `read`, `write`, `ioctl`, and `shutdown`. Drivers live under
-`driver/<scope>/<name>/<name>.c` and self-register at startup via
+`edriver/<scope>/<name>/<name>.c` and self-register at startup via
 `EOS_DRIVER_REG(scope, name, priority)` — see `driver/Readme.md` for the
 registration contract, and the relevant `driver/<scope>/Readme.md` for
 what a driver in that scope is expected to guarantee.

@@ -1,9 +1,9 @@
-#include "sys/app.h"
-#include "board/board.h"
-#include "sys/binfs.h"
-#include "sys/capsmgr.h"
-#include "sys/devfs.h"
-#include "sys/device.h"
+#include "ecore/app.h"
+#include "eboard/board.h"
+#include "ecore/binfs.h"
+#include "ecore/capsmgr.h"
+#include "ecore/devfs.h"
+#include "ecore/device.h"
 #include <stdio.h>
 
 void app_main(void) {

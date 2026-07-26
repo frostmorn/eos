@@ -4,6 +4,6 @@ idf_component_register(
     SRCS ${EOS_SRCS}
     INCLUDE_DIRS "."
     WHOLE_ARCHIVE 
-    LDFRAGMENTS "ld/driver.lf"
-    LDFRAGMENTS "ld/app.lf"
+    LDFRAGMENTS "eld/driver.lf"
+    LDFRAGMENTS "eld/app.lf"
 )
