@@ -8,7 +8,7 @@
 #include <esp_lcd_panel_vendor.h>
 
 #include "driver/display/display.h"
-#include "driver/driver.h"
+#include "sys/driver.h"
 #include "sys/capsmgr.h"
 
 // Actual Display dimensions maxima defined by st7789 datasheets

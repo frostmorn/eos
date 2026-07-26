@@ -1,4 +1,4 @@
-#include "app/app.h"
+#include "sys/app.h"
 #include "misc/fancymacro.h"
 #include <driver/usb_serial_jtag.h>
 #include <driver/usb_serial_jtag_vfs.h>

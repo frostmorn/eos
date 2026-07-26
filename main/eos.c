@@ -1,4 +1,4 @@
-#include "app/app.h"
+#include "sys/app.h"
 #include "board/board.h"
 #include "sys/binfs.h"
 #include "sys/capsmgr.h"

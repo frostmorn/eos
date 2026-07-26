@@ -2,7 +2,7 @@
 #ifdef EOS_DRIVER_BUS_GPIO_ENABLED
 
 #include "driver/bus/bus.h"
-#include "driver/driver.h"
+#include "sys/driver.h"
 
 int driver_bus_gpio_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
   switch (cmd) {

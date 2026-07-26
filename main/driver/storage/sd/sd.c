@@ -5,7 +5,7 @@
 #include <driver/spi_master.h>
 #include <sdmmc_cmd.h>
 
-#include "driver/driver.h"
+#include "sys/driver.h"
 #include "sys/capsmgr.h"
 
 // ── State ─────────────────────────────────────────────────────

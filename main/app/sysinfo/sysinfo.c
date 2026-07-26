@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "app/app.h"
+#include "sys/app.h"
 
 #include <esp_chip_info.h>
 #include <esp_flash.h>

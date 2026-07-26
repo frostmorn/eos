@@ -1,5 +1,5 @@
 #include "driver/bus/bus.h"
-#include "driver/driver.h"
+#include "sys/driver.h"
 #include "includes.h"
 // This driver is always enabled,
 // and represents root bus which is an origin point of our device tree

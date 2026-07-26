@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "app/app.h"
+#include "sys/app.h"
 #include "driver/display/display.h"
 #include <errno.h>
 #include <string.h>

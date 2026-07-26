@@ -1,5 +1,6 @@
 #include "app.h"
 #include "misc/fancymacro.h"
+#include "sys/binfs.h"
 #include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
@@ -32,12 +33,10 @@ static void resolve_path(const char *name, char *out, size_t len) {
   if (name[0] == '/') {
     strlcpy(out, name, len);
   } else {
-    snprintf(out, len, "/bin/%s", name);
+    snprintf(out, len, EOS_BINFS_ROOT "/%s", name);
   }
 }
 
-// resolve path
-char path[PATH_MAX];
 // ── eos_system ────────────────────────────────────────────────
 int eos_system(const char *cmdline) {
 
@@ -45,6 +44,9 @@ int eos_system(const char *cmdline) {
   // TODO: pipeline
   // TODO: cmd detach
   // TODO: redirect outputs
+
+  // resolve path
+  char path[EOS_MID_STR_LEN];
 
   if (!cmdline) {
     EOS_LOGE("eos_system() called with null cmdline");
