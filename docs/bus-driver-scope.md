@@ -49,3 +49,6 @@ Standard process from `driver/Readme.md`: guard with
 `EOS_DRIVER_BUS_<NAME>_ENABLED`, register with `EOS_DRIVER_REG(bus, <name>,
 priority)`. Buses other devices attach to at boot should register
 early — see `initprio.h`.
+
+---
+[Back to EOS Device Model Index](../Readme.md) | [See Peripheral Drivers](../display-scope.md)
