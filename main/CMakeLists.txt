@@ -7,3 +7,7 @@ idf_component_register(
     LDFRAGMENTS "eld/driver.lf"
     LDFRAGMENTS "eld/app.lf"
 )
+
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-error=override-init
+)
