@@ -3,7 +3,7 @@
 #include "eboard/board.h"
 
 void eos_board_init() {
-
+  /*
   // ===================== I2C bus =====================
   // Shared between touch controller and ES8311 codec
   eos_dev_t *i2c = eos_dev_alloc();
@@ -123,5 +123,6 @@ void eos_board_init() {
                            {"height", EOS_CFG_INT, .val.i = 1080},
                            {NULL}};
   eos_dev_attach(cam, eos_devtree_root());
+  */
 }
 #endif
