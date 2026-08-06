@@ -47,12 +47,7 @@ static void test_colors(FILE *f) {
 }
 
 int test_disp_colors_main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("usage: disp_test_colors <path>\n");
-    return 1;
-  }
-
-  const char *path = argv[1];
+  const char *path = argc > 1 ? argv[1] : "/dev/display0";
 
   FILE *f = fopen(path, "w");
 

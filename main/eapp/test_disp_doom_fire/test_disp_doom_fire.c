@@ -88,12 +88,7 @@ cleanup:
 }
 
 static int test_disp_doom_fire_main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("usage: test_disp_doom_fire <path>\n");
-    return 1;
-  }
-
-  const char *path = argv[1];
+  const char *path = argc > 1 ? argv[1] : "/dev/display0";
 
   FILE *f = fopen(path, "w");
 
