@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <stdlib.h>
 
 static void draw_bars(FILE *f) {
 
