@@ -5,8 +5,9 @@
 #include <driver/spi_master.h>
 #include <sdmmc_cmd.h>
 
-#include "ecore/driver.h"
 #include "ecore/capsmgr.h"
+#include "ecore/diskpart.h"
+#include "ecore/driver.h"
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -70,6 +71,11 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   // Print card info
   sdmmc_card_print_info(stdout, state->card);
+
+  // Detect partition table
+  eos_part_scheme_t part_scheme = eos_diskpart_detect(dev);
+
+  printf("Detected %s partition table\n", EOS_PARTSCHEME_CSTR[part_scheme]);
 
   return true;
 }

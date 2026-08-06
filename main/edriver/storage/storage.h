@@ -2,10 +2,3 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
-
-typedef enum { EOS_PART_MBR, EOS_PART_GPT, EOS_PART_RAW } eos_part_t;
-
-
-eos_part_t eos_storage_detect_part(){
-    
-}
