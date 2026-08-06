@@ -2,6 +2,9 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
+// Max value for mbr, and practically we would work mostly with it
+#define EOS_MAX_PARTITIONS 4
+
 #include "error.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,7 +13,7 @@ typedef struct eos_dev_t eos_dev_t;
 
 typedef enum {
   EOS_PART_SCHEME_RAW,
-  EOS_PART_SCHEME_MBR,
+  EOS_PART_SCHEME_MBR, // Also known as DOS
   EOS_PART_SCHEME_GPT,
   EOS_PART_SCHEME_UNKNOWN,
 } eos_part_scheme_t;
@@ -36,42 +39,43 @@ typedef struct {
   bool bootable;
 } eos_part_t;
 
-// detect partition scheme from sector 0
-eos_part_scheme_t eos_diskpart_detect(eos_dev_t *dev);
+typedef struct {
+  eos_dev_t *dev;
+  eos_part_scheme_t scheme;
+  uint32_t count;
+  eos_part_t parts[EOS_MAX_PARTITIONS];
+} eos_diskpart_t;
 
-// read raw sector(s) from block device
-eos_error_t eos_diskpart_read_sector(eos_dev_t *dev, uint32_t lba, void *buf,
-                                     uint32_t count);
+// detect what's on the device and how many partitions
+eos_error_t eos_diskpart_open(eos_dev_t *dev, eos_diskpart_t **out);
 
-// MBR
-/*
-// parse MBR partition table from sector 0
-eos_error_t eos_diskpart_mbr_parse(eos_dev_t *dev, eos_mbr_t *out);
+// get partition count
+uint32_t eos_diskpart_count(eos_diskpart_t *dp);
 
-// get single MBR partition entry
-eos_error_t eos_diskpart_mbr_get(eos_mbr_t *mbr, uint8_t idx, eos_part_t *out);
+// get partition info by index
+eos_error_t eos_diskpart_get(eos_diskpart_t *dp, uint32_t idx, eos_part_t *out);
 
-// count valid MBR partitions
-uint8_t eos_diskpart_mbr_count(eos_mbr_t *mbr);
+// free resources
+void eos_diskpart_close(eos_diskpart_t *dp);
 
-// GPT
+// ── Partition table creation ──────────────────────────────────
 
-// parse GPT header from sector 1
-eos_error_t eos_diskpart_gpt_parse(eos_dev_t *dev, eos_gpt_header_t *out);
+// initialize a fresh MBR partition table on device
+eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
+                                eos_diskpart_t **out);
 
-// get single GPT partition entry
-eos_error_t eos_diskpart_gpt_get(eos_dev_t *dev, eos_gpt_header_t *hdr,
-                                 uint32_t idx, eos_part_t *out);
+// ── Partition management ──────────────────────────────────────
 
-// count valid GPT partitions
-uint32_t eos_diskpart_gpt_count(eos_gpt_header_t *hdr);
+// add a new partition
+eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
+                             uint32_t lba_size, eos_fs_type_t fs_type);
 
-// FS Detect
+// remove partition by index
+eos_error_t eos_diskpart_remove(eos_diskpart_t *dp, uint32_t idx);
 
-// detect filesystem type on a partition
-eos_fs_type_t eos_diskpart_fs_detect(eos_dev_t *dev, eos_part_t *part);
+// write partition table back to device
+eos_error_t eos_diskpart_commit(eos_diskpart_t *dp);
 
-// map partition type code to fs type
-eos_fs_type_t eos_diskpart_type_to_fs(uint8_t type_code);
-
-*/
+// calculate free/unpartitioned space
+eos_error_t eos_diskpart_free_space(eos_diskpart_t *dp, uint32_t *lba_start_out,
+                                    uint32_t *lba_size_out);
