@@ -115,7 +115,6 @@ const char *eos_part_type_str(eos_part_type_t type);
 typedef struct {
   uint32_t lba_start;
   uint32_t lba_size;
-  uint8_t type_code;
   eos_part_type_t part_type;
   bool bootable;
 } eos_part_t;

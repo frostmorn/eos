@@ -29,7 +29,7 @@ const char *eos_part_scheme_str(eos_part_scheme_t scheme) {
 typedef struct __attribute__((packed)) {
   uint8_t status;
   uint8_t chs_first[3];
-  uint8_t type;
+  uint8_t part_type;
   uint8_t chs_last[3];
   uint32_t lba_start;
   uint32_t lba_size;
@@ -235,7 +235,7 @@ static eos_error_t parse_mbr(eos_diskpart_t *dp) {
   dp->count = 0;
   for (int i = 0; i < 4; i++) {
     mbr_entry_t *e = &mbr.entries[i];
-    if (e->type == 0x00 || e->lba_size == 0)
+    if (e->part_type == 0x00 || e->lba_size == 0)
       continue;
     if (dp->count >= EOS_MAX_PARTITIONS)
       break;
@@ -243,12 +243,100 @@ static eos_error_t parse_mbr(eos_diskpart_t *dp) {
     eos_part_t *p = &dp->parts[dp->count++];
     p->lba_start = e->lba_start;
     p->lba_size = e->lba_size;
-    p->type_code = e->type;
-    p->fs_type = type_code_to_fs(e->type);
+    p->part_type = e->part_type;
     p->bootable = (e->status == 0x80);
   }
 
   return EOS_ERR_NO_ERROR;
+}
+
+static eos_part_type_t gpt_guid_to_part_type(const uint8_t guid[16]) {
+  // Unused entry
+  if (memcmp(guid, (const uint8_t[16]){0}, 16) == 0)
+    return EOS_PART_EMPTY;
+
+  // EFI System
+  if (memcmp(guid,
+             (const uint8_t[16]){0x28, 0x73, 0x2A, 0xC1, 0x1F, 0xF8, 0xD2, 0x11,
+                                 0xBA, 0x4B, 0x00, 0xA0, 0xC9, 0x3E, 0xC9,
+                                 0x3B},
+             16) == 0)
+    return EOS_PART_EFI_SYSTEM;
+
+  // Microsoft Basic Data (NTFS/FAT/exFAT)
+  if (memcmp(guid,
+             (const uint8_t[16]){0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
+                                 0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99,
+                                 0xC7},
+             16) == 0)
+    return EOS_PART_NTFS_EXFAT;
+
+  // Linux filesystem
+  if (memcmp(guid,
+             (const uint8_t[16]){0xAF, 0x3D, 0xC6, 0x0F, 0x83, 0x84, 0x72, 0x47,
+                                 0x8E, 0x79, 0x3D, 0x69, 0xD8, 0x47, 0x7D,
+                                 0xE4},
+             16) == 0)
+    return EOS_PART_LINUX_FS;
+
+  // Linux swap
+  if (memcmp(guid,
+             (const uint8_t[16]){0x6D, 0xFD, 0x57, 0x06, 0xAB, 0xA4, 0xC4, 0x43,
+                                 0x84, 0xE5, 0x09, 0x33, 0xC8, 0x4B, 0x4F,
+                                 0x4F},
+             16) == 0)
+    return EOS_PART_LINUX_SWAP;
+
+  // Linux LVM
+  if (memcmp(guid,
+             (const uint8_t[16]){0x79, 0xD3, 0xD6, 0xE6, 0x07, 0xF5, 0xC2, 0x44,
+                                 0xA2, 0x3C, 0x23, 0x8F, 0x2A, 0x3D, 0xF9,
+                                 0x28},
+             16) == 0)
+    return EOS_PART_LINUX_LVM;
+
+  // Linux RAID
+  if (memcmp(guid,
+             (const uint8_t[16]){0x0F, 0x88, 0x9D, 0xA1, 0xFC, 0x05, 0x3B, 0x4D,
+                                 0xA0, 0x06, 0x74, 0x3F, 0x0F, 0x84, 0x91,
+                                 0x1E},
+             16) == 0)
+    return EOS_PART_LINUX_RAID;
+
+  // Linux LUKS
+  if (memcmp(guid,
+             (const uint8_t[16]){0xCB, 0x7C, 0x7D, 0xCA, 0xED, 0x63, 0x53, 0x4C,
+                                 0x86, 0x1C, 0x17, 0x42, 0x53, 0x60, 0x59,
+                                 0xCC},
+             16) == 0)
+    return EOS_PART_LUKS;
+
+  // Apple HFS+
+  if (memcmp(guid,
+             (const uint8_t[16]){0x00, 0x53, 0x46, 0x48, 0x00, 0x00, 0xAA, 0x11,
+                                 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC,
+                                 0xAC},
+             16) == 0)
+    return EOS_PART_MACOS_X_HFS;
+
+  // Apple APFS
+  if (memcmp(guid,
+             (const uint8_t[16]){0xEF, 0x57, 0x34, 0x7C, 0x00, 0x00, 0xAA, 0x11,
+                                 0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC,
+                                 0xAC},
+             16) == 0)
+    return EOS_PART_MACOS_X;
+
+  // Windows Recovery
+  if (memcmp(guid,
+             (const uint8_t[16]){0xA4, 0xBB, 0x94, 0xDE, 0xD1, 0x06, 0x40, 0x4D,
+                                 0xA1, 0x6A, 0xBF, 0xD5, 0x01, 0x79, 0xD6,
+                                 0xAC},
+             16) == 0)
+    return EOS_PART_WIN_RECOVERY;
+
+  // Unknown GPT type
+  return EOS_PART_GPT_ENTRY;
 }
 
 // ── Internal: GPT parsing ─────────────────────────────────────
@@ -277,7 +365,6 @@ static eos_error_t parse_gpt(eos_diskpart_t *dp) {
     err = read_sector(dp->dev, lba, entry_sector, 1);
     if (err != EOS_ERR_NO_ERROR)
       return err;
-
     gpt_entry_t *e = (gpt_entry_t *)(entry_sector + offset);
 
     // skip empty entries
@@ -287,8 +374,7 @@ static eos_error_t parse_gpt(eos_diskpart_t *dp) {
     eos_part_t *p = &dp->parts[dp->count++];
     p->lba_start = (uint32_t)e->first_lba;
     p->lba_size = (uint32_t)(e->last_lba - e->first_lba + 1);
-    p->type_code = 0;              // GPT doesn't use MBR type codes
-    p->part_type = EOS_PART_EMPTY; // needs deeper detection
+    p->part_type = gpt_guid_to_part_type(e->type_guid);
     p->bootable = (e->attributes & 0x04) != 0;
   }
 
@@ -308,7 +394,7 @@ static eos_part_scheme_t detect_scheme(eos_dev_t *dev) {
 
   // GPT protective MBR — first partition type is 0xEE
   mbr_t *mbr = (mbr_t *)sector;
-  if (mbr->entries[0].type == GPT_PROTECTIVE)
+  if (mbr->entries[0].part_type == GPT_PROTECTIVE)
     return EOS_PART_SCHEME_GPT;
 
   return EOS_PART_SCHEME_MBR;
@@ -454,7 +540,7 @@ eos_error_t eos_diskpart_commit(eos_diskpart_t *dp) {
 
   for (uint32_t i = 0; i < dp->count && i < 4; i++) {
     mbr->entries[i].status = dp->parts[i].bootable ? 0x80 : 0x00;
-    mbr->entries[i].type = dp->parts[i].type_code;
+    mbr->entries[i].part_type = dp->parts[i].part_type;
     mbr->entries[i].lba_start = dp->parts[i].lba_start;
     mbr->entries[i].lba_size = dp->parts[i].lba_size;
     // CHS fields left as zero — LBA mode used universally
