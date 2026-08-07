@@ -1,4 +1,4 @@
-# EOS Project: Hardware Abstraction Layer
+# EOS Project: ESP Operating System
 
 EOS is an abstraction layer for ESP32 that implements a **Unified Device Model**. It transforms heterogeneous hardware peripherals into a consistent, hierarchical **Device Tree** accessible via a standard **Virtual Files/system (VFS)** interface (`/dev`).
 

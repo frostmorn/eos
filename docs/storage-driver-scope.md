@@ -9,4 +9,4 @@ Storage drivers (e.g., SD Card via SPI) manage persistent data access through th
 *   **Integration:** Often works in tandem with the **VFS (devfs)** to provide a filesystem interface for mounted media.
 
 ---
-[Back to EOS Device Model Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Filesystem Drivers](./filesystem-driver-scope.md)

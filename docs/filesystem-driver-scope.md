@@ -16,4 +16,4 @@ A mechanism to execute "Native Apps" stored as binary blobs in memory.
 *   **Execution Flow:** The `eos_system` locates the file in `/bin/`, parses metadata (name, entry point), and invokes the function pointer.
 
 ---
-[Back to EOS Device Model Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)

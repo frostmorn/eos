@@ -9,4 +9,4 @@ Sound drivers (e.g., MAX98357 codec via I2C/SPI) integrate with the EOS device m
 *   **Control:** Use `ioctl` for configuration (e.g., volume, sample rate, gain).
 
 ---
-[Back to EOS Device Model Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Storage Drivers](./storage-driver-scope.md)

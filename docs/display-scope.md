@@ -25,4 +25,4 @@ write(fd, buf->data(), width * height * 2); // Frame pixels (BGR layout)
 3.  **Registration:** Register via `EOSS_DRIVER_REG(display, <name>)`.
 
 ---
-[Back to EOS Device Model Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Sound Drivers](./sound-driver-scope.md)

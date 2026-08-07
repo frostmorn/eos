@@ -51,4 +51,4 @@ priority)`. Buses other devices attach to at boot should register
 early — see `initprio.h`.
 
 ---
-[Back to EOS Device Model Index](../Readme.md) | [See Peripheral Drivers](./display-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Display Drivers](./display-scope.md)
