@@ -1,19 +1,23 @@
 #include "diskpart.h"
 #include "ecore/device.h"
+#include "ecore/driver.h"
 #include "emisc/fancymacro.h"
 #include <stdlib.h>
 #include <string.h>
-#include "ecore/driver.h"
-#include "ecore/device.h"
 
-// ── String representations ────────────────────────────────────
+const char *eos_part_scheme_str(eos_part_scheme_t scheme) {
+  switch (scheme) {
+  case EOS_PART_SCHEME_RAW:
+    return "RAW";
+  case EOS_PART_SCHEME_MBR:
+    return "MBR";
+  case EOS_PART_SCHEME_GPT:
+    return "GPT";
 
-const char EOS_PARTSCHEME_CSTR[][8] = {
-    [EOS_PART_SCHEME_RAW] = "RAW",
-    [EOS_PART_SCHEME_MBR] = "MBR",
-    [EOS_PART_SCHEME_GPT] = "GPT",
-    [EOS_PART_SCHEME_UNKNOWN] = "UNKNOWN",
-};
+  default:
+    return "UNKNOWN";
+  }
+}
 
 // ── MBR structures ────────────────────────────────────────────
 
@@ -71,6 +75,125 @@ typedef struct __attribute__((packed)) {
 // GPT type GUIDs that indicate used partitions (non-empty)
 static const uint8_t GPT_UNUSED_GUID[16] = {0};
 
+const char *eos_part_type_str(eos_part_type_t type) {
+  switch (type) {
+  case EOS_PART_EMPTY:
+    return "Empty";
+  case EOS_PART_FAT12:
+    return "FAT12";
+  case EOS_PART_FAT16_LT32MB:
+    return "FAT16 <32MB";
+  case EOS_PART_FAT16B:
+    return "FAT16B";
+  case EOS_PART_FAT32:
+    return "FAT32";
+  case EOS_PART_FAT32_LBA:
+    return "FAT32 LBA";
+  case EOS_PART_FAT16_LBA:
+    return "FAT16 LBA";
+  case EOS_PART_FAT12_HIDDEN:
+    return "FAT12 Hidden";
+  case EOS_PART_FAT16_HIDDEN:
+    return "FAT16 Hidden";
+  case EOS_PART_FAT16B_HIDDEN:
+    return "FAT16B Hidden";
+  case EOS_PART_FAT32_HIDDEN:
+    return "FAT32 Hidden";
+  case EOS_PART_FAT32_LBA_HIDDEN:
+    return "FAT32 LBA Hidden";
+  case EOS_PART_FAT16_LBA_HIDDEN:
+    return "FAT16 LBA Hidden";
+  case EOS_PART_EXTENDED_CHS:
+    return "Extended CHS";
+  case EOS_PART_EXTENDED_LBA:
+    return "Extended LBA";
+  case EOS_PART_EXTENDED_HIDDEN:
+    return "Extended Hidden";
+  case EOS_PART_EXTENDED_LBA2:
+    return "Extended LBA Hidden";
+  case EOS_PART_NTFS_EXFAT:
+    return "NTFS/exFAT";
+  case EOS_PART_NTFS_HIDDEN:
+    return "NTFS Hidden";
+  case EOS_PART_WINRE:
+    return "Windows RE";
+  case EOS_PART_LINUX_SWAP:
+    return "Linux Swap";
+  case EOS_PART_LINUX_FS:
+    return "Linux FS";
+  case EOS_PART_LINUX_EXTENDED:
+    return "Linux Extended";
+  case EOS_PART_LINUX_LVM:
+    return "Linux LVM";
+  case EOS_PART_LINUX_RAID:
+    return "Linux RAID";
+  case EOS_PART_LINUX_FS_HIDDEN:
+    return "Linux FS Hidden";
+  case EOS_PART_FREEBSD:
+    return "FreeBSD";
+  case EOS_PART_OPENBSD:
+    return "OpenBSD";
+  case EOS_PART_NETBSD:
+    return "NetBSD";
+  case EOS_PART_DRAGONFLY:
+    return "DragonFly BSD";
+  case EOS_PART_MACOS_X:
+    return "macOS X";
+  case EOS_PART_MACOS_X_BOOT:
+    return "macOS X Boot";
+  case EOS_PART_MACOS_X_HFS:
+    return "macOS X HFS+";
+  case EOS_PART_WIN_DYNAMIC:
+    return "Windows Dynamic";
+  case EOS_PART_WIN_LDM_META:
+    return "Windows LDM Meta";
+  case EOS_PART_WIN_LDM_DATA:
+    return "Windows LDM Data";
+  case EOS_PART_WIN_RECOVERY:
+    return "Windows Recovery";
+  case EOS_PART_IBM_RECOVERY:
+    return "IBM/Compaq Diag";
+  case EOS_PART_GPT_PROTECTIVE:
+    return "GPT Protective";
+  case EOS_PART_EFI_SYSTEM:
+    return "EFI System";
+  case EOS_PART_SOLARIS_X86:
+    return "Solaris x86";
+  case EOS_PART_SOLARIS_BOOT:
+    return "Solaris Boot";
+  case EOS_PART_UNIX_SYS_V:
+    return "Unix System V";
+  case EOS_PART_QNX4_P1:
+    return "QNX4 P1";
+  case EOS_PART_QNX4_P2:
+    return "QNX4 P2";
+  case EOS_PART_QNX4_P3:
+    return "QNX4 P3";
+  case EOS_PART_OS2_BOOT_MGR:
+    return "OS/2 Boot Mgr";
+  case EOS_PART_INTEL_RST:
+    return "Intel RST/Hibernate";
+  case EOS_PART_LUKS:
+    return "Linux LUKS";
+  case EOS_PART_VMWARE_VMFS:
+    return "VMware VMFS";
+  case EOS_PART_VMWARE_SWAP:
+    return "VMware Swap";
+  case EOS_PART_XENIX_ROOT:
+    return "XENIX Root";
+  case EOS_PART_XENIX_USR:
+    return "XENIX Usr";
+  case EOS_PART_PLAN9:
+    return "Plan 9";
+  case EOS_PART_WHOLE_DISK:
+    return "Whole Disk";
+  case EOS_PART_GPT_ENTRY:
+    return "GPT Entry";
+  default:
+    return "Unknown";
+  }
+}
+
 // ── Internal: sector I/O ──────────────────────────────────────
 
 static eos_error_t read_sector(eos_dev_t *dev, uint32_t lba, void *buf,
@@ -99,30 +222,6 @@ static eos_error_t write_sector(eos_dev_t *dev, uint32_t lba, const void *buf,
     return EOS_ERR_DEVICE_INVALID;
 
   return EOS_ERR_NO_ERROR;
-}
-
-// ── Internal: type code → fs type ─────────────────────────────
-
-static eos_fs_type_t type_code_to_fs(uint8_t type) {
-  switch (type) {
-  case 0x01:
-    return EOS_FS_TYPE_FAT12;
-  case 0x04:
-  case 0x06:
-  case 0x0E:
-    return EOS_FS_TYPE_FAT16;
-  case 0x0B:
-  case 0x0C:
-    return EOS_FS_TYPE_FAT32;
-  case 0x07:
-    return EOS_FS_TYPE_EXFAT; // or NTFS — needs deeper check
-  case 0x83:
-    return EOS_FS_TYPE_EXT;
-  case 0x00:
-    return EOS_FS_TYPE_UNKNOWN;
-  default:
-    return EOS_FS_TYPE_UNKNOWN;
-  }
 }
 
 // ── Internal: MBR parsing ─────────────────────────────────────
@@ -188,8 +287,8 @@ static eos_error_t parse_gpt(eos_diskpart_t *dp) {
     eos_part_t *p = &dp->parts[dp->count++];
     p->lba_start = (uint32_t)e->first_lba;
     p->lba_size = (uint32_t)(e->last_lba - e->first_lba + 1);
-    p->type_code = 0;                 // GPT doesn't use MBR type codes
-    p->fs_type = EOS_FS_TYPE_UNKNOWN; // needs deeper detection
+    p->type_code = 0;              // GPT doesn't use MBR type codes
+    p->part_type = EOS_PART_EMPTY; // needs deeper detection
     p->bootable = (e->attributes & 0x04) != 0;
   }
 
@@ -228,7 +327,7 @@ eos_error_t eos_diskpart_open(eos_dev_t *dev, eos_diskpart_t **out) {
   dp->dev = dev;
   dp->scheme = detect_scheme(dev);
 
-  EOS_LOGI("diskpart: scheme = %s", EOS_PARTSCHEME_CSTR[dp->scheme]);
+  EOS_LOGI("diskpart: scheme = %s", eos_part_scheme_str(dp->scheme));
 
   eos_error_t err = EOS_ERR_NO_ERROR;
   switch (dp->scheme) {
@@ -243,7 +342,7 @@ eos_error_t eos_diskpart_open(eos_dev_t *dev, eos_diskpart_t **out) {
     dp->count = 1;
     dp->parts[0].lba_start = 0;
     dp->parts[0].lba_size = UINT32_MAX; // unknown size
-    dp->parts[0].fs_type = EOS_FS_TYPE_UNKNOWN;
+    dp->parts[0].part_type = EOS_PART_EMPTY;
     dp->parts[0].bootable = false;
     break;
   default:
@@ -301,7 +400,7 @@ eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
 }
 
 eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
-                             uint32_t lba_size, eos_fs_type_t fs_type) {
+                             uint32_t lba_size, eos_part_type_t part_type) {
   if (!dp)
     return EOS_ERR_DEVICE_INVALID;
   if (dp->count >= EOS_MAX_PARTITIONS)
@@ -320,30 +419,8 @@ eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
   eos_part_t *p = &dp->parts[dp->count++];
   p->lba_start = lba_start;
   p->lba_size = lba_size;
-  p->fs_type = fs_type;
+  p->part_type = part_type;
   p->bootable = false;
-
-  // map fs_type back to type_code for MBR
-  switch (fs_type) {
-  case EOS_FS_TYPE_FAT12:
-    p->type_code = 0x01;
-    break;
-  case EOS_FS_TYPE_FAT16:
-    p->type_code = 0x06;
-    break;
-  case EOS_FS_TYPE_FAT32:
-    p->type_code = 0x0B;
-    break;
-  case EOS_FS_TYPE_EXFAT:
-    p->type_code = 0x07;
-    break;
-  case EOS_FS_TYPE_EXT:
-    p->type_code = 0x83;
-    break;
-  default:
-    p->type_code = 0x00;
-    break;
-  }
 
   return EOS_ERR_NO_ERROR;
 }
