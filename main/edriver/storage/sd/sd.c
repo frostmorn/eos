@@ -9,12 +9,14 @@
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 
+#include <errno.h>
+
 #define BAD_OFFSET -1
 
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
-  sdmmc_card_t *card;
+  sdmmc_card_t card;
   char *io_buff;
   sdspi_dev_handle_t handle;
   spi_host_device_t host;
@@ -57,16 +59,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   host_cfg.slot = state->handle;
   host_cfg.max_freq_khz = freq / 1000;
 
-  state->card = malloc(sizeof(sdmmc_card_t));
-  if (!state->card) {
-    sdspi_host_remove_device(state->handle);
-    eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
-    free(state);
-    return false;
-  }
-
-  if (sdmmc_card_init(&host_cfg, state->card) != ESP_OK) {
-    free(state->card);
+  if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
     sdspi_host_remove_device(state->handle);
     eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
     free(state);
@@ -74,19 +67,16 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   }
 
   // Allocate file buffer
-  state->io_buff = (char *)malloc(state->csd.sector_size);
+  state->io_buff = (char *)malloc(state->card.csd.sector_size);
 
   // Gracefully die in case no mem :D
   if (!state->io_buff)
     abort();
 
   // Print card info
-  sdmmc_card_print_info(stdout, state->card);
+  sdmmc_card_print_info(stdout, &state->card);
 
-  // Detect partition table
-  eos_part_scheme_t part_scheme = eos_diskpart_detect(dev);
-
-  printf("Detected %s partition table\n", EOS_PARTSCHEME_CSTR[part_scheme]);
+  // TODO: Filesystem detection
 
   return true;
 }
@@ -96,8 +86,6 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
   if (!state)
     return;
 
-  if (state->card)
-    free(state->card);
   if (state->handle)
     sdspi_host_remove_device(state->handle);
 
@@ -105,87 +93,169 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
   if (cs_pin >= 0)
     eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
 
-
   // Cleanup
-  if (state->io_buff) free(state->io_buff);
+  if (state->io_buff)
+    free(state->io_buff);
 
   free(state);
   dev->state = NULL;
 }
 
 // ── IO — raw block operations ─────────────────────────────────
-
 int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) {
   sd_state_t *state = dev->state;
-  if (!state || !state->card)
+  if (!state)
     return -1;
 
-  size_t block_size = state->card->csd.sector_size;
-  size_t num_blocks = len / block_size;
+  uint8_t *dst = buf;
+  size_t remaining = len;
 
+  size_t sector_size = state->card.csd.sector_size;
 
-  if (num_blocks == 0)
-    return -1;
+  while (remaining) {
+    uint64_t sector = state->offset / sector_size;
+    size_t sector_off = state->offset % sector_size;
 
-  return sdmmc_read_sectors(state->card, buf, 0, num_blocks) == ESP_OK
-             ? (int)len
-             : -1;
+    /*
+     * Fast path: whole aligned sectors
+     */
+    if (sector_off == 0 && remaining >= sector_size) {
+      size_t sectors = remaining / sector_size;
+
+      if (sdmmc_read_sectors(&state->card, dst, sector, sectors) != ESP_OK)
+        return -1;
+
+      size_t bytes = sectors * sector_size;
+
+      dst += bytes;
+      remaining -= bytes;
+      state->offset += bytes;
+      continue;
+    }
+
+    /*
+     * Slow path: partial sector
+     */
+    if (sdmmc_read_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
+      return -1;
+
+    size_t copy = sector_size - sector_off;
+    if (copy > remaining)
+      copy = remaining;
+
+    memcpy(dst, state->io_buff + sector_off, copy);
+
+    dst += copy;
+    remaining -= copy;
+    state->offset += copy;
+  }
+
+  return len;
 }
 
 int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
   sd_state_t *state = dev->state;
-  if (!state || !state->card)
+  if (!state)
     return -1;
 
-  size_t block_size = state->card->csd.sector_size;
-  size_t num_blocks = len / block_size;
-  if (num_blocks == 0)
-    return -1;
+  const uint8_t *src = buf;
+  size_t remaining = len;
 
-  return sdmmc_write_sectors(state->card, buf, 0, num_blocks) == ESP_OK
-             ? (int)len
-             : -1;
+  size_t sector_size = state->card.csd.sector_size;
+
+  while (remaining) {
+    uint64_t sector = state->offset / sector_size;
+    size_t sector_off = state->offset % sector_size;
+
+    /*
+     * Fast path: whole aligned sectors
+     */
+    if (sector_off == 0 && remaining >= sector_size) {
+      size_t sectors = remaining / sector_size;
+
+      if (sdmmc_write_sectors(&state->card, src, sector, sectors) != ESP_OK)
+        return -1;
+
+      size_t bytes = sectors * sector_size;
+
+      src += bytes;
+      remaining -= bytes;
+      state->offset += bytes;
+      continue;
+    }
+
+    /*
+     * Partial sector: read-modify-write
+     */
+    if (sdmmc_read_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
+      return -1;
+
+    size_t copy = sector_size - sector_off;
+    if (copy > remaining)
+      copy = remaining;
+
+    memcpy(state->io_buff + sector_off, src, copy);
+
+    if (sdmmc_write_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
+      return -1;
+
+    src += copy;
+    remaining -= copy;
+    state->offset += copy;
+  }
+
+  return len;
 }
 
-off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence){
+off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
   sd_state_t *state = dev->state;
 
-  if (!state || !state->card)
-    return EBADF;
-
-  off_t max_offset = state->card->csd.capacity * state->card->csd.sector_size;
-
-  switch (whence){
-   case SEEK_SET:
-     if (offset >=0 && offset <= max_offset)
-       state->offset = offset;
-     else
-       // TODO: errno setup?
-       return BAD_OFFSET;    
-
-     return state->offset;
-
-   case SEEK_CUR:
-     off_t new_offset = state->offset + offset;
-
-     // Scroll back available, huh?
-     if (new_offset >= 0 && offset <=max_offset)
-       state->offset = offset;
-     else
-       // TODO: errno setup?
-       return BAD_OFFSET;    
-
-     return state->offset;
-
-   case SEEK_END:
-     state->offset = max_offset;
-     return state->offset;
-   // Note: Other whences?
-   default: return EINVAL;
+  if (!state) {
+    errno = EINVAL;
+    return BAD_OFFSET;
   }
-   
 
+  off_t max_offset = state->card.csd.capacity * state->card.csd.sector_size;
 
+  switch (whence) {
+  case SEEK_SET: {
+    if (offset >= 0 && offset <= max_offset)
+      state->offset = offset;
+    else
+      // TODO: errno setup?
+      return BAD_OFFSET;
+
+    return state->offset;
+  }
+  case SEEK_CUR: {
+    off_t new_offset = state->offset + offset;
+
+    // Scroll back available, huh?
+    if (new_offset >= 0 && offset <= max_offset)
+      state->offset = new_offset;
+    else
+      // TODO: errno setup?
+      return BAD_OFFSET;
+
+    return state->offset;
+  }
+  case SEEK_END: {
+    off_t new_offset = max_offset + offset;
+
+    if (new_offset >= 0 && new_offset <= max_offset)
+      state->offset = new_offset;
+    else
+      return BAD_OFFSET;
+
+    return state->offset;
+  }
+
+  // Note: Other whences?
+  default: {
+    errno = EINVAL;
+    return BAD_OFFSET;
+  }
+  }
 }
 
 EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
