@@ -9,12 +9,16 @@
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 
+#define BAD_OFFSET -1
+
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
   sdmmc_card_t *card;
+  char *io_buff;
   sdspi_dev_handle_t handle;
   spi_host_device_t host;
+  off_t offset;
 } sd_state_t;
 
 // ── Init / Shutdown ───────────────────────────────────────────
@@ -69,6 +73,13 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
     return false;
   }
 
+  // Allocate file buffer
+  state->io_buff = (char *)malloc(state->csd.sector_size);
+
+  // Gracefully die in case no mem :D
+  if (!state->io_buff)
+    abort();
+
   // Print card info
   sdmmc_card_print_info(stdout, state->card);
 
@@ -94,6 +105,10 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
   if (cs_pin >= 0)
     eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
 
+
+  // Cleanup
+  if (state->io_buff) free(state->io_buff);
+
   free(state);
   dev->state = NULL;
 }
@@ -107,6 +122,8 @@ int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) {
 
   size_t block_size = state->card->csd.sector_size;
   size_t num_blocks = len / block_size;
+
+
   if (num_blocks == 0)
     return -1;
 
@@ -130,10 +147,52 @@ int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
              : -1;
 }
 
+off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence){
+  sd_state_t *state = dev->state;
+
+  if (!state || !state->card)
+    return EBADF;
+
+  off_t max_offset = state->card->csd.capacity * state->card->csd.sector_size;
+
+  switch (whence){
+   case SEEK_SET:
+     if (offset >=0 && offset <= max_offset)
+       state->offset = offset;
+     else
+       // TODO: errno setup?
+       return BAD_OFFSET;    
+
+     return state->offset;
+
+   case SEEK_CUR:
+     off_t new_offset = state->offset + offset;
+
+     // Scroll back available, huh?
+     if (new_offset >= 0 && offset <=max_offset)
+       state->offset = offset;
+     else
+       // TODO: errno setup?
+       return BAD_OFFSET;    
+
+     return state->offset;
+
+   case SEEK_END:
+     state->offset = max_offset;
+     return state->offset;
+   // Note: Other whences?
+   default: return EINVAL;
+  }
+   
+
+
+}
+
 EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
     EOS_DRIVER_INIT,
     .scope = "storage",
     .name = "sd",
+    .lseek = driver_storage_sd_lseek,
     .init = driver_storage_sd_init,
     .write = driver_storage_sd_write,
     .read = driver_storage_sd_read,
