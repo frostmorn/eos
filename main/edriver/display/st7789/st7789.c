@@ -7,7 +7,7 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 
-#include "edriver/display/display.h"
+#include "ecore/ioctl.h"
 #include "ecore/driver.h"
 #include "ecore/capsmgr.h"
 

@@ -1,7 +1,7 @@
 #include "includes.h"
 #ifdef EOS_DRIVER_BUS_SPI_ENABLED
 
-#include "edriver/bus/bus.h"
+#include "ecore/ioctl.h"
 #include "ecore/driver.h"
 #include "ecore/capsmgr.h"
 #include <driver/spi_master.h>

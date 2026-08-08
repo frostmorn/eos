@@ -1,5 +1,5 @@
 #include "ecore/app.h"
-#include "edriver/display/display.h"
+#include "ecore/ioctl.h"
 #include <errno.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>

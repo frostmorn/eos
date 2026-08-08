@@ -1,7 +1,7 @@
 #include "includes.h"
 #ifdef EOS_DRIVER_BUS_GPIO_ENABLED
 
-#include "edriver/bus/bus.h"
+#include "ecore/ioctl.h"
 #include "ecore/driver.h"
 
 int driver_bus_gpio_ioctl(eos_dev_t *dev_bus, int cmd, ...) {

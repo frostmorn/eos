@@ -1,5 +1,5 @@
 #include "ecore/app.h"
-#include "edriver/display/display.h"
+#include "ecore/ioctl.h"
 #include "esp_timer.h"
 #include <fcntl.h>
 #include <math.h>

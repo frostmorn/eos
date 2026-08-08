@@ -1,5 +1,5 @@
 #include "device.h"
-#include "edriver/bus/bus.h"
+#include "ecore/ioctl.h"
 #include "ecore/driver.h"
 
 #define EOS_ROOT_DEV eos_devices[0]

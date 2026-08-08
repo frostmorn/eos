@@ -1,7 +1,7 @@
 #include <stdio.h>
 
 #include "ecore/app.h"
-#include "edriver/display/display.h"
+#include "ecore/ioctl.h"
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
