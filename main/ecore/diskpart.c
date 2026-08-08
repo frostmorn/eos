@@ -198,35 +198,45 @@ const char *eos_part_type_str(eos_part_type_t type) {
 
 static eos_error_t read_sector(eos_dev_t *dev, uint32_t lba, void *buf,
                                uint32_t count) {
-  // seek to LBA
   off_t offset = (off_t)lba * SECTOR_SIZE;
-  if (dev->driver->lseek(dev, offset, SEEK_SET) != offset)
-    return EOS_ERR_DEVICE_INVALID;
-
-  // read sectors
   size_t bytes = (size_t)count * SECTOR_SIZE;
-  if (dev->driver->read(dev, buf, bytes) != (int)bytes)
+  EOS_LOGI("diskpart: READ lba=%lu count=%lu offset=%lld bytes=%lu",
+           (unsigned long)lba, (unsigned long)count, (long long)offset,
+           (unsigned long)bytes);
+  if (dev->driver->lseek(dev, offset, SEEK_SET) != offset) {
+    EOS_LOGI("diskpart: READ seek FAILED offset=%lld", (long long)offset);
     return EOS_ERR_DEVICE_INVALID;
-
+  }
+  if (dev->driver->read(dev, buf, bytes) != (int)bytes) {
+    EOS_LOGI("diskpart: READ FAILED lba=%lu offset=%lld bytes=%lu",
+             (unsigned long)lba, (long long)offset, (unsigned long)bytes);
+    return EOS_ERR_DEVICE_INVALID;
+  }
   return EOS_ERR_NO_ERROR;
 }
 
 static eos_error_t write_sector(eos_dev_t *dev, uint32_t lba, const void *buf,
                                 uint32_t count) {
   off_t offset = (off_t)lba * SECTOR_SIZE;
-  if (dev->driver->lseek(dev, offset, SEEK_SET) != offset)
-    return EOS_ERR_DEVICE_INVALID;
-
   size_t bytes = (size_t)count * SECTOR_SIZE;
-  if (dev->driver->write(dev, (void *)buf, bytes) != (int)bytes)
+  EOS_LOGI("diskpart: WRITE lba=%lu count=%lu offset=%lld bytes=%lu",
+           (unsigned long)lba, (unsigned long)count, (long long)offset,
+           (unsigned long)bytes);
+  if (dev->driver->lseek(dev, offset, SEEK_SET) != offset) {
+    EOS_LOGI("diskpart: WRITE seek FAILED offset=%lld", (long long)offset);
     return EOS_ERR_DEVICE_INVALID;
-
+  }
+  if (dev->driver->write(dev, (void *)buf, bytes) != (int)bytes) {
+    EOS_LOGI("diskpart: WRITE FAILED lba=%lu offset=%lld bytes=%lu",
+             (unsigned long)lba, (long long)offset, (unsigned long)bytes);
+    return EOS_ERR_DEVICE_INVALID;
+  }
   return EOS_ERR_NO_ERROR;
 }
 
 // ── Internal: MBR parsing ─────────────────────────────────────
 
-static eos_error_t parse_mbr(eos_diskpart_t *dp) {
+static eos_error_t parse_mbr(eos_part_table_t *dp) {
   mbr_t mbr;
   eos_error_t err = read_sector(dp->dev, 0, &mbr, 1);
   if (err != EOS_ERR_NO_ERROR)
@@ -341,7 +351,7 @@ static eos_part_type_t gpt_guid_to_part_type(const uint8_t guid[16]) {
 
 // ── Internal: GPT parsing ─────────────────────────────────────
 
-static eos_error_t parse_gpt(eos_diskpart_t *dp) {
+static eos_error_t parse_gpt(eos_part_table_t *dp) {
   uint8_t sector[SECTOR_SIZE];
   eos_error_t err = read_sector(dp->dev, GPT_HEADER_LBA, sector, 1);
   if (err != EOS_ERR_NO_ERROR)
@@ -388,6 +398,7 @@ static eos_part_scheme_t detect_scheme(eos_dev_t *dev) {
   if (read_sector(dev, 0, sector, 1) != EOS_ERR_NO_ERROR)
     return EOS_PART_SCHEME_UNKNOWN;
 
+  // Endianess?
   uint16_t sig = *(uint16_t *)(sector + MBR_SIG_OFFSET);
   if (sig != MBR_SIGNATURE)
     return EOS_PART_SCHEME_RAW;
@@ -402,57 +413,44 @@ static eos_part_scheme_t detect_scheme(eos_dev_t *dev) {
 
 // ── Public API ────────────────────────────────────────────────
 
-eos_error_t eos_diskpart_open(eos_dev_t *dev, eos_diskpart_t **out) {
-  if (!dev || !out)
-    return EOS_ERR_DEVICE_INVALID;
+eos_error_t eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out) {
+  out->dev = dev;
+  out->scheme = detect_scheme(dev);
 
-  eos_diskpart_t *dp = calloc(1, sizeof(eos_diskpart_t));
-  if (!dp)
-    return EOS_ERR_NO_MEM_LEFT_ERROR;
-
-  dp->dev = dev;
-  dp->scheme = detect_scheme(dev);
-
-  EOS_LOGI("diskpart: scheme = %s", eos_part_scheme_str(dp->scheme));
+  EOS_LOGI("diskpart: scheme = %s", eos_part_scheme_str(out->scheme));
 
   eos_error_t err = EOS_ERR_NO_ERROR;
-  switch (dp->scheme) {
+  switch (out->scheme) {
   case EOS_PART_SCHEME_MBR:
-    err = parse_mbr(dp);
+    err = parse_mbr(out);
     break;
   case EOS_PART_SCHEME_GPT:
-    err = parse_gpt(dp);
+    err = parse_gpt(out);
     break;
   case EOS_PART_SCHEME_RAW:
     // whole device is one partition
-    dp->count = 1;
-    dp->parts[0].lba_start = 0;
-    dp->parts[0].lba_size = UINT32_MAX; // unknown size
-    dp->parts[0].part_type = EOS_PART_EMPTY;
-    dp->parts[0].bootable = false;
+    out->count = 1;
+    out->parts[0].lba_start = 0;
+    out->parts[0].lba_size = UINT32_MAX; // unknown size
+    out->parts[0].part_type = EOS_PART_EMPTY;
+    out->parts[0].bootable = false;
     break;
   default:
-    free(dp);
     return EOS_ERR_DEVICE_INVALID;
   }
 
-  if (err != EOS_ERR_NO_ERROR) {
-    free(dp);
-    return err;
-  }
+  EOS_LOGI("diskpart: found %lu partition(s)", (unsigned long)out->count);
 
-  EOS_LOGI("diskpart: found %lu partition(s)", (unsigned long)dp->count);
-  *out = dp;
   return EOS_ERR_NO_ERROR;
 }
 
-uint32_t eos_diskpart_count(eos_diskpart_t *dp) {
+uint32_t eos_diskpart_count(eos_part_table_t *dp) {
   if (!dp)
     return 0;
   return dp->count;
 }
 
-eos_error_t eos_diskpart_get(eos_diskpart_t *dp, uint32_t idx,
+eos_error_t eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
                              eos_part_t *out) {
   if (!dp || !out)
     return EOS_ERR_DEVICE_INVALID;
@@ -462,18 +460,16 @@ eos_error_t eos_diskpart_get(eos_diskpart_t *dp, uint32_t idx,
   return EOS_ERR_NO_ERROR;
 }
 
-void eos_diskpart_close(eos_diskpart_t *dp) { free(dp); }
-
 // ── Partition management ──────────────────────────────────────
 
 eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
-                                eos_diskpart_t **out) {
+                                eos_part_table_t **out) {
   if (!dev || !out)
     return EOS_ERR_DEVICE_INVALID;
   if (scheme != EOS_PART_SCHEME_MBR && scheme != EOS_PART_SCHEME_GPT)
     return EOS_ERR_DEVICE_INVALID;
 
-  eos_diskpart_t *dp = calloc(1, sizeof(eos_diskpart_t));
+  eos_part_table_t *dp = calloc(1, sizeof(eos_part_table_t));
   if (!dp)
     return EOS_ERR_NO_MEM_LEFT_ERROR;
 
@@ -485,7 +481,7 @@ eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
   return EOS_ERR_NO_ERROR;
 }
 
-eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
+eos_error_t eos_diskpart_add(eos_part_table_t *dp, uint32_t lba_start,
                              uint32_t lba_size, eos_part_type_t part_type) {
   if (!dp)
     return EOS_ERR_DEVICE_INVALID;
@@ -511,7 +507,7 @@ eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
   return EOS_ERR_NO_ERROR;
 }
 
-eos_error_t eos_diskpart_remove(eos_diskpart_t *dp, uint32_t idx) {
+eos_error_t eos_diskpart_remove(eos_part_table_t *dp, uint32_t idx) {
   if (!dp)
     return EOS_ERR_DEVICE_INVALID;
   if (idx >= dp->count)
@@ -525,7 +521,7 @@ eos_error_t eos_diskpart_remove(eos_diskpart_t *dp, uint32_t idx) {
   return EOS_ERR_NO_ERROR;
 }
 
-eos_error_t eos_diskpart_commit(eos_diskpart_t *dp) {
+eos_error_t eos_diskpart_commit(eos_part_table_t *dp) {
   if (!dp)
     return EOS_ERR_DEVICE_INVALID;
   if (dp->scheme != EOS_PART_SCHEME_MBR)
@@ -549,7 +545,8 @@ eos_error_t eos_diskpart_commit(eos_diskpart_t *dp) {
   return write_sector(dp->dev, 0, sector, 1);
 }
 
-eos_error_t eos_diskpart_free_space(eos_diskpart_t *dp, uint32_t *lba_start_out,
+eos_error_t eos_diskpart_free_space(eos_part_table_t *dp,
+                                    uint32_t *lba_start_out,
                                     uint32_t *lba_size_out) {
   if (!dp || !lba_start_out || !lba_size_out)
     return EOS_ERR_DEVICE_INVALID;

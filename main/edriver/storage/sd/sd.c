@@ -20,6 +20,7 @@ typedef struct {
   char *io_buff;
   sdspi_dev_handle_t handle;
   spi_host_device_t host;
+  eos_part_table_t part_table;
   off_t offset;
 } sd_state_t;
 
@@ -77,6 +78,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   sdmmc_card_print_info(stdout, &state->card);
 
   // TODO: Filesystem detection
+  eos_diskpart_parse(dev, &state->part_table);
 
   return true;
 }
@@ -215,7 +217,19 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
     return BAD_OFFSET;
   }
 
-  off_t max_offset = state->card.csd.capacity * state->card.csd.sector_size;
+  // TODO: off_t is a 32 bit signed value, so it means, I can't represent a
+  // whole filesystem as a file, which is heartbreaking
+  EOS_LOGI("sizeof(off_t) = %u", (unsigned)sizeof(off_t));
+  EOS_LOGI("sizeof(long) = %u", (unsigned)sizeof(long));
+  EOS_LOGI("sizeof(long long) = %u", (unsigned)sizeof(long long));
+
+  off_t max_offset =
+      (off_t)state->card.csd.capacity * (off_t)state->card.csd.sector_size;
+
+  EOS_LOGI("sd_lseek: offset=%lld whence=%d capacity=%lu sector_size=%lu "
+           "max_offset=%lld",
+           (long long)offset, whence, (unsigned long)state->card.csd.capacity,
+           (unsigned long)state->card.csd.sector_size, (long long)max_offset);
 
   switch (whence) {
   case SEEK_SET: {

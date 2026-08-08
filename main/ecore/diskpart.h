@@ -3,6 +3,8 @@
 // EOS Project header file
 ///////////////////////////////////////////////////////
 
+// TODO: This code would work only on little endian CPU
+
 // Max value for mbr, and practically we would work mostly with it
 #define EOS_MAX_PARTITIONS 4
 
@@ -124,38 +126,35 @@ typedef struct {
   eos_part_scheme_t scheme;
   uint32_t count;
   eos_part_t parts[EOS_MAX_PARTITIONS];
-} eos_diskpart_t;
+} eos_part_table_t;
 
 // detect what's on the device and how many partitions
-eos_error_t eos_diskpart_open(eos_dev_t *dev, eos_diskpart_t **out);
-
+eos_error_t eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out);
 // get partition count
-uint32_t eos_diskpart_count(eos_diskpart_t *dp);
+uint32_t eos_diskpart_count(eos_part_table_t *dp);
 
 // get partition info by index
-eos_error_t eos_diskpart_get(eos_diskpart_t *dp, uint32_t idx, eos_part_t *out);
-
-// free resources
-void eos_diskpart_close(eos_diskpart_t *dp);
-
+eos_error_t eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
+                             eos_part_t *out);
 // ── Partition table creation ──────────────────────────────────
 
 // initialize a fresh MBR partition table on device
 eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
-                                eos_diskpart_t **out);
+                                eos_part_table_t **out);
 
 // ── Partition management ──────────────────────────────────────
 
 // add a new partition
-eos_error_t eos_diskpart_add(eos_diskpart_t *dp, uint32_t lba_start,
+eos_error_t eos_diskpart_add(eos_part_table_t *dp, uint32_t lba_start,
                              uint32_t lba_size, eos_part_type_t part_type);
 
 // remove partition by index
-eos_error_t eos_diskpart_remove(eos_diskpart_t *dp, uint32_t idx);
+eos_error_t eos_diskpart_remove(eos_part_table_t *dp, uint32_t idx);
 
 // write partition table back to device
-eos_error_t eos_diskpart_commit(eos_diskpart_t *dp);
+eos_error_t eos_diskpart_commit(eos_part_table_t *dp);
 
 // calculate free/unpartitioned space
-eos_error_t eos_diskpart_free_space(eos_diskpart_t *dp, uint32_t *lba_start_out,
+eos_error_t eos_diskpart_free_space(eos_part_table_t *dp,
+                                    uint32_t *lba_start_out,
                                     uint32_t *lba_size_out);
