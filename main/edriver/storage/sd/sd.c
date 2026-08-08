@@ -8,6 +8,7 @@
 #include "ecore/capsmgr.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
+#include "ecore/ioctl.h"
 
 #include <errno.h>
 
@@ -274,9 +275,7 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
   }
 }
 
-
-
-int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, ...){
+int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, ...) {
   sd_state_t *state = dev->state;
   va_list args;
   va_start(args, cmd);
@@ -289,12 +288,11 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, ...){
     return ret;
   case EOS_STORAGE_IOCTL_GET_CAPACITY:
     uint32_t *capacity = va_arg(args, uint32_t *);
-    *capacity = state->card.csd.capacity; 
+    *capacity = state->card.csd.capacity;
   }
 
   va_end(args);
   return ret;
-
 }
 
 EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {

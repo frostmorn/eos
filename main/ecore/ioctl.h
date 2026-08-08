@@ -29,8 +29,8 @@ EOS_DISPLAY_IOCTL_GET_HEIGHT,
 //=====================================================
 // edriver/storage
 //=====================================================
-EOS_STORAGE_IOCTL_GET_SECTOR_SIZE // uint32_t *sector_size
-EOS_STORAGE_IOCTL_GET_CAPACITY    // uint32_t *capacity
+EOS_STORAGE_IOCTL_GET_SECTOR_SIZE, // uint32_t *sector_size
+EOS_STORAGE_IOCTL_GET_CAPACITY     // uint32_t *capacity
 } eos_ioctl_t;
 
 // (^__^)==\~
