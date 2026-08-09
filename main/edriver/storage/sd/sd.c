@@ -15,8 +15,6 @@
 
 #define BAD_OFFSET -1
 
-// EOS_STORAGE_IOCTL_GET_SECTOR_SIZE // uint32_t *sector_size
-
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
@@ -25,7 +23,7 @@ typedef struct {
   sdspi_dev_handle_t handle;
   spi_host_device_t host;
   eos_part_table_t part_table;
-  off_t offset;
+  off_t offset; // sector-based 
 } sd_state_t;
 
 // ── Init / Shutdown ───────────────────────────────────────────
@@ -108,107 +106,44 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
 }
 
 // ── IO — raw block operations ─────────────────────────────────
-int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) {
+
+int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len)
+{
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
 
-  uint8_t *dst = buf;
-  size_t remaining = len;
-
   size_t sector_size = state->card.csd.sector_size;
-
-  while (remaining) {
-    uint64_t sector = state->offset / sector_size;
-    size_t sector_off = state->offset % sector_size;
-
-    /*
-     * Fast path: whole aligned sectors
-     */
-    if (sector_off == 0 && remaining >= sector_size) {
-      size_t sectors = remaining / sector_size;
-
-      if (sdmmc_read_sectors(&state->card, dst, sector, sectors) != ESP_OK)
-        return -1;
-
-      size_t bytes = sectors * sector_size;
-
-      dst += bytes;
-      remaining -= bytes;
-      state->offset += bytes;
-      continue;
-    }
-
-    /*
-     * Slow path: partial sector
-     */
-    if (sdmmc_read_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
-      return -1;
-
-    size_t copy = sector_size - sector_off;
-    if (copy > remaining)
-      copy = remaining;
-
-    memcpy(dst, state->io_buff + sector_off, copy);
-
-    dst += copy;
-    remaining -= copy;
-    state->offset += copy;
-  }
-
+ 
+  if (len % sector_size != 0){
+    EOS_LOGE("Reading unaligned block with length %d. Sector size is %d", len, sector_size);
+    return -1;  
+  } 
+  
+  size_t cntsectors = len/sector_size;
+ 
+  if (ESP_OK != sdmmc_read_sectors(&state->card, buf, state->offset, cntsectors))
+    return -1;
+  
   return len;
 }
 
 int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
   sd_state_t *state = dev->state;
   if (!state)
-    return -1;
-
-  const uint8_t *src = buf;
-  size_t remaining = len;
-
+    return -1
+;
   size_t sector_size = state->card.csd.sector_size;
-
-  while (remaining) {
-    uint64_t sector = state->offset / sector_size;
-    size_t sector_off = state->offset % sector_size;
-
-    /*
-     * Fast path: whole aligned sectors
-     */
-    if (sector_off == 0 && remaining >= sector_size) {
-      size_t sectors = remaining / sector_size;
-
-      if (sdmmc_write_sectors(&state->card, src, sector, sectors) != ESP_OK)
-        return -1;
-
-      size_t bytes = sectors * sector_size;
-
-      src += bytes;
-      remaining -= bytes;
-      state->offset += bytes;
-      continue;
-    }
-
-    /*
-     * Partial sector: read-modify-write
-     */
-    if (sdmmc_read_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
-      return -1;
-
-    size_t copy = sector_size - sector_off;
-    if (copy > remaining)
-      copy = remaining;
-
-    memcpy(state->io_buff + sector_off, src, copy);
-
-    if (sdmmc_write_sectors(&state->card, state->io_buff, sector, 1) != ESP_OK)
-      return -1;
-
-    src += copy;
-    remaining -= copy;
-    state->offset += copy;
-  }
+ 
+  if (len % sector_size != 0){
+    EOS_LOGE("Writing unaligned block with length %d. Sector size is %d", len, sector_size);
+    return -1;  
+  } 
+  
+  size_t cntsectors = len/sector_size;
+ 
+  if (ESP_OK != sdmmc_write_sectors(&state->card, buf, state->offset, cntsectors))
+    return -1;
 
   return len;
 }
@@ -221,14 +156,7 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
     return BAD_OFFSET;
   }
 
-  // TODO: off_t is a 32 bit signed value, so it means, I can't represent a
-  // whole filesystem as a file, which is heartbreaking
-  EOS_LOGI("sizeof(off_t) = %u", (unsigned)sizeof(off_t));
-  EOS_LOGI("sizeof(long) = %u", (unsigned)sizeof(long));
-  EOS_LOGI("sizeof(long long) = %u", (unsigned)sizeof(long long));
-
-  off_t max_offset =
-      (off_t)state->card.csd.capacity * (off_t)state->card.csd.sector_size;
+  off_t max_offset = (off_t)state->card.csd.capacity;
 
   EOS_LOGI("sd_lseek: offset=%lld whence=%d capacity=%lu sector_size=%lu "
            "max_offset=%lld",
@@ -249,7 +177,7 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
     off_t new_offset = state->offset + offset;
 
     // Scroll back available, huh?
-    if (new_offset >= 0 && offset <= max_offset)
+    if (new_offset >= 0 && new_offset <= max_offset)
       state->offset = new_offset;
     else
       // TODO: errno setup?
