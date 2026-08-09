@@ -1,6 +1,9 @@
 #include "ecore/driver.h"
 #include "emisc/fancymacro.h"
 #include "ecore/device.h"
+#include "ecore/ioctl.h"
+#include "ecore/error.h"
+
 
 bool eos_driver_init_empty(eos_dev_t *dev) {
   EOS_LOGW("Call init() not implemented for driver %s/%s", dev->driver->scope,
@@ -21,6 +24,8 @@ int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len) {
 }
 
 int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, va_list args) {
+  EOS_IOCTL_DEFAULT(dev, cmd, args);
+
   EOS_LOGW("Call ioctl() not implemented for driver %s/%s", dev->driver->scope,
            dev->driver->name);
   return 0;
@@ -55,3 +60,14 @@ eos_driver_t *eos_driver_find(const char *scope, const char *name) {
 bool eos_driver_attach_req_empty(eos_dev_t *dev, eos_dev_t *child){return true;};
 
 bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child){return true;};
+
+int eos_driver_ioctl_default(eos_dev_t *dev, int cmd, va_list args){
+  // TODO: how to explicitly enforce that? 
+  switch(cmd){
+    case EOS_IOCTL_GET_DEV:
+      eos_dev_t* out = va_arg(args, eos_dev_t*);
+      out = dev;
+      return EOS_ERR_NO_ERROR;
+  }
+  return EOS_ERR_NO_ERROR; 
+}

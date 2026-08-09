@@ -205,6 +205,8 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
 }
 
 int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+  EOS_IOCTL_DEFAULT(dev, cmd, args);
+
   sd_state_t *state = dev->state;
   
   int ret = EOS_ERR_NO_ERROR;

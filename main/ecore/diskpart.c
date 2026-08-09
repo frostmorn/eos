@@ -420,6 +420,7 @@ eos_error_t eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out) {
   EOS_LOGI("diskpart: scheme = %s", eos_part_scheme_str(out->scheme));
 
   eos_error_t err = EOS_ERR_NO_ERROR;
+
   switch (out->scheme) {
   case EOS_PART_SCHEME_MBR:
     err = parse_mbr(out);
@@ -441,7 +442,21 @@ eos_error_t eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out) {
 
   EOS_LOGI("diskpart: found %lu partition(s)", (unsigned long)out->count);
 
-  return EOS_ERR_NO_ERROR;
+  for (uint32_t i = 0; i < out->count; i++){
+    EOS_LOGI("diskpart: partition %d -> lba_start = %d; lba_size = %d", 
+      i, 
+      out->parts[i].lba_start, 
+      out->parts[i].lba_size
+    );
+
+    EOS_LOGI("bootable = %d; part_type=%d->%s", 
+      out->parts[i].bootable, 
+      out->parts[i].part_type,
+      eos_part_type_str(out->parts[i].part_type)
+    );
+  }
+
+  return err;
 }
 
 uint32_t eos_diskpart_count(eos_part_table_t *dp) {
