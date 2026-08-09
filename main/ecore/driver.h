@@ -27,6 +27,10 @@ struct eos_driver_t {
   off_t (*lseek)(eos_dev_t *dev, off_t offset, int whence);
   // Deinitializes device
   void (*shutdown)(eos_dev_t *dev);
+
+  // NON-POSIX way to inform driver about child attach/detach
+  bool (*attach_req)(eos_dev_t *dev, eos_dev_t *child);
+  bool (*detach_req)(eos_dev_t *dev, eos_dev_t *child);
 };
 
 //============================================(^_^)==\~
@@ -40,7 +44,8 @@ extern const eos_driver_t _eos_drivers_end[];
 #define EOS_DRIVER_INIT                                                        \
   .init = eos_driver_init_empty, .read = eos_driver_read_empty,                \
   .write = eos_driver_write_empty, .ioctl = eos_driver_ioctl_empty,            \
-  .lseek = eos_driver_lseek_empty, .shutdown = eos_driver_shutdown_empty
+  .lseek = eos_driver_lseek_empty, .shutdown = eos_driver_shutdown_empty,      \
+  .attach_req = eos_driver_attach_req_empty, .detach_req = eos_driver_detach_req_empty
 
 // Seeks for driver with particular scope/name/pair
 eos_driver_t *eos_driver_find(const char *scope, const char *name);
@@ -52,8 +57,12 @@ int eos_driver_read_empty(eos_dev_t *dev, void *buf, size_t len);
 
 int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len);
 
-int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...);
+int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, va_list args);
 
 off_t eos_driver_lseek_empty(eos_dev_t *dev, off_t offset, int whence);
 
 void eos_driver_shutdown_empty(eos_dev_t *dev);
+
+bool eos_driver_attach_req_empty(eos_dev_t *dev, eos_dev_t *child);
+
+bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child);

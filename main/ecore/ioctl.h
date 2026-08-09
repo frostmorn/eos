@@ -13,10 +13,6 @@ EOS_IOCTL_BASE = 100,
 //=====================================================
 // edriver/bus
 //=====================================================
-EOS_BUS_IOCTL_KID_ATTACH, // eos_dev_t *child
-EOS_BUS_IOCTL_KID_DETACH, // eos_dev_t *child
-EOS_BUS_IOCTL_LOCK,       // NOT IMPLEMENTED
-EOS_BUS_IOCTL_UNLOCK,     // NOT IMPLEMENTED
 //=====================================================
 
 //=====================================================

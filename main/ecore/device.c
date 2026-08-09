@@ -85,7 +85,7 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
 
   // Inform bus through ioctl or other way about new device
   bool attachmentAllowed =
-      dev_bus->driver->ioctl(dev_bus, EOS_BUS_IOCTL_KID_ATTACH, dev);
+      dev_bus->driver->attach_req(dev_bus, dev);
 
   // Skip if bus not allowed attachment
   if (!attachmentAllowed)
@@ -133,7 +133,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
 
   // Ask bus permission to detach device
   bool detachAllowed =
-      dev->parent->driver->ioctl(dev->parent, EOS_BUS_IOCTL_KID_DETACH, dev);
+      dev->parent->driver->detach_req(dev->parent, dev);
 
   if (!detachAllowed)
     return EOS_ERR_DEVICE_DETACH_DECLINED_BY_BUS;

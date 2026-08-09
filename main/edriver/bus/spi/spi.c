@@ -60,9 +60,8 @@ bool driver_bus_spi_init(eos_dev_t *dev) {
 
 // ── ioctl ─────────────────────────────────────────────────────
 
-int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
-  va_list args;
-  va_start(args, cmd);
+/*
+int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, va_list args) {
   spi_state_t *state = dev_bus->state;
 
   switch (cmd) {
@@ -72,7 +71,6 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
     // // Claim CS pin for child
     // int32_t cs = eos_pin_get_no(child->pins, "cs_ena_pretrans");
     // if (!eos_cap_alloc(EOS_CAPS_GPIO, cs, child)) {
-    //   va_end(args);
     //   return false;
     // }
 
@@ -80,7 +78,6 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
     // spi_dev_state_t *dev_state = malloc(sizeof(spi_dev_state_t));
     // if (!dev_state) {
     //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
-    //   va_end(args);
     //   return false;
     // }
 
@@ -96,12 +93,10 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
     // if (err != ESP_OK) {
     //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
     //   free(dev_state);
-    //   va_end(args);
     //   return false;
     // }
 
     // child->state = dev_state;
-    // va_end(args);
     return true;
   }
 
@@ -114,14 +109,13 @@ int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, ...) {
       free(dev_state);
       child->state = NULL;
     }
-    va_end(args);
     return true;
   }
   }
 
-  va_end(args);
   return 0;
 }
+*/
 
 void driver_bus_spi_shutdown(eos_dev_t *dev) {
   spi_state_t *state = dev->state;
@@ -141,7 +135,7 @@ EOS_DRIVER_ATTR eos_driver_t driver_bus_spi = {EOS_DRIVER_INIT,
                                                .scope = "bus",
                                                .name = "spi",
                                                .init = driver_bus_spi_init,
-                                               .ioctl = driver_bus_spi_ioctl,
+                                              // .ioctl = driver_bus_spi_ioctl,
                                                .shutdown =
                                                    driver_bus_spi_shutdown};
 

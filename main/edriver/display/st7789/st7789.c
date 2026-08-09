@@ -174,7 +174,6 @@ int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
 int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   st7789_state_t *state = dev->state;
   
-  va_start(args);
   int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {
@@ -188,7 +187,6 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, va_list args) {
     break;
   }
 
-  va_end(args);
   return ret;
 }
 

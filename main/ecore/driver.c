@@ -20,7 +20,7 @@ int eos_driver_write_empty(eos_dev_t *dev, void *buf, size_t len) {
   return 0;
 }
 
-int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, ...) {
+int eos_driver_ioctl_empty(eos_dev_t *dev, int cmd, va_list args) {
   EOS_LOGW("Call ioctl() not implemented for driver %s/%s", dev->driver->scope,
            dev->driver->name);
   return 0;
@@ -51,3 +51,7 @@ eos_driver_t *eos_driver_find(const char *scope, const char *name) {
   assert(0);
   return NULL;
 }
+
+bool eos_driver_attach_req_empty(eos_dev_t *dev, eos_dev_t *child){return true;};
+
+bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child){return true;};
