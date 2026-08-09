@@ -7,10 +7,10 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
 
-#include "ecore/ioctl.h"
-#include "ecore/error.h"
-#include "ecore/driver.h"
 #include "ecore/capsmgr.h"
+#include "ecore/driver.h"
+#include "ecore/error.h"
+#include "ecore/ioctl.h"
 
 // Actual Display dimensions maxima defined by st7789 datasheets
 // We need to know those values to deduce an x/y shifts to make it actually work
@@ -172,9 +172,8 @@ int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
 }
 
 int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, va_list args) {
-  EOS_IOCTL_DEFAULT(dev, cmd, args);
   st7789_state_t *state = dev->state;
-  
+
   int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {

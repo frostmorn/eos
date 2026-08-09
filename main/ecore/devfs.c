@@ -1,7 +1,8 @@
 #include "devfs.h"
-#include "ecore/driver.h"
-#include "emisc/fancymacro.h"
 #include "ecore/device.h"
+#include "ecore/driver.h"
+#include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
@@ -108,6 +109,11 @@ static int devfs_ioctl(void *ctx, int fd, int cmd, va_list args) {
     errno = EBADF;
     return -1;
   }
+  
+  // Any device ioctl 
+  if (cmd <= EOS_IOCTL_BASE)
+    return eos_driver_ioctl_default(dev, cmd, args);
+
   return dev->driver->ioctl(dev, cmd, args);
 }
 

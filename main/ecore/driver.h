@@ -45,15 +45,11 @@ extern const eos_driver_t _eos_drivers_end[];
   .init = eos_driver_init_empty, .read = eos_driver_read_empty,                \
   .write = eos_driver_write_empty, .ioctl = eos_driver_ioctl_empty,            \
   .lseek = eos_driver_lseek_empty, .shutdown = eos_driver_shutdown_empty,      \
-  .attach_req = eos_driver_attach_req_empty, .detach_req = eos_driver_detach_req_empty
-
-// To be run at start of each driver ioctl implementation
-#define EOS_IOCTL_DEFAULT(DEV, CMD, ARGS) if (CMD < EOS_IOCTL_BASE) return \
-   eos_driver_ioctl_default(DEV, CMD, ARGS);
+  .attach_req = eos_driver_attach_req_empty,                                   \
+  .detach_req = eos_driver_detach_req_empty
 
 // Seeks for driver with particular scope/name/pair
 eos_driver_t *eos_driver_find(const char *scope, const char *name);
-
 
 // EMPTY:
 bool eos_driver_init_empty(eos_dev_t *dev);
@@ -73,5 +69,4 @@ bool eos_driver_attach_req_empty(eos_dev_t *dev, eos_dev_t *child);
 bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child);
 
 // DEFAULT:
-// To be called in all driver calls before actual logic happens
 int eos_driver_ioctl_default(eos_dev_t *dev, int cmd, va_list args);
