@@ -8,6 +8,7 @@
 #include <esp_lcd_panel_vendor.h>
 
 #include "ecore/ioctl.h"
+#include "ecore/error.h"
 #include "ecore/driver.h"
 #include "ecore/capsmgr.h"
 
@@ -170,17 +171,20 @@ int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
              : -1;
 }
 
-int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, ...) {
-  va_list args;
-  va_start(args, cmd);
-  int ret = 0;
+int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+  st7789_state_t *state = dev->state;
+  
+  va_start(args);
+  int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {
   case EOS_DISPLAY_IOCTL_GET_WIDTH:
-    return ((st7789_state_t *)dev->state)->width;
+    uint32_t *width = va_arg(args, uint32_t *);
+    *width = state->width;
+    break;
   case EOS_DISPLAY_IOCTL_GET_HEIGHT:
-    return ((st7789_state_t *)dev->state)->height;
-    ret = false; // display is not a bus
+    uint32_t *height = va_arg(args, uint32_t *);
+    *height = state->height;
     break;
   }
 

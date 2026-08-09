@@ -6,6 +6,7 @@
 #include <sdmmc_cmd.h>
 
 #include "ecore/capsmgr.h"
+#include "ecore/error.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
@@ -275,20 +276,21 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
   }
 }
 
-int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, ...) {
+int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   sd_state_t *state = dev->state;
-  va_list args;
-  va_start(args, cmd);
-  int ret = 0;
+  
+  va_start(args);
+  int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {
   case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE:
     uint32_t *sector_size = va_arg(args, uint32_t *);
     *sector_size = state->card.csd.sector_size;
-    return ret;
+    break;
   case EOS_STORAGE_IOCTL_GET_CAPACITY:
     uint32_t *capacity = va_arg(args, uint32_t *);
     *capacity = state->card.csd.capacity;
+    break;
   }
 
   va_end(args);
@@ -300,6 +302,7 @@ EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
     .scope = "storage",
     .name = "sd",
     .lseek = driver_storage_sd_lseek,
+    .ioctl = driver_storage_sd_ioctl,
     .init = driver_storage_sd_init,
     .write = driver_storage_sd_write,
     .read = driver_storage_sd_read,

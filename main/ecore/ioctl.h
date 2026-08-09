@@ -23,8 +23,8 @@ EOS_BUS_IOCTL_UNLOCK,     // NOT IMPLEMENTED
 // edriver/dispay
 //=====================================================
 // Those calls have to return eos_error_t
-EOS_DISPLAY_IOCTL_GET_WIDTH,
-EOS_DISPLAY_IOCTL_GET_HEIGHT,
+EOS_DISPLAY_IOCTL_GET_WIDTH,  // uint32_t *width
+EOS_DISPLAY_IOCTL_GET_HEIGHT, // uint32_t *height
 
 //=====================================================
 // edriver/storage
