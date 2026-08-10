@@ -15,6 +15,7 @@ typedef struct eos_driver_t eos_driver_t;
 struct eos_driver_t {
   char scope[EOS_XSMALL_STR_LEN];
   char name[EOS_XSMALL_STR_LEN];
+  char devname[EOS_XSMALL_STR_LEN];
   // Initializes device
   bool (*init)(eos_dev_t *dev);
   // Basic IO operations:
@@ -46,7 +47,7 @@ extern const eos_driver_t _eos_drivers_end[];
   .write = eos_driver_write_empty, .ioctl = eos_driver_ioctl_empty,            \
   .lseek = eos_driver_lseek_empty, .shutdown = eos_driver_shutdown_empty,      \
   .attach_req = eos_driver_attach_req_empty,                                   \
-  .detach_req = eos_driver_detach_req_empty
+  .detach_req = eos_driver_detach_req_empty, .devname = ""
 
 // Seeks for driver with particular scope/name/pair
 eos_driver_t *eos_driver_find(const char *scope, const char *name);

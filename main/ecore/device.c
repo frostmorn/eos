@@ -1,42 +1,46 @@
 #include "device.h"
-#include "ecore/ioctl.h"
 #include "ecore/driver.h"
+#include "ecore/ioctl.h"
 
 #define EOS_ROOT_DEV eos_devices[0]
 
 EXT_RAM_BSS_ATTR eos_dev_t eos_devices[EOS_MAX_DEVICES];
 
 // Assings per scope id to device
+static bool eos_dev_id_used(eos_dev_t *dev, uint32_t id) {
+  for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
+    eos_dev_t *other = &eos_devices[i];
+
+    if (!other->in_use || other == dev)
+      continue;
+
+    if (other->id != id)
+      continue;
+
+    if (strcmp(other->driver->devname, dev->driver->devname) != 0)
+      continue;
+
+    return true;
+  }
+
+  return false;
+}
+
 void eos_dev_assign_id(eos_dev_t *dev) {
-  uint32_t idx = 0;
-  while (true) {
-    bool taken = false;
-    for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
-      eos_dev_t *d = &eos_devices[i];
-      if (!d->in_use)
-        continue;
-      if (d == dev)
-        continue;
-      if (d->parent != dev->parent)
-        continue;
-      if (strcmp(d->driver->scope, dev->driver->scope) != 0)
-        continue;
-      if (d->id == idx) {
-        taken = true;
-        break;
-      }
-    }
-    if (!taken) {
-      dev->id = idx;
+  for (uint32_t id = 0;; id++) {
+    if (!eos_dev_id_used(dev, id)) {
+      dev->id = id;
       return;
     }
-    idx++;
   }
 }
 
 void eos_dev_assign_name(eos_dev_t *dev) {
-  snprintf(dev->name, EOS_SMALL_STR_LEN, "%s%" PRIu32, dev->driver->scope,
-           dev->id);
+  if (dev->driver->devname[0] != '\0')
+    snprintf(dev->name, EOS_SMALL_STR_LEN, "%s%" PRIu32, dev->driver->devname,
+             dev->id);
+  else
+    dev->name[0] = '\0';
 }
 
 void eos_devtree_init() {
@@ -84,8 +88,7 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
     return EOS_ERR_DEVICE_ALREADY_ATTACHED;
 
   // Inform bus through ioctl or other way about new device
-  bool attachmentAllowed =
-      dev_bus->driver->attach_req(dev_bus, dev);
+  bool attachmentAllowed = dev_bus->driver->attach_req(dev_bus, dev);
 
   // Skip if bus not allowed attachment
   if (!attachmentAllowed)
@@ -132,8 +135,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
     return EOS_ERR_NO_ERROR;
 
   // Ask bus permission to detach device
-  bool detachAllowed =
-      dev->parent->driver->detach_req(dev->parent, dev);
+  bool detachAllowed = dev->parent->driver->detach_req(dev->parent, dev);
 
   if (!detachAllowed)
     return EOS_ERR_DEVICE_DETACH_DECLINED_BY_BUS;

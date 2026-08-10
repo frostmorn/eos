@@ -157,6 +157,7 @@ EOS_DRIVER_ATTR eos_driver_t driver_storage_partition = {
     EOS_DRIVER_INIT,
     .scope = "storage",
     .name = "partition",
+    .devname = "part",
     .init = driver_storage_partition_init,
     .shutdown = driver_storage_partition_shutdown,
     .read = driver_storage_partition_read,

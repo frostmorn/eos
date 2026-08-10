@@ -253,6 +253,7 @@ EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
     EOS_DRIVER_INIT,
     .scope = "storage",
     .name = "sd",
+    .devname = "storage",
     .lseek = driver_storage_sd_lseek,
     .ioctl = driver_storage_sd_ioctl,
     .init = driver_storage_sd_init,

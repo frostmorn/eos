@@ -37,8 +37,6 @@ static eos_dev_t *eos_devfs_path_to_dev(const char *path) {
       continue;
     if (!dev->driver)
       continue;
-    if (dev->child)
-      continue; // buses not openable
     if (strcmp(dev->name, name) == 0)
       return dev;
   }
@@ -61,10 +59,6 @@ static int devfs_open(void *ctx, const char *path, int flags, int mode) {
     errno = ENOENT;
     return -1;
   }
-  if (dev->child) {
-    errno = EISDIR;
-    return -1;
-  } // buses not openable
   if (dev->fd >= 0) {
     errno = EBUSY;
     return -1;
@@ -109,8 +103,8 @@ static int devfs_ioctl(void *ctx, int fd, int cmd, va_list args) {
     errno = EBADF;
     return -1;
   }
-  
-  // Any device ioctl 
+
+  // Any device ioctl
   if (cmd <= EOS_IOCTL_BASE)
     return eos_driver_ioctl_default(dev, cmd, args);
 
@@ -146,10 +140,10 @@ static struct dirent *devfs_readdir(void *ctx, DIR *pdir) {
       continue;
     if (!dev->driver)
       continue;
-    if (dev->child)
-      continue; // skip buses
     if (!dev->parent)
       continue; // skip root
+    if (dev->name[0] == '\0')
+      continue; // skip entries without name
 
     memset(&dir->entry, 0, sizeof(dir->entry));
     dir->entry.d_ino = dir->dev_idx - 1;

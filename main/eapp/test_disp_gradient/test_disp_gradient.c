@@ -15,7 +15,7 @@
 static int test_disp_gradient_main(int argc, char **argv) {
   printf("Starting Display Test App...\n");
 
-  const char *path = argc > 1 ? argv[1] : "/dev/display0";
+  const char *path = argc > 1 ? argv[1] : "/dev/fb0";
 
   int fd = open(path, O_RDWR);
   if (fd < 0) {

@@ -1,5 +1,5 @@
-#include "ecore/ioctl.h"
 #include "ecore/driver.h"
+#include "ecore/ioctl.h"
 #include "includes.h"
 // This driver is always enabled,
 // and represents root bus which is an origin point of our device tree

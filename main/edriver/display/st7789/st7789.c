@@ -221,6 +221,7 @@ EOS_DRIVER_ATTR eos_driver_t driver_display_st7789 = {
     EOS_DRIVER_INIT,
     .scope = "display",
     .name = "st7789",
+    .devname = "fb",
     .init = driver_display_st7789_init,
     .write = driver_display_st7789_write,
     .ioctl = driver_display_st7789_ioctl,

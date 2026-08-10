@@ -51,7 +51,7 @@ static void test_colors(FILE *f) {
 }
 
 int test_disp_colors_main(int argc, char **argv) {
-  const char *path = argc > 1 ? argv[1] : "/dev/display0";
+  const char *path = argc > 1 ? argv[1] : "/dev/fb0";
 
   FILE *f = fopen(path, "w");
 
