@@ -63,10 +63,11 @@ bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child) {
 };
 
 int eos_driver_ioctl_default(eos_dev_t *dev, int cmd, va_list args) {
+  EOS_LOGI("Launching default ioctl() for %s/%s%d", dev->driver->scope, dev->driver->name, dev->id);
   switch (cmd) {
   case EOS_IOCTL_GET_DEV:
-    eos_dev_t *out = va_arg(args, eos_dev_t *);
-    out = dev;
+    eos_dev_t **out = va_arg(args, eos_dev_t **);
+    *out = dev;
     return EOS_ERR_NO_ERROR;
   }
   return EOS_ERR_NO_ERROR;

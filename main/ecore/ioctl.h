@@ -11,7 +11,7 @@ typedef enum{
 //=====================================================
 // any device
 //=====================================================
-EOS_IOCTL_GET_DEV=10,  // eos_dev_t *dev
+EOS_IOCTL_GET_DEV=10,  // eos_dev_t **dev
 
 
 EOS_IOCTL_BASE = 100,

@@ -74,13 +74,37 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   // Gracefully die in case no mem :D
   if (!state->io_buff)
-    abort();
+    return false;
 
   // Print card info
   sdmmc_card_print_info(stdout, &state->card);
 
-  // TODO: Filesystem detection
-  eos_diskpart_parse(dev, &state->part_table);
+  // Read partition table
+  if (eos_diskpart_parse(dev, &state->part_table) != EOS_ERR_NO_ERROR){
+    EOS_LOGE("Something happened during partition table reading\n");
+    return false;
+  }
+
+  // Find generic partition driver
+  eos_driver_t *drv = eos_driver_find("storage", "partition");
+  
+  if (drv == NULL){
+    EOS_LOGE("Can't find a generic partition driver\n");
+    return false;
+  }
+
+  // Attach partitions to device tree
+  for (uint32_t i = 0; i < state->part_table.count; i++){
+    eos_dev_t *part_dev = eos_dev_alloc();
+
+    if (part_dev == NULL)
+    {
+      EOS_LOGE("Can't attach partition to dev tree. Device not allocated\n");
+    }
+
+    part_dev->driver = drv;
+    eos_dev_attach(part_dev, dev);
+  }
 
   return true;
 }
