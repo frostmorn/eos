@@ -19,12 +19,22 @@ typedef struct {
 // ── Init / Shutdown ───────────────────────────────────────────
 
 bool driver_storage_partition_init(eos_dev_t *dev) {
-  // state already set by SD driver — just validate and cache sector size
+  dev->state = malloc(sizeof(partition_state_t));
+
+  memset(dev->state, 0, sizeof(partition_state_t));
+
   if (!dev->state)
     return false;
 
   partition_state_t *state = dev->state;
+
   state->offset = 0;
+
+  eos_part_t *part = eos_cfg_get_ptr(dev->cfg, "part", NULL);
+  if (!part)
+    return false;
+
+  state->info = part;
 
   // get sector size from parent
   uint32_t sector_size = 512; // default

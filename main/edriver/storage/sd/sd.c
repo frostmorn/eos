@@ -97,11 +97,22 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   for (uint32_t i = 0; i < state->part_table.count; i++) {
     eos_dev_t *part_dev = eos_dev_alloc();
 
+    eos_cfg_t cfg[] = {
+        {
+            .key = "part",
+            .type = EOS_CFG_PTR,
+            .val.ptr = &state->part_table.parts[i],
+        },
+        {0},
+    };
+
     if (part_dev == NULL) {
       EOS_LOGE("Can't attach partition to dev tree. Device not allocated\n");
     }
 
     part_dev->driver = drv;
+    part_dev->cfg = cfg;
+    
     eos_dev_attach(part_dev, dev);
   }
 
