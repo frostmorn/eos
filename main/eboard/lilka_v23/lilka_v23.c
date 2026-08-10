@@ -1,9 +1,15 @@
 #include "pregen.h"
 #ifdef EOS_TARGET_LILKAV2
 #include "eboard/board.h"
+#include <esp_flash.h>
 
 void eos_board_init() {
-
+  // ====================== FLASH ======================
+  eos_dev_t *flash = eos_dev_alloc();
+  flash->driver = eos_driver_find("storage", "flash");
+  flash->cfg = (eos_cfg_t[]){{"chip", EOS_CFG_PTR, .val.ptr = esp_flash_default_chip},
+                           {NULL}};
+  eos_dev_attach(flash, eos_devtree_root());
   // ===================== SPI bus =====================
   eos_dev_t *spi = eos_dev_alloc();
   spi->driver = eos_driver_find("bus", "spi");

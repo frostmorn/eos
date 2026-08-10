@@ -1,9 +1,8 @@
 #include "includes.h"
 
 #ifdef EOS_DRIVER_STORAGE_FLASH_ENABLED
-
 #include <esp_flash.h>
-
+#include <spi_flash_mmap.h>
 #include "ecore/device.h"
 #include "ecore/driver.h"
 #include "ecore/error.h"
@@ -32,7 +31,7 @@ bool driver_storage_flash_init(eos_dev_t *dev) {
   memset(state, 0, sizeof(flash_state_t));
   dev->state = state;
 
-  state->chip = esp_flash_default_chip;
+  state->chip = eos_cfg_get_ptr(dev->cfg, "chip", NULL);
 
   if (state->chip == NULL) {
     free(state);
@@ -50,7 +49,7 @@ bool driver_storage_flash_init(eos_dev_t *dev) {
     return false;
   }
 
-  state->sector_size = state->chip->drv->sector_size;
+  state->sector_size = SPI_FLASH_SEC_SIZE;
 
   EOS_LOGI("Flash: size=%lu sector_size=%lu", (unsigned long)state->size,
            (unsigned long)state->sector_size);
@@ -177,7 +176,7 @@ int driver_storage_flash_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   flash_state_t *state = dev->state;
 
   if (!state)
-    return EOS_ERR_INVALID_ARG;
+    return EOS_ERR_DRIVER_INVALID_STATE;
 
   switch (cmd) {
   case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE: {

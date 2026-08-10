@@ -38,9 +38,6 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
 
   // get sector size from parent
   uint32_t sector_size = 512; // default
-  va_list dummy; // ioctl needs va_list — direct call to parent driver
-  dev->parent->driver->ioctl(dev->parent, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
-                             dummy);
   // actually use direct state access since parent is SD
   state->sector_size = sector_size;
 
