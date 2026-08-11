@@ -8,6 +8,7 @@ help:
 	@echo "     (^__^)==\\~ EOS building system ~/==(^__^)     "
 	@echo "===================================================="
 	@echo "  clean       - Cleans object files"
+	@echo "  menuconfig  - Launches configuration menu"
 	@echo "  reconfigure - Reconfigures building system"
 	@echo "  build       - Builds EOS"
 	@echo "  flash       - Flashes firmware"
@@ -21,6 +22,10 @@ help:
 clean:
 	@echo "Cleaning build artifacts..."
 	idf.py fullclean
+
+menuconfig:
+	@echo "Runing build configuration menu"
+	idf.py menuconfig
 
 reconfigure:
 	@echo "Reconfiguring project..."

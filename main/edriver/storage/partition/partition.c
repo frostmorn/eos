@@ -1,3 +1,4 @@
+#include <diskio.h>
 #include "ecore/device.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
@@ -8,10 +9,9 @@
 #ifdef EOS_DRIVER_STORAGE_PARTITION_ENABLED
 
 // ── State ─────────────────────────────────────────────────────
-// set by parent SD driver before attach, partition owns it after
 
 typedef struct {
-  eos_part_t *info; // lba_start, lba_size, type
+  eos_part_info_t *info; // lba_start, lba_size, type
   off_t offset;     // current position in sectors relative to partition start
   uint32_t sector_size; // cached from parent
 } partition_state_t;
@@ -30,7 +30,7 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
 
   state->offset = 0;
 
-  eos_part_t *part = eos_cfg_get_ptr(dev->cfg, "part", NULL);
+  eos_part_info_t *part = eos_cfg_get_ptr(dev->cfg, "part", NULL);
   if (!part)
     return false;
 
@@ -142,6 +142,27 @@ off_t driver_storage_partition_lseek(eos_dev_t *dev, off_t offset, int whence) {
   return state->offset;
 }
 
+bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path){
+  // Allocate a disk no
+  BYTE pdrv;
+  //  ff_diskio_get_drive(&pdrv);
+
+  // Register read/write implementation
+  
+
+  return false;
+}
+
+bool driver_storage_partition_mount(eos_dev_t *dev, const char *path){
+   EOS_LOGI("Trying to mount %s to %s\n", dev->name, path);
+   partition_state_t *state = dev->state;
+    
+   if (eos_diskpart_is_fat(state->info->part_type))
+     return driver_storage_partition_fat_mount(dev, path);
+
+   return false;
+}
+
 int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   partition_state_t *state = dev->state;
 
@@ -156,6 +177,10 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
     *out = state->info->lba_size;
     return EOS_ERR_NO_ERROR;
   }
+  case EOS_STORAGE_IOCTL_MOUNT:
+    const char *path = va_arg(args, const char *);
+    bool *result = va_arg(args, bool *);
+    *result = driver_storage_partition_mount(dev, path);
   }
   return -1;
 }

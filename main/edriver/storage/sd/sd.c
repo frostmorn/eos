@@ -246,16 +246,23 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {
-  case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE:
+  case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE:{
     uint32_t *sector_size = va_arg(args, uint32_t *);
     *sector_size = state->card.csd.sector_size;
     break;
-  case EOS_STORAGE_IOCTL_GET_CAPACITY:
+  }
+  case EOS_STORAGE_IOCTL_GET_CAPACITY:{
     uint32_t *capacity = va_arg(args, uint32_t *);
     *capacity = state->card.csd.capacity;
     break;
   }
-
+  case EOS_STORAGE_IOCTL_MOUNT:{
+    const char *path = va_arg(args, const char *);
+    bool *result = va_arg(args, bool *);
+    *result = false; // Not mountable
+    break;
+  }
+  }
   return ret;
 }
 

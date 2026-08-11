@@ -27,13 +27,14 @@ int mount_main(int argc, char **argv){
 
   int dev_fd = fileno(dev_file);
 
-  eos_dev_t* dev = NULL;
-  ioctl(dev_fd, EOS_IOCTL_GET_DEV, &dev);
+  bool mount_result;
+  ioctl(dev_fd, EOS_STORAGE_IOCTL_MOUNT, mount_path, &mount_result);
 
-  if (dev == NULL){
-    printf("Can't determine device associated with file %s\n", dev_path); 
-    return -1;
+  if (!mount_result){
+    printf("Mount failed\n");
   }
+  
+  
 
   return 0;
   

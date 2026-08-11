@@ -63,26 +63,13 @@ static int ush_readline(char *buf, size_t size) {
 }
 
 int ush_main(int argc, char **argv) {
-  // this is surely a wrong place for that, so, let's assume we would change it
-  // later
-  // TODO: USB Composite device exposal
-  usb_serial_jtag_driver_config_t cfg = {
-      .tx_buffer_size = USH_LINE_MAX,
-      .rx_buffer_size = USH_LINE_MAX,
-  };
-
-  // ESP_ERROR_CHECK(usb_serial_jtag_driver_install(&cfg));
-
-  // usb_serial_jtag_vfs_use_driver();
-
-  // usb_serial_jtag_vfs_use_nonblocking();
-
   printf("\neos shell — type 'help' for available commands\n\n");
 
   char line[USH_LINE_MAX];
 
   for (;;) {
     printf("eos> ");
+    // Why it's not flushed? 
     fflush(stdout);
 
     if (ush_readline(line, sizeof(line)) < 0)
@@ -98,6 +85,8 @@ int ush_main(int argc, char **argv) {
       eos_system("tree /bin");
       continue;
     }
+
+    fflush(stdout);
 
     int ret = eos_system(line);
 

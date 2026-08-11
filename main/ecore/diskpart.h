@@ -119,13 +119,13 @@ typedef struct {
   uint32_t lba_size;
   eos_part_type_t part_type;
   bool bootable;
-} eos_part_t;
+} eos_part_info_t;
 
 typedef struct {
   eos_dev_t *dev;
   eos_part_scheme_t scheme;
   uint32_t count;
-  eos_part_t parts[EOS_MAX_PARTITIONS];
+  eos_part_info_t parts[EOS_MAX_PARTITIONS];
 } eos_part_table_t;
 
 // detect what's on the device and how many partitions
@@ -135,7 +135,7 @@ uint32_t eos_diskpart_count(eos_part_table_t *dp);
 
 // get partition info by index
 eos_error_t eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
-                             eos_part_t *out);
+                             eos_part_info_t *out);
 // ── Partition table creation ──────────────────────────────────
 
 // initialize a fresh MBR partition table on device
@@ -158,3 +158,9 @@ eos_error_t eos_diskpart_commit(eos_part_table_t *dp);
 eos_error_t eos_diskpart_free_space(eos_part_table_t *dp,
                                     uint32_t *lba_start_out,
                                     uint32_t *lba_size_out);
+
+bool eos_diskpart_is_fat(eos_part_type_t type);
+
+// TODO: to be implemented
+eos_dev_t *eos_diskpart_pdrv_to_dev(unsigned char pdrv);
+

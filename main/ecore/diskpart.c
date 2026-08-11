@@ -250,7 +250,7 @@ static eos_error_t parse_mbr(eos_part_table_t *dp) {
     if (dp->count >= EOS_MAX_PARTITIONS)
       break;
 
-    eos_part_t *p = &dp->parts[dp->count++];
+    eos_part_info_t *p = &dp->parts[dp->count++];
     p->lba_start = e->lba_start;
     p->lba_size = e->lba_size;
     p->part_type = e->part_type;
@@ -381,7 +381,7 @@ static eos_error_t parse_gpt(eos_part_table_t *dp) {
     if (memcmp(e->type_guid, GPT_UNUSED_GUID, 16) == 0)
       continue;
 
-    eos_part_t *p = &dp->parts[dp->count++];
+    eos_part_info_t *p = &dp->parts[dp->count++];
     p->lba_start = (uint32_t)e->first_lba;
     p->lba_size = (uint32_t)(e->last_lba - e->first_lba + 1);
     p->part_type = gpt_guid_to_part_type(e->type_guid);
@@ -466,7 +466,7 @@ uint32_t eos_diskpart_count(eos_part_table_t *dp) {
 }
 
 eos_error_t eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
-                             eos_part_t *out) {
+                             eos_part_info_t *out) {
   if (!dp || !out)
     return EOS_ERR_DEVICE_INVALID;
   if (idx >= dp->count)
@@ -513,7 +513,7 @@ eos_error_t eos_diskpart_add(eos_part_table_t *dp, uint32_t lba_start,
       return EOS_ERR_DEVICE_ALREADY_ATTACHED; // overlap
   }
 
-  eos_part_t *p = &dp->parts[dp->count++];
+  eos_part_info_t *p = &dp->parts[dp->count++];
   p->lba_start = lba_start;
   p->lba_size = lba_size;
   p->part_type = part_type;
@@ -532,7 +532,7 @@ eos_error_t eos_diskpart_remove(eos_part_table_t *dp, uint32_t idx) {
   for (uint32_t i = idx; i < dp->count - 1; i++)
     dp->parts[i] = dp->parts[i + 1];
 
-  memset(&dp->parts[--dp->count], 0, sizeof(eos_part_t));
+  memset(&dp->parts[--dp->count], 0, sizeof(eos_part_info_t));
   return EOS_ERR_NO_ERROR;
 }
 
@@ -587,4 +587,25 @@ eos_error_t eos_diskpart_free_space(eos_part_table_t *dp,
   *lba_start_out = highest_end;
   *lba_size_out = last_usable - highest_end;
   return EOS_ERR_NO_ERROR;
+}
+
+bool eos_diskpart_is_fat(eos_part_type_t type){
+  switch(type){
+    case EOS_PART_FAT12:; 
+    case EOS_PART_FAT16_LT32MB:;
+    case EOS_PART_FAT16B:;
+    case EOS_PART_FAT32:;
+    case EOS_PART_FAT32_LBA:; 
+    case EOS_PART_FAT16_LBA:;
+    case EOS_PART_FAT12_HIDDEN:;
+    case EOS_PART_FAT16_HIDDEN:; 
+    case EOS_PART_FAT16B_HIDDEN:;
+    case EOS_PART_FAT32_HIDDEN:;
+    case EOS_PART_FAT32_LBA_HIDDEN:;
+    case EOS_PART_FAT16_LBA_HIDDEN: {
+      return true;
+    }
+    default: return false;
+  }
+  return false;
 }
