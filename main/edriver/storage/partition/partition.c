@@ -1,4 +1,8 @@
 #include <diskio.h>
+#include <diskio_impl.h>
+#include <esp_vfs_fat.h>
+#include <ff.h>
+
 #include "ecore/device.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
@@ -12,9 +16,32 @@
 
 typedef struct {
   eos_part_info_t *info; // lba_start, lba_size, type
-  off_t offset;     // current position in sectors relative to partition start
+  off_t offset; // current position in sectors relative to partition start
   uint32_t sector_size; // cached from parent
+
+  // FatFs mount bookkeeping — EOS_STORAGE_IOCTL_UMOUNT carries no path,
+  // so whatever was used to mount has to be remembered here.
+  bool fat_mounted;
+  BYTE fat_pdrv;
+  FATFS *fat_fs;
+  char fat_path[EOS_SMALL_STR_LEN];
 } partition_state_t;
+
+// Bridges the va_list-based driver->ioctl() signature back to a normal
+// call site. devfs_ioctl() gets its va_list "for free" from the VFS
+// syscall layer; internal driver-to-driver calls (e.g. a partition
+// asking its parent for its sector size) don't have that, so they need
+// a small variadic shim to open one.
+static int eos_dev_ioctl_call(eos_dev_t *dev, int cmd, ...) {
+  if (!dev || !dev->driver || !dev->driver->ioctl)
+    return EOS_ERR_NOT_SUPPORTED;
+
+  va_list args;
+  va_start(args, cmd);
+  int ret = dev->driver->ioctl(dev, cmd, args);
+  va_end(args);
+  return ret;
+}
 
 // ── Init / Shutdown ───────────────────────────────────────────
 
@@ -37,8 +64,13 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
   state->info = part;
 
   // get sector size from parent
-  uint32_t sector_size = 512; // default
-  // actually use direct state access since parent is SD
+  uint32_t sector_size = 512; // fallback if parent can't tell us
+  if (eos_dev_ioctl_call(dev->parent, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
+                         &sector_size) != EOS_ERR_NO_ERROR) {
+    EOS_LOGW("partition: %s failed to query parent sector size, "
+             "defaulting to %lu",
+             dev->name, (unsigned long)sector_size);
+  }
   state->sector_size = sector_size;
 
   EOS_LOGI("partition: %s type=%s lba_start=%lu lba_size=%lu", dev->name,
@@ -142,31 +174,195 @@ off_t driver_storage_partition_lseek(eos_dev_t *dev, off_t offset, int whence) {
   return state->offset;
 }
 
-bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path){
-  // TODO: to be implemented
-  // Global table to store pdrv <> eos_driver relationship
-  // mountpoints?
+// ── FatFs disk IO glue ───────────────────────────────────────────
+//
+// Bridges FatFs's sector-oriented ff_diskio_impl_t callbacks
+// (which only carry a bare pdrv number) back to the eos_dev_t/driver
+// pair that owns that pdrv. Note: since driver_storage_partition_read/
+// write/lseek already clamp everything to [lba_start, lba_start+lba_size),
+// FatFs sees this pdrv as a clean, self-contained disk starting at
+// sector 0 - no MBR needs to live inside the partition itself, plain
+// auto-detect (VolToPart[pdrv] = {pdrv, 0}, the ESP-IDF default) is fine.
 
-  // Allocate a disk no
+static eos_dev_t *s_pdrv_map[FF_VOLUMES] = {NULL};
+
+eos_dev_t *eos_diskpart_pdrv_to_dev(unsigned char pdrv) {
+  if (pdrv >= FF_VOLUMES)
+    return NULL;
+  return s_pdrv_map[pdrv];
+}
+
+static DSTATUS eos_ff_disk_init(BYTE pdrv) {
+  return s_pdrv_map[pdrv] ? 0 : STA_NOINIT;
+}
+
+static DSTATUS eos_ff_disk_status(BYTE pdrv) {
+  return s_pdrv_map[pdrv] ? 0 : STA_NOINIT;
+}
+
+static DRESULT eos_ff_disk_read(BYTE pdrv, BYTE *buff, uint32_t sector,
+                                unsigned count) {
+  eos_dev_t *dev = s_pdrv_map[pdrv];
+  if (!dev)
+    return RES_NOTRDY;
+
+  partition_state_t *state = dev->state;
+  size_t len = (size_t)count * state->sector_size;
+
+  if (dev->driver->lseek(dev, (off_t)sector, SEEK_SET) != (off_t)sector)
+    return RES_ERROR;
+
+  return (dev->driver->read(dev, buff, len) == (int)len) ? RES_OK : RES_ERROR;
+}
+
+static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
+                                 unsigned count) {
+  eos_dev_t *dev = s_pdrv_map[pdrv];
+  if (!dev)
+    return RES_NOTRDY;
+
+  partition_state_t *state = dev->state;
+  size_t len = (size_t)count * state->sector_size;
+
+  if (dev->driver->lseek(dev, (off_t)sector, SEEK_SET) != (off_t)sector)
+    return RES_ERROR;
+
+  return (dev->driver->write(dev, (void *)buff, len) == (int)len) ? RES_OK
+                                                                  : RES_ERROR;
+}
+
+static DRESULT eos_ff_disk_ioctl(BYTE pdrv, BYTE cmd, void *buff) {
+  eos_dev_t *dev = s_pdrv_map[pdrv];
+  if (!dev)
+    return RES_NOTRDY;
+
+  partition_state_t *state = dev->state;
+
+  switch (cmd) {
+  case CTRL_SYNC:
+    return RES_OK;
+  case GET_SECTOR_COUNT:
+    *((DWORD *)buff) = state->info->lba_size;
+    return RES_OK;
+  case GET_SECTOR_SIZE:
+    *((WORD *)buff) = (WORD)state->sector_size;
+    return RES_OK;
+  case GET_BLOCK_SIZE:
+    *((DWORD *)buff) = 1; // no erase-block hint available
+    return RES_OK;
+  default:
+    return RES_PARERR;
+  }
+}
+
+static const ff_diskio_impl_t eos_partition_diskio_impl = {
+    .init = eos_ff_disk_init,
+    .status = eos_ff_disk_status,
+    .read = eos_ff_disk_read,
+    .write = eos_ff_disk_write,
+    .ioctl = eos_ff_disk_ioctl,
+};
+
+bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path) {
   BYTE pdrv;
-  //  ff_diskio_get_drive(&pdrv);
 
-  // ff_diskio_register -> registers read/write implementation for partition/disk???
+  if (ff_diskio_get_drive(&pdrv) != ESP_OK) {
+    EOS_LOGE("partition: no free FatFs drive slots (FF_VOLUMES exhausted)");
+    return false;
+  }
 
-  // Register read/write implementation
-  // esp_vfs_fat_register 
+  s_pdrv_map[pdrv] = dev;
+  ff_diskio_register(pdrv, &eos_partition_diskio_impl);
 
+  char drv[3] = {(char)('0' + pdrv), ':', 0};
+
+  esp_vfs_fat_conf_t conf = {
+      .base_path = path,
+      .fat_drive = drv,
+      .max_files = 4,
+  };
+
+  FATFS *fs;
+  if (esp_vfs_fat_register(&conf, &fs) != ESP_OK) {
+    EOS_LOGE("partition: esp_vfs_fat_register failed for %s", path);
+    goto fail;
+  }
+
+  FRESULT res = f_mount(fs, drv, 1 /* force mount now */);
+  if (res != FR_OK) {
+    EOS_LOGE("partition: f_mount(%s) failed, FRESULT=%d", drv, res);
+    esp_vfs_fat_unregister_path(path);
+    goto fail;
+  }
+
+  partition_state_t *state = dev->state;
+  state->fat_mounted = true;
+  state->fat_pdrv = pdrv;
+  state->fat_fs = fs;
+  strlcpy(state->fat_path, path, sizeof(state->fat_path));
+
+  EOS_LOGI("partition: mounted %s at %s (pdrv=%d)", dev->name, path, pdrv);
+  return true;
+
+fail:
+  ff_diskio_register(pdrv, NULL);
+  s_pdrv_map[pdrv] = NULL;
   return false;
 }
 
-bool driver_storage_partition_mount(eos_dev_t *dev, const char *path){
-   EOS_LOGI("Trying to mount %s to %s\n", dev->name, path);
-   partition_state_t *state = dev->state;
-    
-   if (eos_diskpart_is_fat(state->info->part_type))
-     return driver_storage_partition_fat_mount(dev, path);
+bool driver_storage_partition_fat_umount(eos_dev_t *dev) {
+  partition_state_t *state = dev->state;
+  if (!state || !state->fat_mounted)
+    return false;
 
-   return false;
+  char drv[3] = {(char)('0' + state->fat_pdrv), ':', 0};
+
+  // Unmount FatFs first (fs=NULL, opt=0 just detaches the volume) - do
+  // this before tearing down the VFS registration/diskio glue, or FatFs
+  // could still try to touch a pdrv that's no longer backed by anything.
+  FRESULT res = f_mount(NULL, drv, 0);
+  if (res != FR_OK) {
+    EOS_LOGE("partition: f_mount(NULL, %s) failed, FRESULT=%d", drv, res);
+    return false;
+  }
+
+  esp_vfs_fat_unregister_path(state->fat_path);
+  ff_diskio_register(state->fat_pdrv, NULL);
+  s_pdrv_map[state->fat_pdrv] = NULL;
+
+  EOS_LOGI("partition: unmounted %s from %s (pdrv=%d)", dev->name,
+           state->fat_path, state->fat_pdrv);
+
+  state->fat_mounted = false;
+  state->fat_pdrv = 0;
+  state->fat_fs = NULL;
+  state->fat_path[0] = '\0';
+
+  return true;
+}
+
+bool driver_storage_partition_umount(eos_dev_t *dev) {
+  partition_state_t *state = dev->state;
+  if (!state)
+    return false;
+
+  // Currently the only mount type is FatFs; this is the dispatch point
+  // to extend if/when other filesystem types are supported.
+  if (state->fat_mounted)
+    return driver_storage_partition_fat_umount(dev);
+
+  EOS_LOGW("partition: %s is not mounted", dev->name);
+  return false;
+}
+
+bool driver_storage_partition_mount(eos_dev_t *dev, const char *path) {
+  EOS_LOGI("Trying to mount %s to %s\n", dev->name, path);
+  partition_state_t *state = dev->state;
+
+  if (eos_diskpart_is_fat(state->info->part_type))
+    return driver_storage_partition_fat_mount(dev, path);
+
+  return false;
 }
 
 int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
@@ -183,15 +379,15 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
     *out = state->info->lba_size;
     break;
   }
-  case EOS_STORAGE_IOCTL_MOUNT:{
+  case EOS_STORAGE_IOCTL_MOUNT: {
     const char *path = va_arg(args, const char *);
     bool *result = va_arg(args, bool *);
     *result = driver_storage_partition_mount(dev, path);
     break;
   }
-  case EOS_STORAGE_IOCTL_UMOUNT:{
-    // TODO: to be implemented
+  case EOS_STORAGE_IOCTL_UMOUNT: {
     bool *result = va_arg(args, bool *);
+    *result = driver_storage_partition_umount(dev);
     break;
   }
   }
