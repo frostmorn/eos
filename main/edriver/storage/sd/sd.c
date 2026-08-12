@@ -262,6 +262,11 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
     *result = false; // Not mountable
     break;
   }
+  case EOS_STORAGE_IOCTL_UMOUNT:{
+    bool *result = va_arg(args, bool *);
+    *result = false; // Nothing to unmount
+    break;
+  }
   }
   return ret;
 }

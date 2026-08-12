@@ -143,6 +143,10 @@ off_t driver_storage_partition_lseek(eos_dev_t *dev, off_t offset, int whence) {
 }
 
 bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path){
+  // TODO: to be implemented
+  // Global table to store pdrv <> eos_driver relationship
+  // mountpoints?
+
   // Allocate a disk no
   BYTE pdrv;
   //  ff_diskio_get_drive(&pdrv);
@@ -172,19 +176,26 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE: {
     uint32_t *out = va_arg(args, uint32_t *);
     *out = state->sector_size;
-    return EOS_ERR_NO_ERROR;
+    break;
   }
   case EOS_STORAGE_IOCTL_GET_CAPACITY: {
     uint32_t *out = va_arg(args, uint32_t *);
     *out = state->info->lba_size;
-    return EOS_ERR_NO_ERROR;
+    break;
   }
-  case EOS_STORAGE_IOCTL_MOUNT:
+  case EOS_STORAGE_IOCTL_MOUNT:{
     const char *path = va_arg(args, const char *);
     bool *result = va_arg(args, bool *);
     *result = driver_storage_partition_mount(dev, path);
+    break;
   }
-  return -1;
+  case EOS_STORAGE_IOCTL_UMOUNT:{
+    // TODO: to be implemented
+    bool *result = va_arg(args, bool *);
+    break;
+  }
+  }
+  return EOS_ERR_NO_ERROR;
 }
 
 EOS_DRIVER_ATTR eos_driver_t driver_storage_partition = {
