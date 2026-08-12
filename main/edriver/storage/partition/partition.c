@@ -147,8 +147,10 @@ bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path){
   BYTE pdrv;
   //  ff_diskio_get_drive(&pdrv);
 
+  // ff_diskio_register -> registers read/write implementation for partition/disk???
+
   // Register read/write implementation
-  
+  // esp_vfs_fat_register 
 
   return false;
 }

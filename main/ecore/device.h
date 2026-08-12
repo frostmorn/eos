@@ -33,9 +33,6 @@ struct eos_dev_t {
   // Indicates if device slot is in use
   bool in_use;
 
-  // Way to identify a specific device on a bus,
-  // also does it's part in dev path name generation on a filesystem
-
   // devfs
   uint32_t id;
 
@@ -60,7 +57,7 @@ eos_dev_t *eos_devtree_root();
 eos_dev_t *eos_dev_alloc();
 
 // Attaches device to EOS device tree
-eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus);
+eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent);
 
 // Detaches device and all it's childs from EOS device tree
 eos_error_t eos_dev_detach(eos_dev_t *dev);

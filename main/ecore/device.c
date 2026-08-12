@@ -74,13 +74,13 @@ eos_dev_t *eos_dev_alloc() {
 }
 
 // Attaches device to EOS device tree
-eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
+eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   // Args check
   if (dev == NULL || (!dev->in_use))
     return EOS_ERR_DEVICE_INVALID;
-  if (dev_bus == NULL || (!dev_bus->in_use))
-    return EOS_ERR_DEVICE_BUS_INVALID;
-  if (dev == dev_bus)
+  if (parent == NULL || (!parent->in_use))
+    return EOS_ERR_DEVICE_PARENT_INVALID;
+  if (dev == parent)
     return EOS_ERR_DEVICE_INVALID;
 
   // Check if device already attached
@@ -88,21 +88,21 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *dev_bus) {
     return EOS_ERR_DEVICE_ALREADY_ATTACHED;
 
   // Inform bus through ioctl or other way about new device
-  bool attachmentAllowed = dev_bus->driver->attach_req(dev_bus, dev);
+  bool attachmentAllowed = parent->driver->attach_req(parent, dev);
 
   // Skip if bus not allowed attachment
   if (!attachmentAllowed)
-    return EOS_ERR_DEVICE_ATTACH_DECLINED_BY_BUS;
+    return EOS_ERR_DEVICE_ATTACH_DECLINED;
 
   // Preparing device for an attachment
-  dev->parent = dev_bus;
+  dev->parent = parent;
   dev->next = NULL;
 
   // Seek for a correct place
-  if (dev_bus->child == NULL) {
-    dev_bus->child = dev;
+  if (parent->child == NULL) {
+    parent->child = dev;
   } else {
-    eos_dev_t *cur = dev_bus->child;
+    eos_dev_t *cur = parent->child;
 
     while (cur->next != NULL)
       cur = cur->next;
@@ -138,7 +138,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   bool detachAllowed = dev->parent->driver->detach_req(dev->parent, dev);
 
   if (!detachAllowed)
-    return EOS_ERR_DEVICE_DETACH_DECLINED_BY_BUS;
+    return EOS_ERR_DEVICE_DETACH_DECLINED;
 
   // Recursively detach all children first
   eos_dev_t *child = dev->child;
