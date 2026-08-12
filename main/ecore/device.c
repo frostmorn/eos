@@ -167,3 +167,20 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
 
   return EOS_ERR_NO_ERROR;
 }
+
+// Bridges the va_list-based driver->ioctl() signature back to a normal
+// call site. devfs_ioctl() gets its va_list "for free" from the VFS
+// syscall layer; internal driver-to-driver calls (e.g. a partition
+// asking its parent for its sector size) don't have that, so they need
+// a small variadic shim to open one.
+int eos_dev_ioctl_call(eos_dev_t *dev, int cmd, ...) {
+  if (!dev || !dev->driver || !dev->driver->ioctl)
+    return EOS_ERR_NOT_SUPPORTED;
+
+  va_list args;
+  va_start(args, cmd);
+  int ret = dev->driver->ioctl(dev, cmd, args);
+  va_end(args);
+  return ret;
+}
+

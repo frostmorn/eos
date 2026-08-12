@@ -27,22 +27,6 @@ typedef struct {
   char fat_path[EOS_SMALL_STR_LEN];
 } partition_state_t;
 
-// Bridges the va_list-based driver->ioctl() signature back to a normal
-// call site. devfs_ioctl() gets its va_list "for free" from the VFS
-// syscall layer; internal driver-to-driver calls (e.g. a partition
-// asking its parent for its sector size) don't have that, so they need
-// a small variadic shim to open one.
-static int eos_dev_ioctl_call(eos_dev_t *dev, int cmd, ...) {
-  if (!dev || !dev->driver || !dev->driver->ioctl)
-    return EOS_ERR_NOT_SUPPORTED;
-
-  va_list args;
-  va_start(args, cmd);
-  int ret = dev->driver->ioctl(dev, cmd, args);
-  va_end(args);
-  return ret;
-}
-
 // ── Init / Shutdown ───────────────────────────────────────────
 
 bool driver_storage_partition_init(eos_dev_t *dev) {
@@ -183,7 +167,7 @@ off_t driver_storage_partition_lseek(eos_dev_t *dev, off_t offset, int whence) {
 // FatFs sees this pdrv as a clean, self-contained disk starting at
 // sector 0 - no MBR needs to live inside the partition itself, plain
 // auto-detect (VolToPart[pdrv] = {pdrv, 0}, the ESP-IDF default) is fine.
-
+// TODO: try to store it in a global  mtab
 static eos_dev_t *s_pdrv_map[FF_VOLUMES] = {NULL};
 
 eos_dev_t *eos_diskpart_pdrv_to_dev(unsigned char pdrv) {

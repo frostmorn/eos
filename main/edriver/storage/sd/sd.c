@@ -194,10 +194,10 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
 
   off_t max_offset = (off_t)state->card.csd.capacity;
 
-  EOS_LOGI("sd_lseek: offset=%lld whence=%d capacity=%lu sector_size=%lu "
-           "max_offset=%lld",
-           (long long)offset, whence, (unsigned long)state->card.csd.capacity,
-           (unsigned long)state->card.csd.sector_size, (long long)max_offset);
+//  EOS_LOGI("sd_lseek: offset=%lld whence=%d capacity=%lu sector_size=%lu "
+//           "max_offset=%lld",
+//           (long long)offset, whence, (unsigned long)state->card.csd.capacity,
+//           (unsigned long)state->card.csd.sector_size, (long long)max_offset);
 
   switch (whence) {
   case SEEK_SET: {

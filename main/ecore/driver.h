@@ -71,3 +71,6 @@ bool eos_driver_detach_req_empty(eos_dev_t *dev, eos_dev_t *child);
 
 // DEFAULT:
 int eos_driver_ioctl_default(eos_dev_t *dev, int cmd, va_list args);
+
+// SPECIAL:
+

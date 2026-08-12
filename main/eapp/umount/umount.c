@@ -32,7 +32,7 @@ int umount_main(int argc, char **argv){
     printf("unmount failed\n");
   }
   
-  
+  fclose(dev_file); 
 
   return 0;
   
