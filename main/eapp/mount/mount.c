@@ -19,7 +19,6 @@ int mount_main(int argc, char **argv){
   // Actual mounting would be done by  EOS
   FILE *dev_file = fopen(dev_path, "r");
 
-  // TODO: implement fioctl() helper
   if (!dev_file) {
     printf("Can't open device file. Is it in use?\n");
     return -1;
@@ -34,7 +33,7 @@ int mount_main(int argc, char **argv){
     printf("Mount failed\n");
   }
   
-  
+  fclose(dev_file); 
 
   return 0;
   
