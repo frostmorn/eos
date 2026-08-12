@@ -43,7 +43,7 @@ monitor:
 	@echo "Starting serial monitor..."
 	idf.py monitor
 symbols:
-	nm ${FIRMWARE_ELF}|less
+	readelf ${FIRMWARE_ELF} -s -X|less
 
 debug:
 	tools/./debug_${TARGET}.sh ${FIRMWARE_ELF} 
