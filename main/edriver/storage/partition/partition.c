@@ -8,6 +8,7 @@
 #include "ecore/driver.h"
 #include "ecore/error.h"
 #include "ecore/ioctl.h"
+#include "ecore/rootfs.h"
 #include "includes.h"
 
 #ifdef EOS_DRIVER_STORAGE_PARTITION_ENABLED
@@ -24,7 +25,7 @@ typedef struct {
   bool fat_mounted;
   BYTE fat_pdrv;
   FATFS *fat_fs;
-  char fat_path[EOS_SMALL_STR_LEN];
+  char mount_path[EOS_SMALL_STR_LEN];
 } partition_state_t;
 
 // ── Init / Shutdown ───────────────────────────────────────────
@@ -283,7 +284,10 @@ bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path) {
   state->fat_mounted = true;
   state->fat_pdrv = pdrv;
   state->fat_fs = fs;
-  strlcpy(state->fat_path, path, sizeof(state->fat_path));
+  strlcpy(state->mount_path, path, sizeof(state->mount_path));
+
+  // Register in EOS
+  eos_vfs_register_dummy(path);
 
   EOS_LOGI("partition: mounted %s at %s (pdrv=%d)", dev->name, path, pdrv);
   return true;
@@ -310,17 +314,21 @@ bool driver_storage_partition_fat_umount(eos_dev_t *dev) {
     return false;
   }
 
-  esp_vfs_fat_unregister_path(state->fat_path);
   ff_diskio_register(state->fat_pdrv, NULL);
   s_pdrv_map[state->fat_pdrv] = NULL;
 
+  // Unregister in EOS
+  esp_vfs_fat_unregister_path(state->mount_path);
+
   EOS_LOGI("partition: unmounted %s from %s (pdrv=%d)", dev->name,
-           state->fat_path, state->fat_pdrv);
+           state->mount_path, state->fat_pdrv);
+
+  eos_vfs_unregister_dummy(state->mount_path);
 
   state->fat_mounted = false;
   state->fat_pdrv = 0;
   state->fat_fs = NULL;
-  state->fat_path[0] = '\0';
+  state->mount_path[0] = '\0';
 
   return true;
 }
@@ -332,10 +340,12 @@ bool driver_storage_partition_umount(eos_dev_t *dev) {
 
   // Currently the only mount type is FatFs; this is the dispatch point
   // to extend if/when other filesystem types are supported.
-  if (state->fat_mounted)
+  if (state->fat_mounted){
     return driver_storage_partition_fat_umount(dev);
+  }
 
   EOS_LOGW("partition: %s is not mounted", dev->name);
+
   return false;
 }
 

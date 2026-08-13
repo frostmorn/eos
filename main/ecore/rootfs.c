@@ -8,26 +8,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
-// (^__^)==\~ HECK_STORY_BEGIN 
+// TODO: something should be exposed by esp-idf to access that count
+#define EOS_MAX_VFS 10
 
-// yeah yeah, we do know those exist
-
-// Consult espressif/components/vfs/private_include/esp_vfs_private.h if api changes
-// Current implementation provided for espressif 6.0.2 version
-
-typedef struct vfs_entry_ {
-    int flags;                   /*!< ESP_VFS_FLAG_CONTEXT_PTR and/or ESP_VFS_FLAG_READONLY_FS or ESP_VFS_FLAG_DEFAULT */
-    const esp_vfs_fs_ops_t *vfs; /*!< contains pointers to VFS functions */
-    void *ctx;                   /*!< optional pointer which can be passed to VFS */
-    int offset;                  /*!< index of this structure in s_vfs array */
-    size_t path_prefix_len;      /*!< micro-optimization to avoid doing extra strlen, contains length of the string, not the size of path_prefix array */
-    const char path_prefix[]; /*!< path prefix mapped to this VFS */
-} vfs_entry_t;
-
-extern vfs_entry_t * s_vfs;
-extern size_t s_vfs_count;
-
-// HECK_STORY_END (^__^)==\~
+// TODO: cry on espressif platform github about s_vfs/s_vfs_count exposal or at least normal API for that matter
+static char eos_vfs_list[EOS_MAX_VFS][ESP_VFS_PATH_MAX];
 
 // ── Dir state ─────────────────────────────────────────────────
 
@@ -66,16 +51,23 @@ static int rootfs_stat(void *ctx, const char *path, struct stat *st) {
   }
 
   // root itself
-  if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) {
+  if (strcmp(path, "/") == 0 || strcmp(path, "") == 0) goto ok;
+
+  // another vfs   
+  for (uint32_t i = 0; i < EOS_MAX_VFS; i++){
+     // TODO: trailing slash
+    if (strcmp(eos_vfs_list[i], path) == 0) goto ok;
+  }
+  
+  goto fail; // lol, fail^2
+  fail:
+    errno = ENOENT;
+    return -1;
+
+  ok:
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFDIR | 0555;
     return 0;
-  }
-
-  // TODO:
-
-  errno = ENOENT;
-  return -1;
 }
 
 static DIR *rootfs_opendir(void *ctx, const char *path) {
@@ -96,10 +88,26 @@ static DIR *rootfs_opendir(void *ctx, const char *path) {
 
 static struct dirent *rootfs_readdir(void *ctx, DIR *pdir) {
   rootfs_dir_t *dir = (rootfs_dir_t *)pdir;
-
+  
+  // static? hmmmmm, probably ok
   static struct dirent s_entry;
+ 
+  for (int i = dir->idx; i < EOS_MAX_VFS; i++){
+    const char *vfs = eos_vfs_list[i];
 
-  // TODO:
+    // It sucks, but can happen on register/unregister
+    if (vfs[0] == '\0') continue;
+
+    memset(&s_entry, 0, sizeof(struct dirent));
+   
+    s_entry.d_type = DT_DIR;
+    s_entry.d_ino = (ino_t)i + 1; // whom gonna use that
+
+    strlcpy(s_entry.d_name, vfs+1, sizeof(s_entry.d_name));
+    
+    dir->idx = i+1;
+    return &s_entry;
+  } 
 
   return NULL; // end of list
 }
@@ -123,9 +131,56 @@ static long rootfs_telldir(void *ctx, DIR *pdir) {
   return (long)dir->idx;
 }
 
+
+void eos_vfs_register_dummy(const char *base_path){
+  // find slot
+  for (uint32_t i = 0; i < EOS_MAX_VFS; i++){
+    if (eos_vfs_list[i][0] == '\0'){
+      strlcpy(eos_vfs_list[i], base_path, ESP_VFS_PATH_MAX);
+      break;
+    }
+  }
+}
+
+esp_err_t eos_vfs_register(const char* base_path, const esp_vfs_t* vfs, void* ctx){
+
+  esp_err_t err = esp_vfs_register(base_path, vfs, ctx);
+
+  if (err != ESP_OK) return err;
+
+  eos_vfs_register_dummy(base_path);
+
+  return err;
+}
+
+void eos_vfs_unregister_dummy(const char *base_path){
+  for (uint32_t i = 0; i < EOS_MAX_VFS; i++){
+    if (strcmp(eos_vfs_list[i], base_path) == 0){
+      memset(eos_vfs_list[i], 0, ESP_VFS_PATH_MAX);
+    }
+  }
+}
+
+esp_err_t eos_vfs_unregister(const char* base_path){
+  
+  EOS_LOGE("Unregistering %s\n", base_path);
+  
+  esp_err_t err = esp_vfs_unregister(base_path);
+
+  if (err != ESP_OK) return err;
+ 
+  eos_vfs_unregister_dummy(base_path); 
+
+  return err;
+}
 // ── Init ──────────────────────────────────────────────────────
 
 void eos_rootfs_init(void) {
+  // Zero memory
+  for (uint32_t i = 0; i < EOS_MAX_VFS; i++){
+    memset(eos_vfs_list[i], 0, ESP_VFS_PATH_MAX);
+  }
+
   static const esp_vfs_t vfs = {
       .flags = ESP_VFS_FLAG_CONTEXT_PTR,
       .open_p = rootfs_open,
@@ -141,5 +196,5 @@ void eos_rootfs_init(void) {
   };
 
   esp_vfs_register("", &vfs, NULL);
-  EOS_LOGI("rootfs: mounted at ");
+  EOS_LOGI("rootfs: mounted");
 }

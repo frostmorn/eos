@@ -3,13 +3,8 @@
 #include <stdio.h>
 
 
-int ls_main(int argc, char **argv){
-  if (argc < 2) {
-    printf("usage: ls <path>\n");
-    return -1;
-  }
-  
-  const char *path = argv[1];
+int ls_main(int argc, char **argv){  
+  const char *path = (argc < 2) ? "/" : argv[1];
 
   DIR *dir = opendir(path);
 

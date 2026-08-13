@@ -2,6 +2,7 @@
 #include "ecore/device.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "ecore/rootfs.h"
 #include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <errno.h>
@@ -192,6 +193,6 @@ void eos_devfs_init() {
       .closedir_p = devfs_closedir,
   };
 
-  esp_vfs_register(EOS_DEVFS_ROOT, &vfs, NULL);
+  eos_vfs_register(EOS_DEVFS_ROOT, &vfs, NULL);
   EOS_LOGI("devfs mounted at %s", EOS_DEVFS_ROOT);
 }

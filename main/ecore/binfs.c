@@ -1,5 +1,6 @@
 #include "binfs.h"
 #include "emisc/fancymacro.h"
+#include "ecore/rootfs.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
@@ -285,7 +286,7 @@ void eos_binfs_init(void) {
       .closedir_p = binfs_closedir,
   };
 
-  esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
+  eos_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
   EOS_LOGI("binfs mounted at %s with %d registered apps", EOS_BINFS_ROOT,
            binfs_app_count());
 }

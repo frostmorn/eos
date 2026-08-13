@@ -66,13 +66,15 @@ static void tree_walk(const char *path, int depth, bool *last_flags) {
 }
 
 int tree_main(int argc, char **argv) {
-  if (argc < 2) {
-    printf("usage: tree <path>\n");
-    return 1;
-  }
-  printf("%s\n", argv[1]);
-  tree_walk(argv[1], 0, NULL);
+
+  const char *path = (argc < 2)? "/": argv[1];
+
+  printf("%s\n", path);
+
+  tree_walk(path, 0, NULL);
+
   printf("\n");
+
   return 0;
 }
 
