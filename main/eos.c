@@ -4,7 +4,7 @@
 #include "ecore/capsmgr.h"
 #include "ecore/devfs.h"
 #include "ecore/device.h"
-#include "ecore/rootvfs.h"
+#include "ecore/rootfs.h"
 #include <stdio.h>
 
 void app_main(void) {
