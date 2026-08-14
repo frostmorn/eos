@@ -43,17 +43,27 @@
 
 #define EOS_NATIVE_APP_MAGIC 0x0C0A00AC
 
+
+// Application manifest
 typedef struct {
+  // Magic number which allows us to distingiush eos app from something else
   uint32_t magic;
+  // Various flags whose may or may not influence an app launch
+  uint32_t flags;
+  // filename used to expose file via binfs
   char filename[EOS_SMALL_STR_LEN];
+  // name to be used in GUI menus, etc.
   char name[EOS_SMALL_STR_LEN];
+  // group to be used in GUI menus, etc
   char group[EOS_XSMALL_STR_LEN];
+  // description to be used in GUI menus, etc.
   char description[EOS_MID_STR_LEN];
+  // entry point of our application
   int (*entry_point)(int argc, char **argv);
 } eos_native_app_manifest_t;
 
 #define EOS_NATIVE_APP_INIT                                                    \
-  .magic = EOS_NATIVE_APP_MAGIC, .filename = "", .name = "", .group = "",      \
+  .magic = EOS_NATIVE_APP_MAGIC, .flags = 0, .filename = "", .name = "", .group = "",      \
   .description = "", .entry_point = eos_native_app_entry_point_empty
 
 #define EOS_NATIVE_APP_ATTR __attribute__((section(".eos_apps"))) const
