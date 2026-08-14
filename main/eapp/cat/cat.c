@@ -12,8 +12,10 @@ int cat_main(int argc, char **argv){
 
   char buffer[CAT_BUFFER_SIZE];
 
-  if (argc < 2)
+  if (argc < 2){
     printf("cat: Usage cat <filename>\n");
+    return -1;
+  }
 
   const char* path = argv[1];  
  
