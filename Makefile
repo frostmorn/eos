@@ -44,6 +44,8 @@ monitor:
 	idf.py monitor
 symbols:
 	readelf ${FIRMWARE_ELF} -s -X|less
+disasm:
+	xtensa-esp32-elf-objdump -D build/eos.elf|less
 
 debug:
 	tools/./debug_${TARGET}.sh ${FIRMWARE_ELF} 
