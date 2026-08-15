@@ -5,6 +5,7 @@
 #include "ecore/devfs.h"
 #include "ecore/device.h"
 #include "ecore/rootfs.h"
+#include "ecore/appctx.h"
 #include <stdio.h>
 
 void app_main(void) {
@@ -14,7 +15,7 @@ void app_main(void) {
   eos_board_init();
   eos_devfs_init();
   eos_binfs_init();
-
+  eos_app_ctx_init();
   // Run shell
   eos_system("ush");
 }

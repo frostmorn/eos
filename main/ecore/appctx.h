@@ -42,15 +42,15 @@ struct eos_app_ctx_t{
   int fds[EOS_APP_FD_MAX];
  
   // TODO: memtracking maybe
- 
-  // Context tree
-  eos_app_ctx_t *next;
-  eos_app_ctx_t *kid;
-  eos_app_ctx_t *current; 
-};
 
-// Root context for an EOS system.
-eos_app_ctx_t *root_ctx;
+  // app params
+  int argc;
+  char **argv;
+ 
+  // linked list
+  eos_app_ctx_t *parent;
+  eos_app_ctx_t *kid;
+};
 
 // Retrieves current application context
 eos_app_ctx_t *eos_get_current_app_ctx();
