@@ -8,6 +8,14 @@ idf_component_register(
     LDFRAGMENTS "eld/app.lf"
 )
 
+target_link_libraries(
+${COMPONENT_LIB} INTERFACE
+"-Wl,--wrap=_open_r"
+"-Wl,--wrap=_stat_r"
+"-Wl,--wrap=_unlink_r"
+"-Wl,--wrap=_rename_r"
+)
+
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-error=override-init
 )
