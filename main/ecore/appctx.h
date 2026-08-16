@@ -21,6 +21,7 @@
 
 #include <limits.h> // PATH_MAX
 #include <pthread.h>
+#include "emisc/fancytree.h"
 
 // Default working directory
 #define EOS_APP_CWD "/"
@@ -47,10 +48,17 @@ struct eos_app_ctx_t{
   int argc;
   char **argv;
  
-  // linked list
+  // Context tree (first child + next sibling - see ecore/tree.h).
+  // A parent's contexts can have any number of kids, unlike the
+  // single-child chain this used to be.
   eos_app_ctx_t *parent;
-  eos_app_ctx_t *kid;
+  eos_app_ctx_t *child;
+  eos_app_ctx_t *next;
 };
+
+// Generates eos_app_ctx_t_tree_{attach,detach,detach_subtree,walk} -
+// see emisc/fancytree.h for what each one does.
+EOS_TREE_DECLARE(eos_app_ctx_t);
 
 // Retrieves current application context
 eos_app_ctx_t *eos_get_current_app_ctx();
@@ -63,4 +71,5 @@ void eos_app_ctx_free(eos_app_ctx_t *actx);
 
 // Inits root_ctx and prepares system to work with it
 void eos_app_ctx_init();
+
 

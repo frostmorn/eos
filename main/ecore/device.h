@@ -6,6 +6,7 @@
 #include "includes.h"
 #include "emisc/strlimits.h"
 #include "emisc/types.h"
+#include "emisc/fancytree.h"
 
 ///////////////////////////////////////////////////////
 // Structure representing device in EOS dev tree
@@ -42,6 +43,12 @@ struct eos_dev_t {
   // devfs
   int fd;
 };
+
+// Generates eos_dev_t_tree_{attach,detach,detach_subtree,walk} -
+// see emisc/fancytree.h for what each one does. eos_dev_attach/detach
+// below wrap these with driver-specific permission checks and
+// id/name assignment.
+EOS_TREE_DECLARE(eos_dev_t);
 
 // Mostly for devfs usage. Do not use for other purposes
 extern eos_dev_t eos_devices[EOS_MAX_DEVICES];

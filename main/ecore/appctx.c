@@ -3,21 +3,35 @@
 #include "emisc/fancymacro.h"
 #include "ecore/error.h"
 
+// Generates eos_app_ctx_t_tree_attach/detach/detach_subtree/walk,
+// operating on this struct's parent/child/next fields (see
+// ecore/tree.h - the same generated logic backs the device tree).
+EOS_TREE_DEFINE(eos_app_ctx_t);
+
 // Root context for an EOS system
 static eos_app_ctx_t *eos_root_ctx;
 
+typedef struct {
+  pthread_t target;
+  eos_app_ctx_t *found;
+} eos_app_ctx_lookup_t;
+
+static bool eos_app_ctx_lookup_visit(eos_app_ctx_t *ctx, void *vctx){
+  eos_app_ctx_lookup_t *lookup = (eos_app_ctx_lookup_t *)vctx;
+  if (ctx->tid == lookup->target){
+    lookup->found = ctx;
+    return false; // stop walking, we're done
+  }
+  return true;
+}
+
 eos_app_ctx_t *eos_get_current_app_ctx(){
-  pthread_t cid = pthread_self();
+  eos_app_ctx_lookup_t lookup = { .target = pthread_self(), .found = NULL };
 
-  eos_app_ctx_t *cur = eos_root_ctx;
-
-  do{
-    if (cur && cur->tid == cid)
-      return cur;
-  } while ((cur = cur->kid));
+  eos_app_ctx_t_tree_walk(eos_root_ctx, eos_app_ctx_lookup_visit, &lookup);
 
   // stick to root if not found
-  return eos_root_ctx;
+  return lookup.found ? lookup.found : eos_root_ctx;
 }
 
 
@@ -38,14 +52,9 @@ eos_app_ctx_t *eos_app_ctx_alloc(){
   // Copy working dir
   strcpy(ctx->cwd, cur_ctx->cwd);
 
-  // Attach to tree
-  ctx->parent = cur_ctx;
-
-  if (cur_ctx->kid){
-    ctx->kid = cur_ctx->kid;
-    ctx->kid->parent = ctx;
-  }
-  cur_ctx->kid = ctx;
+  // Attach to the context tree as cur_ctx's newest kid - a sibling of
+  // any kids cur_ctx already has, not their new parent.
+  eos_app_ctx_t_tree_attach(ctx, cur_ctx);
 
   return ctx;
 }
@@ -55,20 +64,16 @@ void eos_app_ctx_free(eos_app_ctx_t *actx){
     eos_errno = EOS_ERR_INVALID_ARG;
     abort();
   }
-  
-  eos_app_ctx_t *parent = actx->parent;
-  eos_app_ctx_t *kid = actx->kid;
 
-  if (!parent){
+  if (!actx->parent){
     EOS_LOGE("Context fault\n");
     abort();
   }
 
-  if (kid){
-    kid->parent = parent;
-  }
-
-  parent->kid = kid; // should be null if null, right
+  // Detaches actx from the tree. Its own kids (if any) are reparented
+  // onto actx's former parent rather than destroyed with it - an app
+  // exiting doesn't take its still-running children down with it.
+  eos_app_ctx_t_tree_detach(actx);
 
   // free fds
 

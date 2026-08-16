@@ -2,6 +2,12 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 
+// Generates eos_dev_t_tree_attach/detach/detach_subtree/walk,
+// operating on this struct's parent/child/next fields (see
+// ecore/tree.h - the same generated logic backs application
+// contexts).
+EOS_TREE_DEFINE(eos_dev_t);
+
 #define EOS_ROOT_DEV eos_devices[0]
 
 EXT_RAM_BSS_ATTR eos_dev_t eos_devices[EOS_MAX_DEVICES];
@@ -94,21 +100,10 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   if (!attachmentAllowed)
     return EOS_ERR_DEVICE_ATTACH_DECLINED;
 
-  // Preparing device for an attachment
-  dev->parent = parent;
-  dev->next = NULL;
-
-  // Seek for a correct place
-  if (parent->child == NULL) {
-    parent->child = dev;
-  } else {
-    eos_dev_t *cur = parent->child;
-
-    while (cur->next != NULL)
-      cur = cur->next;
-
-    cur->next = dev;
-  }
+  // Attach to the device tree as parent's newest child (appended
+  // after any existing children, so devfs enumeration order still
+  // matches attach order).
+  eos_dev_t_tree_attach(dev, parent);
 
   // Assign device id
   eos_dev_assign_id(dev);
@@ -151,16 +146,11 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   // Shutdown device driver
   dev->driver->shutdown(dev);
 
-  // Unlink from parent's child chain
-  if (dev->parent->child == dev) {
-    dev->parent->child = dev->next;
-  } else {
-    eos_dev_t *cur = dev->parent->child;
-    while (cur->next != NULL && cur->next != dev)
-      cur = cur->next;
-    if (cur->next == dev)
-      cur->next = dev->next;
-  }
+  // Unlink dev from the tree. Any child that refused detach_req above
+  // (still attached at this point) gets reparented onto dev->parent
+  // instead of being left with a dangling pointer into dev's slot,
+  // which is about to be zeroed and made available for reuse.
+  eos_dev_t_tree_detach(dev);
 
   // Cleanup
   bzero(dev, sizeof(eos_dev_t));
