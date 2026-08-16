@@ -14,6 +14,8 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=_stat_r"
 "-Wl,--wrap=_unlink_r"
 "-Wl,--wrap=_rename_r"
+"-Wl,--wrap=opendir"
+"-Wl,--wrap=mkdir"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

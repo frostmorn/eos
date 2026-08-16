@@ -7,6 +7,19 @@
 #include "ecore/rootfs.h"
 #include "ecore/appctx.h"
 #include <stdio.h>
+#include <pthread.h>
+
+#define EOS_MAIN_TASK_STACK_SIZE 8192
+
+// To make Application context actually work, we've to be inside pthread
+void * eos_main(void *data){
+
+  while (1){
+    // Run shell
+    eos_system("ush");
+  }
+}
+
 
 void app_main(void) {
   eos_rootfs_init();
@@ -16,6 +29,15 @@ void app_main(void) {
   eos_devfs_init();
   eos_binfs_init();
   eos_app_ctx_init();
-  // Run shell
-  eos_system("ush");
+ 
+  // Time to launch main thread
+
+  pthread_t eos_main_thread;
+  pthread_attr_t attr;
+
+  pthread_attr_init(&attr);
+
+  pthread_attr_setstacksize(&attr, EOS_MAIN_TASK_STACK_SIZE);
+
+  pthread_create(&eos_main_thread, &attr, eos_main, NULL);
 }
