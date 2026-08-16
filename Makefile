@@ -14,6 +14,8 @@ help:
 	@echo "  flash       - Flashes firmware"
 	@echo "  monitor     - Connects via serial interface"
 	@echo "  symbols     - Exposes builtin firmware symbols"
+	@echo "  disasm      - Disassemble generated elf"
+	@echo "  cppcheck    - Static analyzis of a c code"
 	@echo "  debug       - Tries to launch gdb via builtin jtag"
 	@echo "  killdebug   - An action to peform after debuging"
 	@echo "                Effectively kills OpenOCD"
@@ -42,10 +44,15 @@ flash:
 monitor:
 	@echo "Starting serial monitor..."
 	idf.py monitor
+
 symbols:
-	readelf ${FIRMWARE_ELF} -s -X|less
+	readelf ${FIRMWARE_ELF} -s -X|less -R
+
 disasm:
-	xtensa-esp32-elf-objdump -D build/eos.elf|less
+	xtensa-esp32-elf-objdump -D build/eos.elf|less -R
+
+cppcheck:
+	cppcheck main/*/* 2>&1|less -R
 
 debug:
 	tools/./debug_${TARGET}.sh ${FIRMWARE_ELF} 
