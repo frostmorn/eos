@@ -26,11 +26,6 @@ struct eos_dev_t {
   // Device state maintained by driver
   void *state;
 
-  // Device tree pointers
-  eos_dev_t *parent;
-  eos_dev_t *child;
-  eos_dev_t *next;
-
   // Indicates if device slot is in use
   bool in_use;
 
@@ -42,6 +37,8 @@ struct eos_dev_t {
 
   // devfs
   int fd;
+
+  EOS_TREE_FIELDS(eos_dev_t);
 };
 
 // Generates eos_dev_t_tree_{attach,detach,detach_subtree,walk} -

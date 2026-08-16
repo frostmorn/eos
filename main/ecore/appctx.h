@@ -51,9 +51,7 @@ struct eos_app_ctx_t{
   // Context tree (first child + next sibling - see ecore/tree.h).
   // A parent's contexts can have any number of kids, unlike the
   // single-child chain this used to be.
-  eos_app_ctx_t *parent;
-  eos_app_ctx_t *child;
-  eos_app_ctx_t *next;
+  EOS_TREE_FIELDS(eos_app_ctx_t);
 };
 
 // Generates eos_app_ctx_t_tree_{attach,detach,detach_subtree,walk} -

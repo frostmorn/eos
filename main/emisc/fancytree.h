@@ -15,16 +15,8 @@
 // and the application-context tree ended up with two different,
 // one of them silently broken, ways of doing the same thing.
 //
-// Your struct needs exactly three self-referential pointer fields,
-// named 'parent', 'child' (first child) and 'next' (next sibling):
-//
-//   typedef struct my_node_t my_node_t;
-//   struct my_node_t {
-//     my_node_t *parent;
-//     my_node_t *child;
-//     my_node_t *next;
-//     // ... your own fields ...
-//   };
+// Your struct needs to contain EOS_TREE_FIELDS(my_node_t) in order
+// to use generated tree functions
 //
 // In the header:  EOS_TREE_DECLARE(my_node_t);
 // In the source:  EOS_TREE_DEFINE(my_node_t);
@@ -57,11 +49,28 @@
 //
 ///////////////////////////////////////////////////////////////////
 
-#define EOS_TREE_DECLARE(T) \
+#define EOS_TREE_FIELDS(T) \
+/* Default tree fields  */ \
+   T *parent;              \
+   T *child;               \
+   T *next;                
+
+#define EOS_TREE_DECLARE(T)                 \
   bool T##_tree_attach(T *node, T *parent); \
-  void T##_tree_detach(T *node); \
-  void T##_tree_detach_subtree(T *node, void (*on_detach)(T *node, void *ctx), void *ctx); \
-  bool T##_tree_walk(T *node, bool (*visit)(T *node, void *ctx), void *ctx)
+                                            \
+  void T##_tree_detach(T *node);            \
+                                            \
+  void T##_tree_detach_subtree(             \
+    T *node,                                \
+    void (*on_detach)(T *node, void *ctx),  \
+    void *ctx                               \
+  );                                        \
+                                            \
+  bool T##_tree_walk(                       \
+    T *node,                                \
+    bool (*visit)(T *node, void *ctx),      \
+    void *ctx                               \
+  )
 
 #define EOS_TREE_DEFINE(T) \
 \
