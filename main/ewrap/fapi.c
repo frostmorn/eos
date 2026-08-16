@@ -1,55 +1,124 @@
-#include <reent.h>
-#include <limits.h>
-#include "emisc/fancymacro.h"
 #include "ecore/appctx.h"
+#include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <esp_cpu.h>
+#include <limits.h>
+#include <reent.h>
+#include <string.h>
 
-// For file path manipulation we always need two buffers since some calls 
+// For file path manipulation we always need two buffers since some calls
 // wrapped here require two path arguments
 // Of course we can store it somewhere on application context, but that's
-// can easily become very heavy, especially at moment when we start to 
+// can easily become very heavy, especially at moment when we start to
 // use actual multithreading
 
 #define EOS_FAPI_COUNT_BUFFERS 2
 
-char eos_fapi_buffer[SOC_CPU_CORES_NUM*EOS_FAPI_COUNT_BUFFERS][PATH_MAX];
+char eos_fapi_buffer[SOC_CPU_CORES_NUM * EOS_FAPI_COUNT_BUFFERS][PATH_MAX];
 
-char *eos_fapi_get_buffer(size_t index){
+char *eos_fapi_get_buffer(size_t index) {
 
-  if (index > EOS_FAPI_COUNT_BUFFERS)
-  {
-    EOS_LOGE("eos_fapi_get_buffer: trying to use inacessible buffer %d\n", index);
-    // of course we can return null, but imagine amount of situations we had 
+  if (index > EOS_FAPI_COUNT_BUFFERS) {
+    EOS_LOGE("eos_fapi_get_buffer: trying to use inacessible buffer %d\n",
+             index);
+    // of course we can return null, but imagine amount of situations we had
     // to handle, we already fucked up since it used wrong way
     abort();
   }
 
-  uint8_t core = esp_cpu_get_core_id();
+  uint8_t core = esp_cpu_get_core_id() + 1; // yeah, it starts from zero
 
   return eos_fapi_buffer[index * core];
 }
 
+// Collapses "." and ".." segments out of an absolute path, in place,
+// using only the buffer itself as scratch space (a read cursor and a
+// write cursor - no side storage). Assumes path[0] == '/'.
+//
+// The write cursor never runs ahead of the read cursor (output can
+// only shrink relative to input), so writing forward into the same
+// buffer we're still reading from is safe; ".." backtracks the write
+// cursor to the previous '/' already emitted, but never above root.
+static inline void eos_fapi_path_normalize(char *path) {
+  // Defensive: the whole safety argument for writing forward into this
+  // same buffer rests on "output length <= input length". An empty
+  // string breaks that (root alone is 2 bytes: '/' + NUL), so refuse to
+  // touch a path that doesn't already satisfy the precondition rather
+  // than risk writing past a buffer sized for the original (possibly
+  // empty) string. Every real call site already guarantees path[0]=='/'.
+  if (path[0] != '/')
+    return;
+
+  size_t len = strlen(path);
+  size_t w = 0;
+  path[w++] = '/'; // root
+
+  size_t i = 0;
+  while (i < len) {
+    while (i < len && path[i] == '/')
+      i++;
+    if (i >= len)
+      break;
+
+    size_t seg_start = i;
+    while (i < len && path[i] != '/')
+      i++;
+    size_t seg_len = i - seg_start;
+
+    if (seg_len == 1 && path[seg_start] == '.') {
+      continue; // "." -> current dir, drop it
+    }
+
+    if (seg_len == 2 && path[seg_start] == '.' && path[seg_start + 1] == '.') {
+      // ".." -> backtrack the write cursor to before the last emitted
+      // segment, but never rise above root.
+      if (w > 1) {
+        size_t j = w - 1;
+        while (j > 0 && path[j - 1] != '/')
+          j--;
+        if (j > 1)
+          j--; // also drop the '/' that preceded it
+        w = j;
+      }
+      continue;
+    }
+
+    if (w > 1)
+      path[w++] = '/';
+    memmove(&path[w], &path[seg_start], seg_len);
+    w += seg_len;
+  }
+
+  path[w] = '\0';
+}
+
 // Actual path handling happens here
-static inline char* eos_fapi_path_resolve(char *path, char *buffer){
-  if (!path) return path;
+static inline char *eos_fapi_path_resolve(char *path, char *buffer) {
+  if (!path)
+    return path;
 
-//  EOS_LOGE("eos_fapi_path_resolve: path=%s\n", path);
+  // EOS_LOGE("eos_fapi_path_resolve: path=%s\n", path);
 
-  // Absolute path
-  if (path[0] == '/') return path;
+  // Absolute path - still needs "." / ".." collapsed (e.g. "/a/../b"),
+  // so copy it into our scratch buffer rather than handing the caller's
+  // pointer straight through.
+  if (path[0] == '/') {
+    strcpy(buffer, path);
+    eos_fapi_path_normalize(buffer);
+    return buffer;
+  }
 
   // Relative path
   eos_app_ctx_t *ctx = eos_get_current_app_ctx();
 
   strcpy(buffer, ctx->cwd);
-  if (ctx->cwd[strlen(ctx->cwd)-1] != '/')
+  if (ctx->cwd[strlen(ctx->cwd) - 1] != '/')
     strcat(buffer, "/");
   strcat(buffer, path);
 
-  // TODO: Handle . and ..
+  eos_fapi_path_normalize(buffer);
 
-//  EOS_LOGE("eos_fapi_path_resolve new_path=%s", out);  
+  //  EOS_LOGE("eos_fapi_path_resolve new_path=%s", buffer);
 
   return buffer;
 }
@@ -62,19 +131,19 @@ static inline char* eos_fapi_path_resolve(char *path, char *buffer){
 
 // syscalls:
 
-extern int __real__open_r(struct _reent *r, const char * path, int flags, int mode);
-int __wrap__open_r(struct _reent *r, const char * path, int flags, int mode){
-//  EOS_LOGI("_r_open_r: path=%s\n", path);
+extern int __real__open_r(struct _reent *r, char *path, int flags, int mode);
+int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
+  //  EOS_LOGI("_r_open_r: path=%s\n", path);
 
   char *_path = eos_fapi_get_buffer(0);
   _path = eos_fapi_path_resolve(path, _path);
- 
+
   return __real__open_r(r, _path, flags, mode);
 }
 
-extern int __real__stat_r(struct _reent *r, const char * path, struct stat * st);
-int __wrap__stat_r(struct _reent *r, const char * path, struct stat * st){
-//  EOS_LOGI("_r_stat_r: path=%s\n", path);
+extern int __real__stat_r(struct _reent *r, char *path, struct stat *st);
+int __wrap__stat_r(struct _reent *r, char *path, struct stat *st) {
+  //  EOS_LOGI("_r_stat_r: path=%s\n", path);
 
   char *_path = eos_fapi_get_buffer(0);
   _path = eos_fapi_path_resolve(path, _path);
@@ -82,9 +151,9 @@ int __wrap__stat_r(struct _reent *r, const char * path, struct stat * st){
   return __real__stat_r(r, _path, st);
 }
 
-extern int __real__link_r(struct _reent *r, const char* n1, const char* n2);
-int __wrap__link_r(struct _reent *r, const char* n1, const char* n2){
-//  EOS_LOGI("_r_link_r: n1=%s n2=%s\n", n1, n2);
+extern int __real__link_r(struct _reent *r, char *n1, char *n2);
+int __wrap__link_r(struct _reent *r, char *n1, char *n2) {
+  //  EOS_LOGI("_r_link_r: n1=%s n2=%s\n", n1, n2);
 
   char *_n1 = eos_fapi_get_buffer(0);
   _n1 = eos_fapi_path_resolve(n1, _n1);
@@ -95,19 +164,19 @@ int __wrap__link_r(struct _reent *r, const char* n1, const char* n2){
   return __real__link_r(r, _n1, _n2);
 }
 
-extern int __real__unlink_r(struct _reent *r, const char *path);
-int __wrap__unlink_r(struct _reent *r, const char *path){
-//  EOS_LOGI("_r_unlink_r: path=%s\n", path);
+extern int __real__unlink_r(struct _reent *r, char *path);
+int __wrap__unlink_r(struct _reent *r, char *path) {
+  //  EOS_LOGI("_r_unlink_r: path=%s\n", path);
 
   char *_path = eos_fapi_get_buffer(0);
   _path = eos_fapi_path_resolve(path, _path);
-  
+
   return __real__unlink_r(r, _path);
 }
 
-extern int __real__rename_r(struct _reent *r, const char *src, const char *dst);
-int __wrap__rename_r(struct _reent *r, const char *src, const char *dst){
-//  EOS_LOGI("_r_rename_r: src=%s dst=%s\n", src, dst);
+extern int __real__rename_r(struct _reent *r, char *src, char *dst);
+int __wrap__rename_r(struct _reent *r, char *src, char *dst) {
+  //  EOS_LOGI("_r_rename_r: src=%s dst=%s\n", src, dst);
 
   char *_src = eos_fapi_get_buffer(0);
   _src = eos_fapi_path_resolve(src, _src);
@@ -119,10 +188,10 @@ int __wrap__rename_r(struct _reent *r, const char *src, const char *dst){
 }
 
 // also known as esp_vfs_*
-extern DIR* __real_opendir(const char *name);
+extern DIR *__real_opendir(char *name);
 
-DIR* __wrap_opendir(const char *name){
-//  EOS_LOGI("opendir: name=%s\n", name);
+DIR *__wrap_opendir(char *name) {
+  //  EOS_LOGI("opendir: name=%s\n", name);
 
   char *_name = eos_fapi_get_buffer(0);
   _name = eos_fapi_path_resolve(name, _name);
@@ -130,9 +199,9 @@ DIR* __wrap_opendir(const char *name){
   return __real_opendir(_name);
 }
 
-extern int __real_mkdir(const char*path, mode_t mode);
-int __wrap_mkdir(const char *path, mode_t mode){
-//  EOS_LOGI("mkdir: path=%s\n", path);
+extern int __real_mkdir(char *path, mode_t mode);
+int __wrap_mkdir(char *path, mode_t mode) {
+  //  EOS_LOGI("mkdir: path=%s\n", path);
 
   char *_path = eos_fapi_get_buffer(0);
   _path = eos_fapi_path_resolve(path, _path);
