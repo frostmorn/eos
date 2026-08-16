@@ -13,6 +13,8 @@ help:
 	@echo "  build       - Builds EOS"
 	@echo "  flash       - Flashes firmware"
 	@echo "  monitor     - Connects via serial interface"
+	@echo "  todo        - Makes TODO list for EOS"
+	@echo "  research    - Makes RESEARCH list for EOS"
 	@echo "  symbols     - Exposes builtin firmware symbols"
 	@echo "  disasm      - Disassemble generated elf"
 	@echo "  cppcheck    - Static analyzis of a c code"
@@ -40,6 +42,19 @@ build:
 flash:
 	@echo "Flashing device..."
 	idf.py flash
+
+todo:
+	@echo "===================================================="
+	@echo "  (^_^)==\~  TODO:"
+	@echo "===================================================="
+	@grep -R "TODO" main
+
+research:
+	@echo "===================================================="
+	@echo "  (^_^)==\~  RESEARCH:"
+	@echo "===================================================="
+	@grep -R "RESEARCH" main
+
 
 monitor:
 	@echo "Starting serial monitor..."

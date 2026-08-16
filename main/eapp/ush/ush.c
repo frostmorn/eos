@@ -7,8 +7,10 @@
 #include <freertos/task.h>
 #include <stdio.h>
 #include <string.h>
+#include "ecore/unistd_ext.h"
 
 #define USH_LINE_MAX 256
+#define USH_WELCOME EOS_MASCOT_R " "
 
 static int ush_readline(char *buf, size_t size) {
   size_t len = 0;
@@ -68,7 +70,7 @@ int ush_main(int argc, char **argv) {
   char line[USH_LINE_MAX];
 
   for (;;) {
-    printf("eos> ");
+    printf(USH_WELCOME "%s > ", getcwd_fast());
     // Why it's not flushed? 
     fflush(stdout);
 
