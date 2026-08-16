@@ -11,12 +11,11 @@ int touch_main(int argc, char **argv){
   
   const char* path = argv[1];
 
-  FILE *fp = fopen(path, "r");
+  FILE *fp = fopen(path, "a");
 
   if (fp){
-    printf("file %s already exist\n", path);
     fclose(fp);
-    return -1;
+    return 0;
   }
 
   fp = fopen(path, "w");
