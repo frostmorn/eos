@@ -27,7 +27,7 @@ char *eos_fapi_get_buffer(size_t index) {
     abort();
   }
 
-  uint8_t core = esp_cpu_get_core_id() + 1; // yeah, it starts from zero
+  uint8_t core = esp_cpu_get_core_id();
 
   return eos_fapi_buffer[core * EOS_FAPI_COUNT_BUFFERS + index];
 }
