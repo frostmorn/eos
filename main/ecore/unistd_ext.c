@@ -7,11 +7,11 @@
 #include <stddef.h>
 
 char *getcwd_fast(){
-  return eos_get_current_app_ctx()->cwd;
+  return eos_app_ctx_get_cur()->cwd;
 }
 
 char *getcwd(char *buf, size_t size){
-  eos_app_ctx_t *ctx = eos_get_current_app_ctx();
+  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
 
   if (strlen(ctx->cwd)+1 > size){
     errno = ERANGE;
@@ -41,7 +41,7 @@ int chdir(const char*path){
  
   closedir(dir);
 
-  eos_app_ctx_t *ctx = eos_get_current_app_ctx();
+  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
 
   strcpy(ctx->cwd, _path);
    

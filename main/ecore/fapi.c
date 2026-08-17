@@ -110,7 +110,7 @@ char *eos_fapi_path_resolve(char *path, char *buffer) {
   }
 
   // Relative path
-  eos_app_ctx_t *ctx = eos_get_current_app_ctx();
+  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
 
   strcpy(buffer, ctx->cwd);
   if (ctx->cwd[strlen(ctx->cwd) - 1] != '/')

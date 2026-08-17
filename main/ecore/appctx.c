@@ -9,7 +9,7 @@
 EOS_TREE_DEFINE(eos_app_ctx_t);
 
 // Root context for an EOS system
-static eos_app_ctx_t *eos_root_ctx;
+static eos_app_ctx_t *eos_root_ctx = NULL;
 
 typedef struct {
   pthread_t target;
@@ -25,7 +25,10 @@ static bool eos_app_ctx_lookup_visit(eos_app_ctx_t *ctx, void *vctx){
   return true;
 }
 
-eos_app_ctx_t *eos_get_current_app_ctx(){
+eos_app_ctx_t *eos_app_ctx_get_cur(){
+  // Nothing initialized yet
+  if (!eos_root_ctx) return NULL;
+
   eos_app_ctx_lookup_t lookup = { .target = pthread_self(), .found = NULL };
 
   eos_app_ctx_t_tree_walk(eos_root_ctx, eos_app_ctx_lookup_visit, &lookup);
@@ -34,9 +37,10 @@ eos_app_ctx_t *eos_get_current_app_ctx(){
   return lookup.found ? lookup.found : eos_root_ctx;
 }
 
-
 eos_app_ctx_t *eos_app_ctx_alloc(){
-  eos_app_ctx_t *cur_ctx = eos_get_current_app_ctx();
+  eos_app_ctx_t *cur_ctx = eos_app_ctx_get_cur();
+ 
+  EOS_LOGI("Allocating new application context\n");  
   
   // Allocate memory for new context
   eos_app_ctx_t *ctx = malloc(sizeof(eos_app_ctx_t));
@@ -49,6 +53,11 @@ eos_app_ctx_t *eos_app_ctx_alloc(){
 
   memset(ctx, 0, sizeof(eos_app_ctx_t));
 
+  // fill with invalid fds
+  for (size_t i = 0; i < EOS_APP_FD_MAX; i++){
+    ctx->fds[i] = -1; // invalid fd
+  }  
+
   // Copy working dir
   strcpy(ctx->cwd, cur_ctx->cwd);
 
@@ -60,6 +69,9 @@ eos_app_ctx_t *eos_app_ctx_alloc(){
 }
 
 void eos_app_ctx_free(eos_app_ctx_t *actx){
+
+  EOS_LOGI("Application context is about to be freed\n");  
+
   if(!actx){
     eos_errno = EOS_ERR_INVALID_ARG;
     abort();
@@ -76,6 +88,24 @@ void eos_app_ctx_free(eos_app_ctx_t *actx){
   eos_app_ctx_t_tree_detach(actx);
 
   // free fds
+  for (size_t i = 0; i < EOS_APP_FD_MAX; i++){
+    if (actx->fds[i] != -1)
+    {
+      EOS_LOGW("File descriptor %d leaked\n", actx->fds[i]);
+      close(actx->fds[i]);
+      actx->fds[i] = -1;
+    }
+  }
+
+  // free dirs
+  for (size_t i = 0; i < EOS_APP_DIR_MAX; i++){
+    if (actx->dirs[i] != NULL)
+    {
+      EOS_LOGW("Directory %p leaked\n", actx->dirs[i]);
+      closedir(actx->dirs[i]);
+      actx->dirs[i] = NULL;
+    }
+  }
 
   // free mem
   free(actx);
@@ -85,10 +115,91 @@ void eos_app_ctx_init(){
   eos_root_ctx = malloc(sizeof(eos_app_ctx_t));
   memset(eos_root_ctx, 0, sizeof(eos_app_ctx_t));
 
+  // fill with invalid fds
+  for (size_t i = 0; i < EOS_APP_FD_MAX; i++){
+    eos_root_ctx->fds[i] = -1; // invalid fd
+  }  
+
   // Retrieve current thread id
   // eos_root_ctx->tid = pthread_self();
 
   // Copy default working dir
   strcpy(eos_root_ctx->cwd, EOS_APP_CWD);
    
+}
+
+// TODO: do I've to care about ctx NULL reference?
+
+bool eos_app_ctx_reg_fd(int fd, eos_app_ctx_t *ctx){
+  if (ctx == NULL){
+    EOS_LOGW("fd %d outside of context\n", fd);
+    return true; // Can happen on init
+  }
+  // find fd slot
+  for (size_t i = 0; i < EOS_APP_FD_MAX; i++){
+    if (ctx->fds[i] == -1){
+      ctx->fds[i] = fd;
+      return true;
+    }
+  }
+  // No slots? 
+  EOS_LOGE("No slot left for fd %d register", fd);
+  return false;
+}
+
+void eos_app_ctx_unreg_fd(int fd, eos_app_ctx_t *ctx){
+  if (ctx == NULL){
+    EOS_LOGW("fd %d outside of context\n", fd);
+    return; // Can happen on init
+  }
+  for (size_t i=0; i < EOS_APP_FD_MAX; i++){
+    if (fd == ctx->fds[i]){
+      ctx->fds[i] = -1;
+      return;
+    }
+  }
+  // That's veri veri badie badie
+  EOS_LOGE("Tried to unreg not registered fd %d", fd);
+}
+
+// DIR management
+bool eos_app_ctx_reg_dir(DIR *dir, eos_app_ctx_t *ctx){
+  if (ctx == NULL){
+    EOS_LOGW("dir %p outside of context\n", dir);
+    return true; // Can happen on init
+  }
+  // find dir slot
+  for (size_t i = 0; i < EOS_APP_DIR_MAX; i++){
+    if (ctx->dirs[i] == NULL){
+      ctx->dirs[i] = dir;
+      return true;
+    }
+  }
+  // No slots? 
+  EOS_LOGE("No slot left for dir %p register", dir);
+  return false;
+}
+
+void eos_app_ctx_unreg_dir(DIR *dir, eos_app_ctx_t *ctx){
+  if (ctx == NULL){
+    EOS_LOGW("dir %p outside of context\n", dir);
+    return; // Can happen on init
+  }
+  for (size_t i=0; i < EOS_APP_FD_MAX; i++){
+    if (dir == ctx->dirs[i]){
+      ctx->dirs[i] = NULL;
+      return;
+    }
+  }
+  // That's veri veri badie badie
+  EOS_LOGE("Tried to unreg not registered dir %p", dir);
+}
+
+// Memory management
+bool eos_app_ctx_reg_memblock(void *block, size_t blocksize, eos_app_ctx_t *ctx){
+  return true; // TODO: add logic here
+}
+
+void eos_app_ctx_unreg_memblock(void *block, size_t blocksize, eos_app_ctx_t *ctx){
+
 }
