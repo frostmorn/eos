@@ -29,7 +29,7 @@ char *eos_fapi_get_buffer(size_t index) {
 
   uint8_t core = esp_cpu_get_core_id() + 1; // yeah, it starts from zero
 
-  return eos_fapi_buffer[index * core];
+  return eos_fapi_buffer[core * EOS_FAPI_COUNT_BUFFERS + index];
 }
 
 // Collapses "." and ".." segments out of an absolute path, in place,

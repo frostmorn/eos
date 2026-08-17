@@ -13,6 +13,7 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=_open_r"
 "-Wl,--wrap=_close_r"
 "-Wl,--wrap=_stat_r"
+"-Wl,--wrap=_link_r"
 "-Wl,--wrap=_unlink_r"
 "-Wl,--wrap=_rename_r"
 "-Wl,--wrap=opendir"

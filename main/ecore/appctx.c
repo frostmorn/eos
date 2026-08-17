@@ -185,7 +185,7 @@ void eos_app_ctx_unreg_dir(DIR *dir, eos_app_ctx_t *ctx){
     EOS_LOGW("dir %p outside of context\n", dir);
     return; // Can happen on init
   }
-  for (size_t i=0; i < EOS_APP_FD_MAX; i++){
+  for (size_t i=0; i < EOS_APP_DIR_MAX; i++){
     if (dir == ctx->dirs[i]){
       ctx->dirs[i] = NULL;
       return;
