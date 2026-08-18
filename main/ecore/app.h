@@ -75,8 +75,5 @@ extern const eos_native_app_manifest_t _eos_apps_end[];
 // exec -> opens path
 // int eos_exec(...);
 
-// commandline with support of pipes?
-int eos_system(const char *cmdline);
-
 // Empty native app entry point implementation
 int eos_native_app_entry_point_empty(int argc, char **argv);

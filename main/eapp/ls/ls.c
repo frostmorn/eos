@@ -1,11 +1,11 @@
 #include "ecore/app.h"
-#include "ecore/unistd_ext.h"
 #include <dirent.h>
 #include <stdio.h>
+#include <unistd.h>
 
-
-int ls_main(int argc, char **argv){  
-  const char *path = (argc < 2) ? getcwd_fast() : argv[1];
+int ls_main(int argc, char **argv){ 
+ 
+  char *path = (argc < 2) ? getcwd(NULL, 0): argv[1];
 
   DIR *dir = opendir(path);
 
@@ -20,6 +20,9 @@ int ls_main(int argc, char **argv){
   }
   
   closedir(dir);
+
+  if (argc < 2) free (path);
+
   return 0;
 }
 

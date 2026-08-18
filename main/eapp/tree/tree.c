@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "ecore/unistd_ext.h"
+#include <unistd.h>
 
 static void tree_walk(const char *path, int depth, bool *last_flags) {
   DIR *dir = opendir(path);
@@ -68,13 +68,15 @@ static void tree_walk(const char *path, int depth, bool *last_flags) {
 
 int tree_main(int argc, char **argv) {
 
-  const char *path = (argc < 2)? getcwd_fast(): argv[1];
+  char *path = (argc < 2)? getcwd(NULL, 0): argv[1];
 
   printf("%s\n", path);
 
   tree_walk(path, 0, NULL);
 
   printf("\n");
+
+  if (argc < 2) free(path);
 
   return 0;
 }

@@ -1,10 +1,12 @@
 #include "ecore/app.h"
-#include "ecore/unistd_ext.h"
+#include <unistd.h>
 #include <stdio.h>
 
 int pwd_main(int argc, char **argv){
-  // getcwd_fast never fails
-  printf("%s\n", getcwd_fast());
+  char *path = getcwd(NULL,0); 
+  printf("%s\n", path);
+
+  free(path);
   return 0;
 }
 

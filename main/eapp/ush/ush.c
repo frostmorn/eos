@@ -7,7 +7,9 @@
 #include <freertos/task.h>
 #include <stdio.h>
 #include <string.h>
-#include "ecore/unistd_ext.h"
+#include <stdlib.h>
+#include <unistd.h>
+#include <limits.h>
 
 #define USH_LINE_MAX 256
 #define USH_WELCOME EOS_MASCOT_R " "
@@ -68,9 +70,12 @@ int ush_main(int argc, char **argv) {
   printf("\neos shell — type 'help' for available commands\n\n");
 
   char line[USH_LINE_MAX];
+  char path[PATH_MAX];
 
   for (;;) {
-    printf(USH_WELCOME "%s > ", getcwd_fast());
+    getcwd(path, PATH_MAX);
+
+    printf(USH_WELCOME "%s > ", path);
     // Why it's not flushed? 
     fflush(stdout);
 
@@ -84,13 +89,13 @@ int ush_main(int argc, char **argv) {
       break;
 
     if (!strcmp(line, "help")) {
-      eos_system("tree /bin");
+      system("tree /bin");
       continue;
     }
 
     fflush(stdout);
 
-    int ret = eos_system(line);
+    int ret = system(line);
 
     if (ret)
       printf("exit code: %d\n", ret);

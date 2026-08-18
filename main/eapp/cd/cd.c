@@ -1,8 +1,8 @@
 #include "ecore/app.h"
-#include "ecore/unistd_ext.h"
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
 
 int cd_main(int argc, char **argv){
   const char *path = (argc < 2) ? "/" : argv[1];

@@ -19,6 +19,9 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=opendir"
 "-Wl,--wrap=closedir"
 "-Wl,--wrap=mkdir"
+"-Wl,--wrap=system"
+"-Wl,--wrap=chdir"
+"-Wl,--wrap=getcwd"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

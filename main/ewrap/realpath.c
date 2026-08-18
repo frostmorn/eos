@@ -1,28 +1,25 @@
-#include "unistd_ext.h"
 #include "ecore/fapi.h"
 #include "ecore/appctx.h"
 #include <errno.h>
 #include <dirent.h>
 #include <string.h>
 #include <stddef.h>
+// realpath() seems to be made correctly
 
-char *getcwd_fast(){
-  return eos_app_ctx_get_cur()->cwd;
-}
+extern char *__real_getcwd(char *buf, size_t size);
+extern int _real_chdir(const char *path);
 
-char *getcwd(char *buf, size_t size){
+char *__wrap_getcwd(char *buf, size_t size){
   eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
 
-  if (strlen(ctx->cwd)+1 > size){
-    errno = ERANGE;
-    return NULL;
+  if (buf == NULL){
+    return strdup(ctx->cwd);
   }
-  strcpy(buf, ctx->cwd);
-
+  strlcpy(buf, ctx->cwd, size);
   return buf;
 }
 
-int chdir(const char*path){
+int __wrap_chdir(char*path){
   if (!path){
     errno = ENOENT;
     return -1;
@@ -47,3 +44,17 @@ int chdir(const char*path){
    
   return 0;
 }
+/*
+// Maybe we would like to intercept it, one day or another
+int chmod(const char *path, mode_t mode)
+{
+    return 0;
+}
+
+int dirfd(DIR *dirp)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+*/

@@ -1,5 +1,4 @@
 #include "eboard/board.h"
-#include "ecore/app.h"
 #include "ecore/binfs.h"
 #include "ecore/capsmgr.h"
 #include "ecore/devfs.h"
@@ -8,6 +7,7 @@
 #include "ecore/appctx.h"
 #include <stdio.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #define EOS_MAIN_TASK_STACK_SIZE 8192
 
@@ -16,7 +16,7 @@ void * eos_main(void *data){
 
   while (1){
     // Run shell
-    eos_system("ush");
+    system("ush");
   }
 }
 
