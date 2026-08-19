@@ -18,7 +18,7 @@ typedef struct {
 
 static bool eos_app_ctx_lookup_visit(eos_app_ctx_t *ctx, void *vctx){
   eos_app_ctx_lookup_t *lookup = (eos_app_ctx_lookup_t *)vctx;
-  if (ctx->tid == lookup->target){
+  if (pthread_equal(ctx->tid, lookup->target)){
     lookup->found = ctx;
     return false; // stop walking, we're done
   }
