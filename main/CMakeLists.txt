@@ -22,6 +22,7 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=system"
 "-Wl,--wrap=chdir"
 "-Wl,--wrap=getcwd"
+"-Wl,--wrap=pthread_create"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
