@@ -1,5 +1,5 @@
 #include "ecore/fapi.h"
-#include "ecore/appctx.h"
+#include "ecore/threadctx.h"
 #include <errno.h>
 #include <dirent.h>
 #include <string.h>
@@ -10,12 +10,12 @@ extern char *__real_getcwd(char *buf, size_t size);
 extern int _real_chdir(const char *path);
 
 char *__wrap_getcwd(char *buf, size_t size){
-  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
+  eos_tctx_t *tctx = eos_tctx_get();
 
   if (buf == NULL){
-    return strdup(ctx->cwd);
+    return strdup(tctx->cwd);
   }
-  strlcpy(buf, ctx->cwd, size);
+  strlcpy(buf, tctx->cwd, size);
   return buf;
 }
 
@@ -38,9 +38,9 @@ int __wrap_chdir(char*path){
  
   closedir(dir);
 
-  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
+  eos_tctx_t *tctx = eos_tctx_get();
 
-  strcpy(ctx->cwd, _path);
+  strcpy(tctx->cwd, _path);
    
   return 0;
 }

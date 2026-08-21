@@ -4,11 +4,11 @@
 #include <esp_cpu.h>
 #include <limits.h>
 #include "emisc/fancymacro.h"
-#include "ecore/appctx.h"
+#include "ecore/threadctx.h"
 
 // For file path manipulation we always need two buffers since some calls
 // wrapped here require two path arguments
-// Of course we can store it somewhere on application context, but that's
+// Of course we can store it somewhere on thread context, but that's
 // can easily become very heavy, especially at moment when we start to
 // use actual multithreading
 
@@ -19,7 +19,7 @@ char eos_fapi_buffer[SOC_CPU_CORES_NUM * EOS_FAPI_COUNT_BUFFERS][PATH_MAX];
 
 char *eos_fapi_get_buffer(size_t index) {
 
-  if (index > EOS_FAPI_COUNT_BUFFERS) {
+  if (index >= EOS_FAPI_COUNT_BUFFERS) {
     EOS_LOGE("eos_fapi_get_buffer: trying to use inacessible buffer %d\n",
              index);
     // of course we can return null, but imagine amount of situations we had
@@ -110,10 +110,10 @@ char *eos_fapi_path_resolve(char *path, char *buffer) {
   }
 
   // Relative path
-  eos_app_ctx_t *ctx = eos_app_ctx_get_cur();
+  eos_tctx_t *tctx = eos_tctx_get();
 
-  strcpy(buffer, ctx->cwd);
-  if (ctx->cwd[strlen(ctx->cwd) - 1] != '/')
+  strcpy(buffer, tctx->cwd);
+  if (tctx->cwd[strlen(tctx->cwd) - 1] != '/')
     strcat(buffer, "/");
   strcat(buffer, path);
 

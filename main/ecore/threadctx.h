@@ -8,23 +8,26 @@
 ///////////////////////////////////////////////////////
 
 #include <pthread.h>
+#include <limits.h>
+#include <dirent.h>
 
 typedef struct eos_tctx_t eos_tctx_t;
-struct eos_thread_ctx_t{
+struct eos_tctx_t{
   char   cwd  [PATH_MAX];         // Inherits from current thread
+  // Those pieces are almost identical, maybe use kvec from klib?
   struct{
     int *fds;
     size_t fds_count;
     size_t fds_cap;
   };
   struct{
-    DIR *dirs;
+    DIR **dirs;
     size_t dirs_count;
     size_t dirs_cap;
   };
   struct{
     // TODO: store other meta?
-    void *memblocks;
+    void **memblocks;
     size_t memblocks_count;
     size_t memblocks_cap;
   };

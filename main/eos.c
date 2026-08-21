@@ -4,7 +4,7 @@
 #include "ecore/devfs.h"
 #include "ecore/device.h"
 #include "ecore/rootfs.h"
-#include "ecore/appctx.h"
+#include "ecore/threadctx.h"
 #include <stdio.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -28,7 +28,11 @@ void app_main(void) {
   eos_board_init();
   eos_devfs_init();
   eos_binfs_init();
-  eos_app_ctx_init();
+
+  // Actually it may happen by own even earlier, but 
+  // won't be bad if we do that twice, since we use pthread_once
+  // TODO: use pthread_once for all other EOS subsystems
+  eos_tctx_init();
  
   // Time to launch main thread
 

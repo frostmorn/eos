@@ -1,4 +1,4 @@
-#include "ecore/appctx.h"
+#include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <reent.h>
@@ -35,15 +35,8 @@ int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
   _path = eos_fapi_path_resolve(path, _path);
   int fd = __real__open_r(r, _path, flags, mode);
 
-  if (fd >= 0){
-    // FD quota check and reg
-    if(!eos_app_ctx_reg_fd(fd, eos_app_ctx_get_cur()))
-    {
-      errno = ENFILE; 
-      __real__close_r(r, fd);
-      return -1;
-    }
-  }
+  if (fd >= 0)
+    eos_tctx_reg_fd(fd, eos_tctx_get());
 
   return fd;
 }
@@ -53,7 +46,7 @@ int __wrap__close_r(struct _reent *r, int fd){
   int ret = __real__close_r(r, fd);
   
   if (ret == 0)
-    eos_app_ctx_unreg_fd(fd, eos_app_ctx_get_cur());
+    eos_tctx_unreg_fd(fd, eos_tctx_get());
 
   return ret;
 }
@@ -110,14 +103,8 @@ DIR *__wrap_opendir(char *name) {
   
   DIR *pdir = __real_opendir(_name);
   
-  if (pdir){
-    if (!eos_app_ctx_reg_dir(pdir, eos_app_ctx_get_cur()))
-    {
-      errno = ENFILE;
-      __real_closedir(pdir);
-      return NULL;
-    }
-  }
+  if (pdir)
+    eos_tctx_reg_dir(pdir, eos_tctx_get());
 
   return pdir;
 }
@@ -126,7 +113,7 @@ int __wrap_closedir(DIR *pdir){
   int ret = __real_closedir(pdir);
 
   if (ret == 0)
-    eos_app_ctx_unreg_dir(pdir, eos_app_ctx_get_cur());
+    eos_tctx_unreg_dir(pdir, eos_tctx_get());
 
   return ret;
 }
