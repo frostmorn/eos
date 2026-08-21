@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <dirent.h>
 
 static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
@@ -14,6 +16,8 @@ static volatile int ready = 0;
 static pthread_key_t tls_key;
 
 static void *hello_thread(void *arg) {
+  opendir("/"); // should notify about not closed dir
+  fopen("/bin/test_pthread", "r");// should notify about not closed file
   printf("hello thread: arg=%d\n", (intptr_t)arg);
   return (void *)1234;
 }
@@ -67,7 +71,6 @@ static void *sleep_thread(void *arg) {
 
 static void *detached_thread(void *arg) {
   (void)arg;
-
   printf("detached thread started\n");
   sleep(1);
   printf("detached thread finished\n");

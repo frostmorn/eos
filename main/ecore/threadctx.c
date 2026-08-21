@@ -68,7 +68,7 @@ void eos_tctx_free(eos_tctx_t *tctx) {
     if (tctx->dirs_count) {
       EOS_LOGW("Found %d open directories\n", tctx->dirs_count);
       for (size_t i = 0; i < tctx->dirs_count; i++) {
-        closedir(tctx->dirs[i]);
+        closedir(tctx->dirs[i]); // recursion :D
       }
     }
     free(tctx->dirs);
