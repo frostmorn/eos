@@ -13,14 +13,6 @@
 
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {
-
-  while (1) {
-    // Run shell
-    system("ush");
-  }
-}
-
-void app_main(void) {
   eos_rootfs_init();
   eos_capsmgr_init();
   eos_devtree_init();
@@ -29,6 +21,13 @@ void app_main(void) {
   eos_binfs_init();
   eos_tctx_init();
 
+  while (1) {
+    // Run shell
+    system("ush");
+  }
+}
+
+void app_main(void) {
   // Time to launch main thread
 
   pthread_t eos_main_thread;
@@ -39,8 +38,4 @@ void app_main(void) {
   pthread_attr_setstacksize(&attr, EOS_MAIN_TASK_STACK_SIZE);
 
   pthread_create(&eos_main_thread, &attr, eos_main, NULL);
-  while (1) {
-    // never exit temporary till not fix strange non freeable memory allocated with malloc
-    vTaskDelay(portMAX_DELAY);
-  }
 }
