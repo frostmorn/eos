@@ -124,7 +124,7 @@ void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx) {
     }
     // Swap blocks
     tctx->fds = newblock;
-    tctx->fds_count = newcap;
+    tctx->fds_cap = newcap;
 
     // Fill with bad fds
     for (size_t i = tctx->fds_count; i < newcap; i++) {
@@ -233,7 +233,7 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx) {
     }
     // Swap blocks
     tctx->dirs = newblock;
-    tctx->dirs_count = newcap;
+    tctx->dirs_cap = newcap;
 
     // Fill with bad dirs
     for (size_t i = tctx->dirs_count; i < newcap; i++) {
