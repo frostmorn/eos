@@ -1,93 +1,95 @@
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
+#include "freertos/task.h"
 
-//
-// DEFINITION: TSS - Thread specific storage
-//
-// TODO: there's a sense to implement all of this on basis of FreeRTOS TSS
-//
-// Though, to make it work with any possible threads, we would have to wrap
-// all xTaskCreate* from FreeRTOS as well in addition to pthread_create
-// since all of those have different thread creation paths
-//
-// Single common place(prvInitialiseNewTask) which used for any thread 
-// creation is not wrapable since defined as static [-_-]==\~
-//
-// I just only hope we no need to create separate paths to store TSS values,
-// but this requires some additional 
-//
-// RESEARCH: TSS behaviour in pthread and FreeRTOS task(are them same or not)
-//
-// So for now, and for portatibility, we implement it for pthread specifically
-//
+static bool tctx_init_done = false;
 
-static pthread_key_t  tctx_key;
-static pthread_once_t tctx_once_init = PTHREAD_ONCE_INIT;
+// This requires system wide TLS INDEX register
+#define EOS_TCTX_TLS_INDEX 1 // 0 is reserved
+#if CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS <= EOS_TCTX_TLS_INDEX
+#error                                                                         \
+    "Not enough FreeRTOS TLS pointers configured for eos_tctx(CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS)"
+#endif
 
-eos_tctx_t* eos_tctx_get(){
-  // Ensure init
-  eos_tctx_init();
-  return pthread_getspecific(tctx_key);
+eos_tctx_t *eos_tctx_get(void) {
+  if (!tctx_init_done)
+    return NULL;
+  return (eos_tctx_t *)pvTaskGetThreadLocalStoragePointer(NULL,
+                                                          EOS_TCTX_TLS_INDEX);
 }
 
-eos_tctx_t* eos_tctx_alloc(){
- eos_tctx_t* tctx = malloc(sizeof(eos_tctx_t));
-
- memset(tctx, 0, sizeof(eos_tctx_t));
-
- // NOTE: tctx->fds/dirs/memblocks allocated on first access
-
- if (!tctx)
-   EOS_LOGE("Can't allocate new thread context. Not enough memory?\n");
-
- return tctx;
+// idk what x here is but hope I got it right
+static void eos_tctx_tls_delete(int x, void *ptr) {
+  if (x == EOS_TCTX_TLS_INDEX)
+    eos_tctx_free((eos_tctx_t *)ptr);
 }
 
-void eos_tctx_free(eos_tctx_t *tctx){
-  if (!tctx){
+void eos_tctx_set(eos_tctx_t *tctx) {
+  vTaskSetThreadLocalStoragePointerAndDelCallback(
+      NULL, EOS_TCTX_TLS_INDEX, tctx,
+      (TlsDeleteCallbackFunction_t)eos_tctx_tls_delete);
+}
+
+eos_tctx_t *eos_tctx_alloc() {
+  eos_tctx_t *tctx = malloc(sizeof(eos_tctx_t));
+
+  memset(tctx, 0, sizeof(eos_tctx_t));
+
+  // NOTE: tctx->fds/dirs/memblocks allocated on first access
+
+  if (!tctx)
+    EOS_LOGE("Can't allocate new thread context. Not enough memory?\n");
+
+  return tctx;
+}
+
+void eos_tctx_free(eos_tctx_t *tctx) {
+  if (!tctx) {
     EOS_LOGW("Trying to free empty thread context\n");
     return;
   }
 
   EOS_LOGI("Cleaning up thread context\n");
-  
+
   // Active file descriptors:
-  if (tctx->fds){
-    if (tctx->fds_count){
+  if (tctx->fds) {
+    if (tctx->fds_count) {
       EOS_LOGW("Found %d file descriptors in use\n", tctx->fds_count);
-      for(size_t i = 0; i < tctx->fds_count; i++){
+      for (size_t i = 0; i < tctx->fds_count; i++) {
         close(tctx->fds[i]);
       }
     }
-    free(tctx->fds);  
+    free(tctx->fds);
   }
   // Open Directories:
-  if (tctx->dirs){
-    if (tctx->dirs_count){
+  if (tctx->dirs) {
+    if (tctx->dirs_count) {
       EOS_LOGW("Found %d open directories\n", tctx->dirs_count);
-      for(size_t i = 0; i < tctx->dirs_count; i++){
+      for (size_t i = 0; i < tctx->dirs_count; i++) {
         closedir(tctx->dirs[i]);
       }
     }
-    free(tctx->dirs);  
+    free(tctx->dirs);
   }
   // Non freed memory blocks
-  if (tctx->memblocks){
-    if (tctx->memblocks_count){
+  if (tctx->memblocks) {
+    if (tctx->memblocks_count) {
       EOS_LOGW("Found %d not freed memory blocks\n", tctx->memblocks_count);
-      for(size_t i = 0; i < tctx->memblocks_count; i++){
+      for (size_t i = 0; i < tctx->memblocks_count; i++) {
         free(tctx->memblocks[i]);
       }
     }
-    free(tctx->memblocks);  
+    free(tctx->memblocks);
   }
 
   free(tctx);
 }
 
-void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx){
+void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx) {
   // Check context
-  if (!tctx){
+  if (!tctx) {
     EOS_LOGW("Trying to register file descriptor for empty thread context\n");
     return;
   }
@@ -98,9 +100,9 @@ void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx){
   }
 
   // Check if memory allocated for fd storage
-  if (!tctx->fds){
+  if (!tctx->fds) {
     tctx->fds = malloc(sizeof(int) * 2);
-    if (!tctx->fds){
+    if (!tctx->fds) {
       EOS_LOGE("Memory allocation for thread context fds failed\n");
       return;
     }
@@ -112,20 +114,20 @@ void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx){
   }
 
   // Allocate additional memory if needed
-  if(tctx->fds_cap == tctx->fds_count){
+  if (tctx->fds_cap == tctx->fds_count) {
     size_t newcap = tctx->fds_cap * 2;
     // RESERARCH: how reallocarray() would work with PSRAM blocks
-    void * newblock = reallocarray(tctx->fds, newcap, sizeof(int));
-    if (!newblock){
+    void *newblock = reallocarray(tctx->fds, newcap, sizeof(int));
+    if (!newblock) {
       EOS_LOGE("Memory allocation failed for thread context fds storage\n");
       return;
     }
     // Swap blocks
     tctx->fds = newblock;
-    tctx->fds_count = newcap; 
+    tctx->fds_count = newcap;
 
     // Fill with bad fds
-    for (size_t i = tctx->fds_count; i < newcap; i++){
+    for (size_t i = tctx->fds_count; i < newcap; i++) {
       tctx->fds[i] = -1;
     }
   }
@@ -135,9 +137,9 @@ void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx){
   tctx->fds_count++;
 }
 
-void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx){
+void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
   // Check context
-  if (!tctx){
+  if (!tctx) {
     EOS_LOGW("Trying to unregister file descriptor for empty thread context\n");
     return;
   }
@@ -150,9 +152,9 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx){
   // Find fd slot
   int *pfd = NULL;
   size_t i;
-  if ((tctx->fds && tctx->fds_count)){
-    for (i = 0; i < tctx->fds_count; i++){
-      if (tctx->fds[i] == fd){
+  if ((tctx->fds && tctx->fds_count)) {
+    for (i = 0; i < tctx->fds_count; i++) {
+      if (tctx->fds[i] == fd) {
         pfd = &(tctx->fds[i]);
         break;
       }
@@ -160,13 +162,13 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx){
   } // oh my god
 
   // Check if fd found
-  if (!pfd){
+  if (!pfd) {
     EOS_LOGE("fd %d not found. impossible to unregister\n", fd);
     return;
   }
 
   // Handle special case
-  if (tctx->fds_count == 1){
+  if (tctx->fds_count == 1) {
     tctx->fds_count = 0;
     tctx->fds_cap = 0;
     free(tctx->fds);
@@ -180,24 +182,23 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx){
   tctx->fds[tctx->fds_count] = -1;
 
   // Shrink mem if needed
-  if (tctx->fds_count * 3 < tctx->fds_cap)
-  {
+  if (tctx->fds_count * 3 < tctx->fds_cap) {
     size_t newcap = tctx->fds_cap * 2;
     // Probably we can use just realloc here, but well, who cares
-    void * newblock = reallocarray(tctx->fds, newcap, sizeof(int));
-    if (!newblock){
+    void *newblock = reallocarray(tctx->fds, newcap, sizeof(int));
+    if (!newblock) {
       EOS_LOGE("Memory allocation failed for thread context fds storage\n");
       return;
     }
     tctx->fds = newblock;
-  } 
+  }
 }
 
 // Almost exact copy of tctx_reg_fd
 // if do changes here, apply them in both places
-void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx){
+void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx) {
   // Check context
-  if (!tctx){
+  if (!tctx) {
     EOS_LOGW("Trying to register dir for empty thread context\n");
     return;
   }
@@ -208,34 +209,34 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx){
   }
 
   // Check if memory allocated for dir storage
-  if (!tctx->dirs){
+  if (!tctx->dirs) {
     tctx->dirs = malloc(sizeof(int) * 2);
-    if (!tctx->dirs){
+    if (!tctx->dirs) {
       EOS_LOGE("Memory allocation for thread context dirs failed\n");
       return;
     }
     tctx->dirs_count = 0;
     tctx->dirs_cap = 2;
     // FIll with bad dirs
-    tctx->dirs[0] =  NULL;
+    tctx->dirs[0] = NULL;
     tctx->dirs[1] = NULL;
   }
 
   // Allocate additional memory if needed
-  if(tctx->dirs_cap == tctx->dirs_count){
+  if (tctx->dirs_cap == tctx->dirs_count) {
     size_t newcap = tctx->dirs_cap * 2;
     // RESERARCH: how reallocarray() would work with PSRAM blocks
-    void * newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR*));
-    if (!newblock){
+    void *newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR *));
+    if (!newblock) {
       EOS_LOGE("Memory allocation failed for thread context dirs storage\n");
       return;
     }
     // Swap blocks
     tctx->dirs = newblock;
-    tctx->dirs_count = newcap; 
+    tctx->dirs_count = newcap;
 
     // Fill with bad dirs
-    for (size_t i = tctx->dirs_count; i < newcap; i++){
+    for (size_t i = tctx->dirs_count; i < newcap; i++) {
       tctx->dirs[i] = NULL;
     }
   }
@@ -243,19 +244,18 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx){
   // Register
   tctx->dirs[tctx->dirs_count] = dir;
   tctx->dirs_count++;
-
 }
 
 // Almost exact copy of tctx_unreg_fd
 // if do changes here, apply them in both places
-void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx){
+void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
   // Check context
-  if (!tctx){
+  if (!tctx) {
     EOS_LOGW("Trying to unregister dir for empty thread context\n");
     return;
   }
   // Check dir
-  if (dir) {
+  if (!dir) {
     EOS_LOGE("Trying to unregister bad dir %p within thread context\n", dir);
     return;
   }
@@ -263,9 +263,9 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx){
   // Find dir slot
   DIR **ppdir = NULL;
   size_t i;
-  if ((tctx->dirs && tctx->dirs_count)){
-    for (i = 0; i < tctx->dirs_count; i++){
-      if (tctx->dirs[i] == dir){
+  if ((tctx->dirs && tctx->dirs_count)) {
+    for (i = 0; i < tctx->dirs_count; i++) {
+      if (tctx->dirs[i] == dir) {
         ppdir = &(tctx->dirs[i]);
         break;
       }
@@ -273,13 +273,13 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx){
   } // oh my god
 
   // Check if dir found
-  if (!ppdir){
+  if (!ppdir) {
     EOS_LOGE("dir %p not found. impossible to unregister\n", dir);
     return;
   }
 
   // Handle special case
-  if (tctx->dirs_count == 1){
+  if (tctx->dirs_count == 1) {
     tctx->dirs_count = 0;
     tctx->dirs_cap = 0;
     free(tctx->dirs);
@@ -293,34 +293,36 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx){
   tctx->dirs[tctx->dirs_count] = NULL;
 
   // Shrink mem if needed
-  if (tctx->dirs_count * 3 < tctx->dirs_cap)
-  {
+  if (tctx->dirs_count * 3 < tctx->dirs_cap) {
     size_t newcap = tctx->dirs_cap * 2;
     // Probably we can use just realloc here, but well, who cares
-    void * newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR*));
-    if (!newblock){
+    void *newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR *));
+    if (!newblock) {
       EOS_LOGE("Memory allocation failed for thread context dir storage\n");
       return;
     }
     tctx->dirs = newblock;
-  } 
-
+  }
 }
 
-void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx){
+void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
 
-}
+void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
 
-void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx){
+void eos_tctx_init(void) {
+  if (!tctx_init_done) {
+    if (eos_tctx_get())
+      return;
 
-}
+    eos_tctx_t *tctx = eos_tctx_alloc();
+    if (!tctx) {
+      EOS_LOGE("Can't initialize thread context\n");
+      return;
+    }
 
-static void tctx_key_init(){
-  pthread_key_create(&tctx_key, (void (*)(void *))eos_tctx_free);
-  eos_tctx_t *tctx = eos_tctx_alloc();
-  strcpy(tctx->cwd, "/"); // root dir
-}
+    strcpy(tctx->cwd, "/");
 
-void eos_tctx_init(){
-  pthread_once(&tctx_once_init, tctx_key_init);
+    eos_tctx_set(tctx);
+    tctx_init_done = true;
+  }
 }

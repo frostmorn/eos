@@ -36,6 +36,9 @@ struct eos_tctx_t{
 // Retrieves current thread context
 eos_tctx_t* eos_tctx_get();
 
+// Setups new thread context 
+void eos_tctx_set(eos_tctx_t *tctx);
+
 // Allocates new thread context
 eos_tctx_t* eos_tctx_alloc();
 

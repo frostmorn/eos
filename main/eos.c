@@ -5,21 +5,20 @@
 #include "ecore/device.h"
 #include "ecore/rootfs.h"
 #include "ecore/threadctx.h"
-#include <stdio.h>
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #define EOS_MAIN_TASK_STACK_SIZE 8192
 
 // To make Application context actually work, we've to be inside pthread
-void * eos_main(void *data){
+void *eos_main(void *data) {
 
-  while (1){
+  while (1) {
     // Run shell
     system("ush");
   }
 }
-
 
 void app_main(void) {
   eos_rootfs_init();
@@ -28,12 +27,8 @@ void app_main(void) {
   eos_board_init();
   eos_devfs_init();
   eos_binfs_init();
-
-  // Actually it may happen by own even earlier, but 
-  // won't be bad if we do that twice, since we use pthread_once
-  // TODO: use pthread_once for all other EOS subsystems
   eos_tctx_init();
- 
+
   // Time to launch main thread
 
   pthread_t eos_main_thread;
@@ -44,4 +39,8 @@ void app_main(void) {
   pthread_attr_setstacksize(&attr, EOS_MAIN_TASK_STACK_SIZE);
 
   pthread_create(&eos_main_thread, &attr, eos_main, NULL);
+  while (1) {
+    // never exit temporary till not fix strange non freeable memory allocated with malloc
+    vTaskDelay(portMAX_DELAY);
+  }
 }
