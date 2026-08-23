@@ -22,15 +22,7 @@ done via ``ioctl()`` calls specific but unified per each device scope.
 4. Each app have a special system whose not allow to leak resources(like file 
 descriptors, dirs and probably even memory blocks) increasing system survival.
 
-
-// Dumb shit to fix list:
-
-1. Since memory allocated before app_main() with malloc can't be freed, we would use pthread as a main thread creating utility.
-
-
-//////////////////////////////////////////////////////////////
 AI generated stuff below ->>
-//////////////////////////////////////////////////////////////
 
 EOS is an abstraction layer for ESP32 that implements a **Unified Device Model**. It transforms heterogeneous hardware peripherals into a consistent, hierarchical **Device Tree** accessible via a standard **Virtual Files/system (VFS)** interface (`/dev`).
 

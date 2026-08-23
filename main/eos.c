@@ -37,11 +37,4 @@ void app_main(void) {
   pthread_attr_setstacksize(&attr, EOS_MAIN_TASK_STACK_SIZE);
 
   pthread_create(&eos_main_thread, &attr, eos_main, NULL);
-
-  // Required for FreeRTOS task wrapping, since this thread doesn't seem to work as any another
-  // maybe that's okay actually
-  // what do make app_main as that specific in esp-idf?
-  while (1) {
-    vTaskDelay(portMAX_DELAY);
-  }
 }

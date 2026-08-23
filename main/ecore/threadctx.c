@@ -33,49 +33,21 @@ static void eos_tctx_free(eos_tctx_t *tctx) {
   EOS_LOGI("Cleaning up thread context\n");
 
   // Active file descriptors:
-  if (tctx->fds) {
-    if (tctx->fds_count) {
-      EOS_LOGW("Found %d file descriptors in use\n", tctx->fds_count);
-      for (size_t i = 0; i < tctx->fds_count; i++) {
-        close(tctx->fds[i]);
-      }
-    }
+  if (tctx->fds)
     free(tctx->fds);
-  }
+
   // Open Directories:
-  if (tctx->dirs) {
-    if (tctx->dirs_count) {
-      EOS_LOGW("Found %d open directories\n", tctx->dirs_count);
-      for (size_t i = 0; i < tctx->dirs_count; i++) {
-        closedir(tctx->dirs[i]); // recursion :D
-      }
-    }
+  if (tctx->dirs)
     free(tctx->dirs);
-  }
   // Non freed memory blocks
-  if (tctx->memblocks) {
-    if (tctx->memblocks_count) {
-      EOS_LOGW("Found %d not freed memory blocks\n", tctx->memblocks_count);
-      for (size_t i = 0; i < tctx->memblocks_count; i++) {
-        free(tctx->memblocks[i]);
-      }
-    }
+  if (tctx->memblocks)
     free(tctx->memblocks);
-  }
 
   free(tctx);
 }
 
-// idk what x here is but hope I got it right
-static void eos_tctx_tls_delete(int x, void *ptr) {
-  if (x == EOS_TCTX_TLS_INDEX)
-    eos_tctx_free((eos_tctx_t *)ptr);
-}
-
 static void eos_tctx_set(eos_tctx_t *tctx) {
-  vTaskSetThreadLocalStoragePointerAndDelCallback(
-      NULL, EOS_TCTX_TLS_INDEX, tctx,
-      (TlsDeleteCallbackFunction_t)eos_tctx_tls_delete);
+  vTaskSetThreadLocalStoragePointer(NULL, EOS_TCTX_TLS_INDEX, tctx);
 }
 
 eos_tctx_t *eos_tctx_get(void) {
@@ -92,15 +64,15 @@ eos_tctx_t *eos_tctx_get(void) {
       pvTaskGetThreadLocalStoragePointer(NULL, EOS_TCTX_TLS_INDEX);
 
   // can be not initialized yet
-  if (!tctx)
+  if (!tctx) {
     tctx = eos_tctx_alloc();
+    strcpy(tctx->cwd, "/");
+  }
 
   if (!tctx) {
     EOS_LOGE("Can't initialize thread context\n");
     abort();
   }
-
-  strcpy(tctx->cwd, "/");
 
   eos_tctx_set(tctx);
 
@@ -233,7 +205,7 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx) {
 
   // Check if memory allocated for dir storage
   if (!tctx->dirs) {
-    tctx->dirs = malloc(sizeof(int) * 2);
+    tctx->dirs = malloc(sizeof(DIR *) * 2);
     if (!tctx->dirs) {
       EOS_LOGE("Memory allocation for thread context dirs failed\n");
       return;
@@ -382,10 +354,26 @@ void *eos_twrap_pthread(void *data) {
   strcpy(tctx->cwd, twrap->cwd);
   eos_tctx_set(tctx);
 
-  // Cleanup
+  // Cleanup twrap
   free(twrap);
 
-  return thread_start(thread_arg);
+  void *thread_result = thread_start(thread_arg);
+
+  // Cleanup resources. Note it won't happen in case thread killed from outside
+  while (tctx->fds_count) {
+    EOS_LOGW("Closing leaked fd %d\n", tctx->fds[0]);
+    close(tctx->fds[0]);
+  }
+
+  while (tctx->dirs_count) {
+    EOS_LOGW("Closing leaked dir %p\n", tctx->dirs[0]);
+    closedir(tctx->dirs[0]);
+  }
+
+  // Cleanup context
+  eos_tctx_free(tctx);
+
+  return thread_result;
 }
 
 void eos_twrap_freertos(void *data) {
