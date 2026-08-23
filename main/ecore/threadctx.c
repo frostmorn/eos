@@ -359,6 +359,8 @@ void *eos_twrap_pthread(void *data) {
 
   void *thread_result = thread_start(thread_arg);
 
+  // TODO: RTOS task never reach that since is destroyed via vTaskDelete(NULL)
+
   // Cleanup resources. Note it won't happen in case thread killed from outside
   while (tctx->fds_count) {
     EOS_LOGW("Closing leaked fd %d\n", tctx->fds[0]);
