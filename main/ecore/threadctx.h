@@ -7,30 +7,21 @@
 //
 ///////////////////////////////////////////////////////
 
+#include "emisc/kvec.h"
 #include <dirent.h>
 #include <limits.h>
 #include <pthread.h>
 
 typedef struct eos_tctx_t eos_tctx_t;
 struct eos_tctx_t {
-  char cwd[PATH_MAX]; // Inherits from current thread
-  // Those pieces are almost identical, maybe use kvec from klib?
-  struct {
-    int *fds;
-    size_t fds_count;
-    size_t fds_cap;
-  };
-  struct {
-    DIR **dirs;
-    size_t dirs_count;
-    size_t dirs_cap;
-  };
-  struct {
-    // TODO: store other meta?
-    void **memblocks;
-    size_t memblocks_count;
-    size_t memblocks_cap;
-  };
+  // Current working directory
+  char cwd[PATH_MAX];
+  // File descriptors in use
+  kvec_t(int) fds;
+  // Opened directories
+  kvec_t(DIR *) dirs;
+  // Allocated memory block
+  kvec_t(void *) memblocks;
 };
 
 // Retrieves current thread context

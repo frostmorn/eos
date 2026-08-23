@@ -21,6 +21,10 @@ static eos_tctx_t *eos_tctx_alloc() {
 
   memset(tctx, 0, sizeof(eos_tctx_t));
 
+  kv_init(tctx->fds);
+  kv_init(tctx->dirs);
+  kv_init(tctx->memblocks);
+
   return tctx;
 }
 
@@ -32,16 +36,10 @@ static void eos_tctx_free(eos_tctx_t *tctx) {
 
   EOS_LOGI("Cleaning up thread context\n");
 
-  // Active file descriptors:
-  if (tctx->fds)
-    free(tctx->fds);
-
-  // Open Directories:
-  if (tctx->dirs)
-    free(tctx->dirs);
-  // Non freed memory blocks
-  if (tctx->memblocks)
-    free(tctx->memblocks);
+  // Cleanup
+  kv_destroy(tctx->fds);
+  kv_destroy(tctx->dirs);
+  kv_destroy(tctx->memblocks);
 
   free(tctx);
 }
@@ -91,42 +89,8 @@ void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx) {
     return;
   }
 
-  // Check if memory allocated for fd storage
-  if (!tctx->fds) {
-    tctx->fds = malloc(sizeof(int) * 2);
-    if (!tctx->fds) {
-      EOS_LOGE("Memory allocation for thread context fds failed\n");
-      return;
-    }
-    tctx->fds_count = 0;
-    tctx->fds_cap = 2;
-    // Fill with bad fds
-    tctx->fds[0] = -1;
-    tctx->fds[1] = -1;
-  }
-
-  // Allocate additional memory if needed
-  if (tctx->fds_cap == tctx->fds_count) {
-    size_t newcap = tctx->fds_cap * 2;
-    // RESERARCH: how reallocarray() would work with PSRAM blocks
-    void *newblock = reallocarray(tctx->fds, newcap, sizeof(int));
-    if (!newblock) {
-      EOS_LOGE("Memory allocation failed for thread context fds storage\n");
-      return;
-    }
-    // Swap blocks
-    tctx->fds = newblock;
-    tctx->fds_cap = newcap;
-
-    // Fill with bad fds
-    for (size_t i = tctx->fds_count; i < newcap; i++) {
-      tctx->fds[i] = -1;
-    }
-  }
-
   // Register
-  tctx->fds[tctx->fds_count] = fd;
-  tctx->fds_count++;
+  kv_push(int, tctx->fds, fd);
 }
 
 void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
@@ -142,51 +106,21 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
   }
 
   // Find fd slot
-  int *pfd = NULL;
+  bool found = false;
   size_t i;
-  if ((tctx->fds && tctx->fds_count)) {
-    for (i = 0; i < tctx->fds_count; i++) {
-      if (tctx->fds[i] == fd) {
-        pfd = &(tctx->fds[i]);
-        break;
-      }
+  for (i = 0; i < kv_size(tctx->fds); i++) {
+    if (kv_A(tctx->fds, i) == fd) {
+      found = true;
+      break;
     }
-  } // oh my god
-
+  }
   // Check if fd found
-  if (!pfd) {
-    EOS_LOGE("fd %d not found. impossible to unregister\n", fd);
-    return;
+  if (!found) {
+    EOS_LOGE("Can't unreg fd %d\n", fd);
   }
-
-  // Handle special case
-  if (tctx->fds_count == 1) {
-    tctx->fds_count = 0;
-    tctx->fds_cap = 0;
-    free(tctx->fds);
-    tctx->fds = NULL;
-    return;
-  }
-
   // Unregister and compact list
-  tctx->fds_count--;
-  tctx->fds[i] = tctx->fds[tctx->fds_count];
-  tctx->fds[tctx->fds_count] = -1;
-
-  // Shrink mem if needed
-  if (tctx->fds_count * 3 < tctx->fds_cap) {
-    size_t newcap = tctx->fds_cap / 2;
-    if (newcap < 2)
-      newcap = 2;
-    // Probably we can use just realloc here, but well, who cares
-    void *newblock = reallocarray(tctx->fds, newcap, sizeof(int));
-    if (!newblock) {
-      EOS_LOGE("Memory allocation failed for thread context fds storage\n");
-      return;
-    }
-    tctx->fds = newblock;
-    tctx->fds_cap = newcap;
-  }
+  kvec_drop_fast(int, tctx->fds, i);
+  kvec_opt(int, tctx->fds);
 }
 
 // Almost exact copy of tctx_reg_fd
@@ -203,42 +137,8 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx) {
     return;
   }
 
-  // Check if memory allocated for dir storage
-  if (!tctx->dirs) {
-    tctx->dirs = malloc(sizeof(DIR *) * 2);
-    if (!tctx->dirs) {
-      EOS_LOGE("Memory allocation for thread context dirs failed\n");
-      return;
-    }
-    tctx->dirs_count = 0;
-    tctx->dirs_cap = 2;
-    // FIll with bad dirs
-    tctx->dirs[0] = NULL;
-    tctx->dirs[1] = NULL;
-  }
-
-  // Allocate additional memory if needed
-  if (tctx->dirs_cap == tctx->dirs_count) {
-    size_t newcap = tctx->dirs_cap * 2;
-    // RESERARCH: how reallocarray() would work with PSRAM blocks
-    void *newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR *));
-    if (!newblock) {
-      EOS_LOGE("Memory allocation failed for thread context dirs storage\n");
-      return;
-    }
-    // Swap blocks
-    tctx->dirs = newblock;
-    tctx->dirs_cap = newcap;
-
-    // Fill with bad dirs
-    for (size_t i = tctx->dirs_count; i < newcap; i++) {
-      tctx->dirs[i] = NULL;
-    }
-  }
-
   // Register
-  tctx->dirs[tctx->dirs_count] = dir;
-  tctx->dirs_count++;
+  kv_push(DIR *, tctx->dirs, dir);
 }
 
 // Almost exact copy of tctx_unreg_fd
@@ -255,52 +155,22 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
     return;
   }
 
-  // Find dir slot
-  DIR **ppdir = NULL;
+  // Find fd slot
+  bool found = false;
   size_t i;
-  if ((tctx->dirs && tctx->dirs_count)) {
-    for (i = 0; i < tctx->dirs_count; i++) {
-      if (tctx->dirs[i] == dir) {
-        ppdir = &(tctx->dirs[i]);
-        break;
-      }
+  for (i = 0; i < kv_size(tctx->dirs); i++) {
+    if (kv_A(tctx->dirs, i) == dir) {
+      found = true;
+      break;
     }
-  } // oh my god
-
-  // Check if dir found
-  if (!ppdir) {
-    EOS_LOGE("dir %p not found. impossible to unregister\n", dir);
-    return;
   }
-
-  // Handle special case
-  if (tctx->dirs_count == 1) {
-    tctx->dirs_count = 0;
-    tctx->dirs_cap = 0;
-    free(tctx->dirs);
-    tctx->dirs = NULL;
-    return;
+  // Check if fd found
+  if (!found) {
+    EOS_LOGE("Can't unreg dir %p\n", dir);
   }
-
   // Unregister and compact list
-  tctx->dirs_count--;
-  tctx->dirs[i] = tctx->dirs[tctx->dirs_count];
-  tctx->dirs[tctx->dirs_count] = NULL;
-
-  // Shrink mem if needed
-  if (tctx->dirs_count * 3 < tctx->dirs_cap) {
-    size_t newcap = tctx->dirs_cap / 2;
-    if (newcap < 2)
-      newcap = 2;
-    // Probably we can use just realloc here, but well, who cares
-    void *newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR *));
-    if (!newblock) {
-      EOS_LOGE("Memory allocation failed for thread context dir storage\n");
-      return;
-    }
-    tctx->dirs = newblock;
-    tctx->dirs_cap = newcap;
-  }
+  kvec_drop_fast(DIR *, tctx->dirs, i);
+  kvec_opt(DIR *, tctx->dirs);
 }
 
 void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
@@ -362,14 +232,14 @@ void *eos_twrap_pthread(void *data) {
   // TODO: RTOS task never reach that since is destroyed via vTaskDelete(NULL)
 
   // Cleanup resources. Note it won't happen in case thread killed from outside
-  while (tctx->fds_count) {
-    EOS_LOGW("Closing leaked fd %d\n", tctx->fds[0]);
-    close(tctx->fds[0]);
+  while (kv_size(tctx->fds)) {
+    EOS_LOGW("Closing leaked fd %d\n", kv_A(tctx->fds, 0));
+    close(kv_A(tctx->fds, 0));
   }
 
-  while (tctx->dirs_count) {
-    EOS_LOGW("Closing leaked dir %p\n", tctx->dirs[0]);
-    closedir(tctx->dirs[0]);
+  while (kv_size(tctx->dirs)) {
+    EOS_LOGW("Closing leaked fd %p\n", kv_A(tctx->dirs, 0));
+    closedir(kv_A(tctx->dirs, 0));
   }
 
   // Cleanup context
