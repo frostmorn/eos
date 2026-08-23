@@ -117,6 +117,7 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
   // Check if fd found
   if (!found) {
     EOS_LOGE("Can't unreg fd %d\n", fd);
+    return;
   }
   // Unregister and compact list
   kvec_drop_fast(int, tctx->fds, i);
@@ -167,6 +168,7 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
   // Check if fd found
   if (!found) {
     EOS_LOGE("Can't unreg dir %p\n", dir);
+    return;
   }
   // Unregister and compact list
   kvec_drop_fast(DIR *, tctx->dirs, i);
