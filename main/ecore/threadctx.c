@@ -193,6 +193,7 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
       return;
     }
     tctx->fds = newblock;
+    tctx->fds_cap = newcap;
   }
 }
 
@@ -306,6 +307,7 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
       return;
     }
     tctx->dirs = newblock;
+    tctx->dirs_cap = newcap;
   }
 }
 
