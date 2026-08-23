@@ -120,8 +120,8 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
     return;
   }
   // Unregister and compact list
-  kvec_drop_fast(int, tctx->fds, i);
-  kvec_opt(int, tctx->fds);
+  kv_drop_fast(int, tctx->fds, i);
+  kv_opt(int, tctx->fds);
 }
 
 // Almost exact copy of tctx_reg_fd
@@ -171,8 +171,8 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
     return;
   }
   // Unregister and compact list
-  kvec_drop_fast(DIR *, tctx->dirs, i);
-  kvec_opt(DIR *, tctx->dirs);
+  kv_drop_fast(DIR *, tctx->dirs, i);
+  kv_opt(DIR *, tctx->dirs);
 }
 
 void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}

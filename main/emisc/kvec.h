@@ -107,12 +107,12 @@ int main() {
     --(v).n;                                                                   \
   } while (0)
 
-#define kvec_drop_fast(type, v, i)                                             \
+#define kv_drop_fast(type, v, i)                                             \
   do {                                                                         \
     (v).a[(i)] = (v).a[--(v).n];                                               \
   } while (0)
 
-#define kvec_opt(type, v)                                                      \
+#define kv_opt(type, v)                                                      \
   do {                                                                         \
     if ((v).n * 3 > (v).m) {                                                   \
       (v).m = (v).n * 2;                                                       \
@@ -120,7 +120,7 @@ int main() {
     }                                                                          \
   } while (0)
 
-#define kvec_shrink(type, v)                                                   \
+#define kv_shrink(type, v)                                                   \
   do {                                                                         \
     (v).m = (v).n;                                                             \
     (v).a = (type *)realloc((v).a, sizeof(type) * (v).m);                      \
