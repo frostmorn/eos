@@ -296,7 +296,7 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
 
   // Shrink mem if needed
   if (tctx->dirs_count * 3 < tctx->dirs_cap) {
-    size_t newcap = tctx->fds_cap / 2;
+    size_t newcap = tctx->dirs_cap / 2;
     if (newcap < 2)
       newcap = 2;
     // Probably we can use just realloc here, but well, who cares
