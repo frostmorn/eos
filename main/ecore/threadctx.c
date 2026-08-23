@@ -340,6 +340,11 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
   // Allocate twrap data
   eos_twrap_t *twrap = malloc(sizeof(eos_twrap_t));
 
+  if (!twrap){
+    EOS_LOGE("twrap_prepare failed\n");
+    return NULL;
+  }
+
   // Fill twrap data
   twrap->thread_start = thread_start;
   twrap->thread_arg = thread_data;
