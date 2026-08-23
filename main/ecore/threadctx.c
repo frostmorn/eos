@@ -327,45 +327,43 @@ void eos_tctx_init(void) {
   }
 }
 
-
 /// => thread wrap
-eos_twrap_t *eos_twrap_prepare(void *data){
+eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
   eos_tctx_t *cur_tctx = eos_tctx_get();
 
   // Allocate twrap data
-  eos_twrap_t *twrap =
-      malloc(sizeof(eos_tctx_init_t));
+  eos_twrap_t *twrap = malloc(sizeof(eos_twrap_t));
 
   // Fill twrap data
-  twrap->real_start_routine = start_routine;
-  twrap->real_arg = arg;
+  twrap->thread_start = thread_start;
+  twrap->thread_arg = thread_data;
 
   if (cur_tctx) {
-    strcpy(twrap->inherited_cwd, cur_tctx->cwd);
+    strcpy(twrap->cwd, cur_tctx->cwd);
   } else {
-    strcpy(twrap->inherited_cwd, "/");
+    strcpy(twrap->cwd, "/");
   }
- 
+
   return twrap;
 }
 
-void *eos_twrap_start(void *data){
+void *eos_twrap_pthread(void *data) {
   eos_twrap_t *twrap = data;
 
-  if (!twrap){
+  if (!twrap) {
     EOS_LOGE("Can't launch thread. Wrap data invalid\n");
-    return;
+    return NULL;
   }
 
   // Store thread launch params
-  void * (*thread_start)(void *) = twrap->thread_start;
+  void *(*thread_start)(void *) = twrap->thread_start;
   void *thread_arg = twrap->thread_arg;
 
   // Initializing new thread context
   eos_tctx_t *tctx = eos_tctx_alloc();
-  if (!tctx){
+  if (!tctx) {
     EOS_LOGE("Failed to allocate thread context\n");
-    return;
+    return NULL;
   }
   // Copy inherit data
   strcpy(tctx->cwd, twrap->cwd);
@@ -376,3 +374,6 @@ void *eos_twrap_start(void *data){
 
   return thread_start(thread_arg);
 }
+
+// come on
+//void eos_twrap_freertos(void *data) { eos_twrap_pthread(data); }

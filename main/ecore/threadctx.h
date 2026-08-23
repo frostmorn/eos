@@ -7,25 +7,25 @@
 //
 ///////////////////////////////////////////////////////
 
-#include <pthread.h>
-#include <limits.h>
 #include <dirent.h>
+#include <limits.h>
+#include <pthread.h>
 
 typedef struct eos_tctx_t eos_tctx_t;
-struct eos_tctx_t{
-  char   cwd  [PATH_MAX];         // Inherits from current thread
+struct eos_tctx_t {
+  char cwd[PATH_MAX]; // Inherits from current thread
   // Those pieces are almost identical, maybe use kvec from klib?
-  struct{
+  struct {
     int *fds;
     size_t fds_count;
     size_t fds_cap;
   };
-  struct{
+  struct {
     DIR **dirs;
     size_t dirs_count;
     size_t dirs_cap;
   };
-  struct{
+  struct {
     // TODO: store other meta?
     void **memblocks;
     size_t memblocks_count;
@@ -34,15 +34,15 @@ struct eos_tctx_t{
 };
 
 // Retrieves current thread context
-eos_tctx_t* eos_tctx_get();
+eos_tctx_t *eos_tctx_get();
 
-// Setups new thread context 
+// Setups new thread context
 void eos_tctx_set(eos_tctx_t *tctx);
 
 // Allocates new thread context
-eos_tctx_t* eos_tctx_alloc();
+eos_tctx_t *eos_tctx_alloc();
 
-// Dealocates thread context 
+// Dealocates thread context
 void eos_tctx_free(eos_tctx_t *tctx);
 
 // FD management
@@ -60,17 +60,20 @@ void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
 // Global thread context init
 void eos_tctx_init();
 
-
 /// => thread wrap
 
-typedef struct{
+typedef struct {
   void *(*thread_start)(void *);
   void *thread_arg;
   char cwd[PATH_MAX];
-}eos_twrap_t;
+} eos_twrap_t;
 
 // Preapare data for thread wrap
-eos_twrap_t *eos_twrap_prepare(void *data);
-// Wrapper function arround pthread and freertos task routine
-void *eos_twrap_start(eos_twrap_t *data);
+// To simplify casting, we it's as a void *, since it doesn't really matter
+eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data);
 
+// Wrapper function arround pthread and freertos task routine
+// to be passed from thread create wrap
+void *eos_twrap_pthread(void *data);
+// yeah, rtos have a bit different TaskEntry declaration
+//void eos_twrap_freertos(void *data);

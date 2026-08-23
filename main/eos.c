@@ -38,4 +38,13 @@ void app_main(void) {
   pthread_attr_setstacksize(&attr, EOS_MAIN_TASK_STACK_SIZE);
 
   pthread_create(&eos_main_thread, &attr, eos_main, NULL);
+
+  /*
+  Required for FreeRTOS task wrapping, since malloc'ed memory before 
+  app_main can't be normally freed
+  // what do make app_main as that specific in esp-idf?
+  while (1) {
+    vTaskDelay(portMAX_DELAY);
+  }
+  */
 }
