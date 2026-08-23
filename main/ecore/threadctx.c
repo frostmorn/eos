@@ -35,12 +35,12 @@ void eos_tctx_set(eos_tctx_t *tctx) {
 eos_tctx_t *eos_tctx_alloc() {
   eos_tctx_t *tctx = malloc(sizeof(eos_tctx_t));
 
-  memset(tctx, 0, sizeof(eos_tctx_t));
-
-  // NOTE: tctx->fds/dirs/memblocks allocated on first access
-
-  if (!tctx)
+  if (!tctx) {
     EOS_LOGE("Can't allocate new thread context. Not enough memory?\n");
+    return NULL;
+  }
+
+  memset(tctx, 0, sizeof(eos_tctx_t));
 
   return tctx;
 }
@@ -183,7 +183,9 @@ void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx) {
 
   // Shrink mem if needed
   if (tctx->fds_count * 3 < tctx->fds_cap) {
-    size_t newcap = tctx->fds_cap * 2;
+    size_t newcap = tctx->fds_cap / 2;
+    if (newcap < 2)
+      newcap = 2;
     // Probably we can use just realloc here, but well, who cares
     void *newblock = reallocarray(tctx->fds, newcap, sizeof(int));
     if (!newblock) {
@@ -294,7 +296,9 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
 
   // Shrink mem if needed
   if (tctx->dirs_count * 3 < tctx->dirs_cap) {
-    size_t newcap = tctx->dirs_cap * 2;
+    size_t newcap = tctx->fds_cap / 2;
+    if (newcap < 2)
+      newcap = 2;
     // Probably we can use just realloc here, but well, who cares
     void *newblock = reallocarray(tctx->dirs, newcap, sizeof(DIR *));
     if (!newblock) {
@@ -376,4 +380,4 @@ void *eos_twrap_pthread(void *data) {
 }
 
 // come on
-//void eos_twrap_freertos(void *data) { eos_twrap_pthread(data); }
+// void eos_twrap_freertos(void *data) { eos_twrap_pthread(data); }
