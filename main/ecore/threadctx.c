@@ -326,3 +326,53 @@ void eos_tctx_init(void) {
     tctx_init_done = true;
   }
 }
+
+
+/// => thread wrap
+eos_twrap_t *eos_twrap_prepare(void *data){
+  eos_tctx_t *cur_tctx = eos_tctx_get();
+
+  // Allocate twrap data
+  eos_twrap_t *twrap =
+      malloc(sizeof(eos_tctx_init_t));
+
+  // Fill twrap data
+  twrap->real_start_routine = start_routine;
+  twrap->real_arg = arg;
+
+  if (cur_tctx) {
+    strcpy(twrap->inherited_cwd, cur_tctx->cwd);
+  } else {
+    strcpy(twrap->inherited_cwd, "/");
+  }
+ 
+  return twrap;
+}
+
+void *eos_twrap_start(void *data){
+  eos_twrap_t *twrap = data;
+
+  if (!twrap){
+    EOS_LOGE("Can't launch thread. Wrap data invalid\n");
+    return;
+  }
+
+  // Store thread launch params
+  void * (*thread_start)(void *) = twrap->thread_start;
+  void *thread_arg = twrap->thread_arg;
+
+  // Initializing new thread context
+  eos_tctx_t *tctx = eos_tctx_alloc();
+  if (!tctx){
+    EOS_LOGE("Failed to allocate thread context\n");
+    return;
+  }
+  // Copy inherit data
+  strcpy(tctx->cwd, twrap->cwd);
+  eos_tctx_set(tctx);
+
+  // Cleanup
+  free(twrap);
+
+  return thread_start(thread_arg);
+}

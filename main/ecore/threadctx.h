@@ -59,3 +59,18 @@ void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
 
 // Global thread context init
 void eos_tctx_init();
+
+
+/// => thread wrap
+
+typedef struct{
+  void *(*thread_start)(void *);
+  void *thread_arg;
+  char cwd[PATH_MAX];
+}eos_twrap_t;
+
+// Preapare data for thread wrap
+eos_twrap_t *eos_twrap_prepare(void *data);
+// Wrapper function arround pthread and freertos task routine
+void *eos_twrap_start(eos_twrap_t *data);
+
