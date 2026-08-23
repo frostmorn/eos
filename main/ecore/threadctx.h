@@ -36,15 +36,6 @@ struct eos_tctx_t {
 // Retrieves current thread context
 eos_tctx_t *eos_tctx_get();
 
-// Setups new thread context
-void eos_tctx_set(eos_tctx_t *tctx);
-
-// Allocates new thread context
-eos_tctx_t *eos_tctx_alloc();
-
-// Dealocates thread context
-void eos_tctx_free(eos_tctx_t *tctx);
-
 // FD management
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx);
 void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx);
@@ -56,9 +47,6 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx);
 // Memory management
 void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
 void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
-
-// Global thread context init
-void eos_tctx_init();
 
 /// => thread wrap
 
@@ -76,4 +64,4 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data);
 // to be passed from thread create wrap
 void *eos_twrap_pthread(void *data);
 // yeah, rtos have a bit different TaskEntry declaration
-//void eos_twrap_freertos(void *data);
+void eos_twrap_freertos(void *data);

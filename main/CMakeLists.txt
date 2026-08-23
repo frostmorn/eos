@@ -23,6 +23,8 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=chdir"
 "-Wl,--wrap=getcwd"
 "-Wl,--wrap=pthread_create"
+"-Wl,--wrap=xTaskCreateStaticPinnedToCore"
+"-Wl,--wrap=xTaskCreatePinnedToCore"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

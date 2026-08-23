@@ -4,8 +4,6 @@
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 
-static bool tctx_init_done = false;
-
 // This requires system wide TLS INDEX register
 #define EOS_TCTX_TLS_INDEX 1 // 0 is reserved
 #if CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS <= EOS_TCTX_TLS_INDEX
@@ -13,26 +11,7 @@ static bool tctx_init_done = false;
     "Not enough FreeRTOS TLS pointers configured for eos_tctx(CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS)"
 #endif
 
-eos_tctx_t *eos_tctx_get(void) {
-  if (!tctx_init_done)
-    return NULL;
-  return (eos_tctx_t *)pvTaskGetThreadLocalStoragePointer(NULL,
-                                                          EOS_TCTX_TLS_INDEX);
-}
-
-// idk what x here is but hope I got it right
-static void eos_tctx_tls_delete(int x, void *ptr) {
-  if (x == EOS_TCTX_TLS_INDEX)
-    eos_tctx_free((eos_tctx_t *)ptr);
-}
-
-void eos_tctx_set(eos_tctx_t *tctx) {
-  vTaskSetThreadLocalStoragePointerAndDelCallback(
-      NULL, EOS_TCTX_TLS_INDEX, tctx,
-      (TlsDeleteCallbackFunction_t)eos_tctx_tls_delete);
-}
-
-eos_tctx_t *eos_tctx_alloc() {
+static eos_tctx_t *eos_tctx_alloc() {
   eos_tctx_t *tctx = malloc(sizeof(eos_tctx_t));
 
   if (!tctx) {
@@ -45,7 +24,7 @@ eos_tctx_t *eos_tctx_alloc() {
   return tctx;
 }
 
-void eos_tctx_free(eos_tctx_t *tctx) {
+static void eos_tctx_free(eos_tctx_t *tctx) {
   if (!tctx) {
     EOS_LOGW("Trying to free empty thread context\n");
     return;
@@ -85,6 +64,47 @@ void eos_tctx_free(eos_tctx_t *tctx) {
   }
 
   free(tctx);
+}
+
+// idk what x here is but hope I got it right
+static void eos_tctx_tls_delete(int x, void *ptr) {
+  if (x == EOS_TCTX_TLS_INDEX)
+    eos_tctx_free((eos_tctx_t *)ptr);
+}
+
+static void eos_tctx_set(eos_tctx_t *tctx) {
+  vTaskSetThreadLocalStoragePointerAndDelCallback(
+      NULL, EOS_TCTX_TLS_INDEX, tctx,
+      (TlsDeleteCallbackFunction_t)eos_tctx_tls_delete);
+}
+
+eos_tctx_t *eos_tctx_get(void) {
+  TaskHandle_t task = xTaskGetCurrentTaskHandle();
+
+  // insane, but, we can't get our thread local storage pointer in case
+  // we do not really have even a first thread :D
+  // yeah yeah, this can happen for real
+  if (task == NULL) {
+    return NULL;
+  }
+
+  eos_tctx_t *tctx =
+      pvTaskGetThreadLocalStoragePointer(NULL, EOS_TCTX_TLS_INDEX);
+
+  // can be not initialized yet
+  if (!tctx)
+    tctx = eos_tctx_alloc();
+
+  if (!tctx) {
+    EOS_LOGE("Can't initialize thread context\n");
+    abort();
+  }
+
+  strcpy(tctx->cwd, "/");
+
+  eos_tctx_set(tctx);
+
+  return tctx;
 }
 
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx) {
@@ -315,24 +335,6 @@ void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
 
 void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
 
-void eos_tctx_init(void) {
-  if (!tctx_init_done) {
-    if (eos_tctx_get())
-      return;
-
-    eos_tctx_t *tctx = eos_tctx_alloc();
-    if (!tctx) {
-      EOS_LOGE("Can't initialize thread context\n");
-      return;
-    }
-
-    strcpy(tctx->cwd, "/");
-
-    eos_tctx_set(tctx);
-    tctx_init_done = true;
-  }
-}
-
 /// => thread wrap
 eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
   eos_tctx_t *cur_tctx = eos_tctx_get();
@@ -340,7 +342,7 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
   // Allocate twrap data
   eos_twrap_t *twrap = malloc(sizeof(eos_twrap_t));
 
-  if (!twrap){
+  if (!twrap) {
     EOS_LOGE("twrap_prepare failed\n");
     return NULL;
   }
@@ -386,5 +388,7 @@ void *eos_twrap_pthread(void *data) {
   return thread_start(thread_arg);
 }
 
-// come on
-// void eos_twrap_freertos(void *data) { eos_twrap_pthread(data); }
+void eos_twrap_freertos(void *data) {
+  // here we can just call a pthread version, since it's identical
+  eos_twrap_pthread(data);
+}

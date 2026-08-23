@@ -19,7 +19,6 @@ void *eos_main(void *data) {
   eos_board_init();
   eos_devfs_init();
   eos_binfs_init();
-  eos_tctx_init();
 
   while (1) {
     // Run shell
@@ -39,12 +38,10 @@ void app_main(void) {
 
   pthread_create(&eos_main_thread, &attr, eos_main, NULL);
 
-  /*
-  Required for FreeRTOS task wrapping, since malloc'ed memory before 
-  app_main can't be normally freed
+  // Required for FreeRTOS task wrapping, since this thread doesn't seem to work as any another
+  // maybe that's okay actually
   // what do make app_main as that specific in esp-idf?
   while (1) {
     vTaskDelay(portMAX_DELAY);
   }
-  */
 }

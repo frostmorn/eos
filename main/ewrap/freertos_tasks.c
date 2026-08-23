@@ -7,7 +7,7 @@ In case you would like to try that again, you have to add
 "-Wl,--wrap=xTaskCreatePinnedToCore"
 
 in target_link_libraries section of CMakeLists.txt
-
+*/
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
 #include <freertos/FreeRTOS.h>
@@ -71,5 +71,3 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
 
   return handle;
 }
-
-*/

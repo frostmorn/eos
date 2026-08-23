@@ -2,6 +2,7 @@
 #include <dirent.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 int ls_main(int argc, char **argv){ 
  

@@ -1,6 +1,7 @@
 #include "ecore/app.h"
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 int pwd_main(int argc, char **argv){
   char *path = getcwd(NULL,0); 
