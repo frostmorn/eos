@@ -101,4 +101,29 @@ int main() {
                            : 0),                                               \
    (v).a[(i)])
 
+#define kvec_drop(type, v, i)                                                  \
+  do {                                                                         \
+    memmove((v).a + (i), (v).a + (i) + 1, sizeof(type) * ((v).n - (i) - 1));   \
+    --(v).n;                                                                   \
+  } while (0)
+
+#define kvec_drop_fast(type, v, i)                                             \
+  do {                                                                         \
+    (v).a[(i)] = (v).a[--(v).n];                                               \
+  } while (0)
+
+#define kvec_opt(type, v)                                                      \
+  do {                                                                         \
+    if ((v).n * 3 > (v).m) {                                                   \
+      (v).m = (v).n * 2;                                                       \
+      (v).a = (type *)realloc((v).a, sizeof(type) * (v).m);                    \
+    }                                                                          \
+  } while (0)
+
+#define kvec_shrink(type, v)                                                   \
+  do {                                                                         \
+    (v).m = (v).n;                                                             \
+    (v).a = (type *)realloc((v).a, sizeof(type) * (v).m);                      \
+  } while (0)
+
 #endif
