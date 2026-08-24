@@ -37,20 +37,20 @@ bool driver_bus_spi_init(eos_dev_t *dev) {
   };
 
   // Claim SPI peripheral
-  if (!eos_cap_alloc(EOS_CAPS_SPI, state->host, dev)) {
+  if (!eos_cap_claim(EOS_CAPS_SPI, state->host, dev)) {
     free(state);
     return false;
   }
 
   // Claim pins
-  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
-  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
-  eos_cap_alloc(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
+  eos_cap_claim(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
+  eos_cap_claim(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
+  eos_cap_claim(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
 
   esp_err_t err =
       spi_bus_initialize(state->host, &state->bus_cfg, SPI_DMA_CH_AUTO);
   if (err != ESP_OK) {
-    eos_cap_free(EOS_CAPS_SPI, state->host, dev);
+    eos_cap_release(EOS_CAPS_SPI, state->host, dev);
     free(state);
     return false;
   }
@@ -123,10 +123,10 @@ void driver_bus_spi_shutdown(eos_dev_t *dev) {
     return;
 
   spi_bus_free(state->host);
-  eos_cap_free(EOS_CAPS_SPI, state->host, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
-  eos_cap_free(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
+  eos_cap_release(EOS_CAPS_SPI, state->host, dev);
+  eos_cap_release(EOS_CAPS_GPIO, state->bus_cfg.sclk_io_num, dev);
+  eos_cap_release(EOS_CAPS_GPIO, state->bus_cfg.mosi_io_num, dev);
+  eos_cap_release(EOS_CAPS_GPIO, state->bus_cfg.miso_io_num, dev);
   free(state);
   dev->state = NULL;
 }

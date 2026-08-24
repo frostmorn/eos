@@ -12,7 +12,6 @@
 
 #define EOS_MAX_DEVICES 32
 
-#define EOS_MAX_CAPS 256
 
 // Enabled drivers:
 #define EOS_DRIVER_STORAGE_PARTITION_ENABLED

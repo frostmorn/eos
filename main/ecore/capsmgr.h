@@ -17,24 +17,21 @@ typedef enum {
   EOS_CAPS_UART,
   EOS_CAPS_PWM, // LEDC in esp idf
   EOS_CAPS_COUNT
-} eos_cap_t;
+} eos_cap_type_t;
 
 typedef struct {
-  eos_cap_t cap;
-  int32_t cap_no;
-  bool in_use;
-  eos_dev_t *owner_dev;
-} eos_cap_slot_t;
+  eos_cap_type_t type;
+  int32_t no;
+  eos_dev_t *dev;
+} eos_cap_t;
 
-extern eos_cap_slot_t eos_cap_slots[EOS_MAX_CAPS];
+// TODO: intercept idf device inits and autoclaim caps
 
-// Allocates capabity/periphereal for EOS device.
-// Returns false if allocation failed and sets eos_errno in case of error
-bool eos_cap_alloc(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev);
+// Claim capability by type and index
+bool eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev);
 
-// Deallocates capability/peripheral for EOS device.
-// Returns false if deallocation failed  and sets eos_errno in case of error
-bool eos_cap_free(eos_cap_t cap, int32_t cap_no, eos_dev_t *owner_dev);
+// Releases capability
+bool eos_cap_release(eos_cap_type_t type, int32_t no, eos_dev_t *dev);
 
 // Inits capsmgr
 void eos_capsmgr_init();

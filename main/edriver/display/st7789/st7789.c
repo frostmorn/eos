@@ -90,15 +90,15 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
   // Claim pins
-  if (!eos_cap_alloc(EOS_CAPS_GPIO, cs_pin, dev))
+  if (!eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev))
     return false;
-  if (!eos_cap_alloc(EOS_CAPS_GPIO, dc_pin, dev))
+  if (!eos_cap_claim(EOS_CAPS_GPIO, dc_pin, dev))
     return false;
   if (en_pin >= 0)
-    if (!eos_cap_alloc(EOS_CAPS_GPIO, en_pin, dev))
+    if (!eos_cap_claim(EOS_CAPS_GPIO, en_pin, dev))
       return false;
   if (rst_pin >= 0)
-    if (!eos_cap_alloc(EOS_CAPS_GPIO, rst_pin, dev))
+    if (!eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev))
       return false;
 
   // Enable display power before anything else
@@ -202,16 +202,16 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
 
   if (en_pin >= 0) {
     gpio_set_level(en_pin, 0);
-    eos_cap_free(EOS_CAPS_GPIO, en_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
   }
 
   esp_lcd_panel_del(state->panel);
   esp_lcd_panel_io_del(state->io);
 
-  eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
-  eos_cap_free(EOS_CAPS_GPIO, dc_pin, dev);
+  eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+  eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
   if (rst_pin >= 0)
-    eos_cap_free(EOS_CAPS_GPIO, rst_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
 
   free(state);
   dev->state = NULL;

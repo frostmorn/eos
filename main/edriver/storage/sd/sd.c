@@ -36,7 +36,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   dev->state = state;
 
   int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
-  if (cs_pin < 0 || !eos_cap_alloc(EOS_CAPS_GPIO, cs_pin, dev)) {
+  if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
     free(state);
     return false;
   }
@@ -52,7 +52,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   dev_cfg.gpio_cs = cs_pin;
 
   if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
-    eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
     free(state);
     return false;
   }
@@ -64,7 +64,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
     sdspi_host_remove_device(state->handle);
-    eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
     free(state);
     return false;
   }
@@ -129,7 +129,7 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
 
   int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
   if (cs_pin >= 0)
-    eos_cap_free(EOS_CAPS_GPIO, cs_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
 
   // Cleanup
   if (state->io_buff)
