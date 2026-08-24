@@ -5,6 +5,7 @@
 #include <soc/soc_caps.h>
 #include <esp_bit_defs.h>
 
+// consider using bitmask for caps
 extern bool esp_gpio_is_reserved(uint64_t bitmask);
 
 static kvec_t(eos_cap_t) ecaps;
@@ -43,6 +44,7 @@ bool eos_cap_release(eos_cap_type_t type, int32_t no, eos_dev_t *dev){
        (kv_A(ecaps, i).dev == dev)
     ){
       kv_drop_fast(eos_cap_t, ecaps, i);
+      kv_opt(eos_cap_t, ecaps);
       return true;
     }
   }
@@ -51,8 +53,8 @@ bool eos_cap_release(eos_cap_type_t type, int32_t no, eos_dev_t *dev){
 // soc/gpio_sig_map.h per soc
 void eos_capsmgr_init(){
   kv_init(ecaps);
-  // Claim reserved gpios 
-  
+
+  // Claim reserved gpios
   for (int32_t i = 0; i < SOC_GPIO_PIN_COUNT; i++){
     if (esp_gpio_is_reserved(BIT64(i)))
       eos_cap_claim(EOS_CAPS_GPIO, i, NULL);
