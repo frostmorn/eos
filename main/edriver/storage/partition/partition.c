@@ -3,7 +3,7 @@
 #include <esp_vfs_fat.h>
 #include <ff.h>
 
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/error.h"

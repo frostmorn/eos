@@ -1,4 +1,4 @@
-#include "device.h"
+#include "dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 

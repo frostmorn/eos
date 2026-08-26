@@ -1,5 +1,5 @@
 #pragma once
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include <driver/spi_master.h>
 #include <driver/i2s_std.h>

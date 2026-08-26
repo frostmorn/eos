@@ -1,5 +1,5 @@
 #include "devfs.h"
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/rootfs.h"

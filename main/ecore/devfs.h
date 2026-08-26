@@ -6,7 +6,7 @@
 // This component of EOS is responsible for a filesystem
 // representation of EOS device tree
 
-#include "ecore/device.h"
+#include "ecore/dev.h"
 
 #ifndef EOS_DEVFS_ROOT
 #define EOS_DEVFS_ROOT "/dev"

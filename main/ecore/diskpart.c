@@ -1,5 +1,5 @@
 #include "diskpart.h"
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "emisc/fancymacro.h"
 #include <stdlib.h>

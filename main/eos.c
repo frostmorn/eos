@@ -2,7 +2,7 @@
 #include "ecore/binfs.h"
 #include "ecore/capsmgr.h"
 #include "ecore/devfs.h"
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/rootfs.h"
 #include "ecore/threadctx.h"
 #include <pthread.h>

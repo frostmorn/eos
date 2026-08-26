@@ -3,7 +3,7 @@
 #ifdef EOS_DRIVER_STORAGE_FLASH_ENABLED
 #include <esp_flash.h>
 #include <spi_flash_mmap.h>
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/error.h"
 #include "ecore/ioctl.h"

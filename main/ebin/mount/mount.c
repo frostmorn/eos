@@ -2,7 +2,7 @@
 #include <sys/ioctl.h>
 
 #include "ecore/ioctl.h"
-#include "ecore/device.h"
+#include "ecore/dev.h"
 #include "ecore/bin.h"
 
 int mount_main(int argc, char **argv){
