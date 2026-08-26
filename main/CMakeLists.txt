@@ -5,7 +5,7 @@ idf_component_register(
     INCLUDE_DIRS "."
     WHOLE_ARCHIVE 
     LDFRAGMENTS "eld/driver.lf"
-    LDFRAGMENTS "eld/app.lf"
+    LDFRAGMENTS "eld/bin.lf"
 )
 
 target_link_libraries(

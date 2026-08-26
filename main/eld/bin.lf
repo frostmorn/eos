@@ -1,0 +1,14 @@
+[sections:eos_bins]
+entries:
+    .eos_bins+
+
+[scheme:eos_bins_psram]
+entries:
+    eos_bins -> flash_rodata
+
+[mapping:eos_bins]
+archive: libmain.a
+
+entries:
+    * (eos_bins_psram);
+        eos_bins -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_bins)

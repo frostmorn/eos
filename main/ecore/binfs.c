@@ -1,6 +1,6 @@
 #include "binfs.h"
-#include "emisc/fancymacro.h"
 #include "ecore/rootfs.h"
+#include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
@@ -13,46 +13,45 @@
 // File descriptor entry for binfs
 
 typedef struct {
-  const eos_native_app_manifest_t *app; // Pointer to app manifest
-  off_t offset;                         // Current read position in manifest
-  bool in_use;                          // Whether this FD is open
+  const eos_bin_t *bin; // Pointer to bin manifest
+  off_t offset;         // Current read position in manifest
+  bool in_use;          // Whether this FD is open
 } binfs_fd_t;
 
 // ── Static FD Table ────────────────────────────────────────────
 
 static binfs_fd_t binfs_fds[EOS_BINFS_MAX_FDS] = {0};
 
-// Get number of registered native apps
-static inline uint32_t binfs_app_count(void) {
-  return (uint32_t)(_eos_apps_end - _eos_apps_start);
+// Get number of registered native bins
+static inline uint32_t binfs_bin_count(void) {
+  return (uint32_t)(_eos_bins_end - _eos_bins_start);
 }
 
-// Find app by name (filename field)
-static const eos_native_app_manifest_t *binfs_find_app(const char *name) {
+// Find bin by name (filename field)
+static const eos_bin_t *binfs_find_bin(const char *name) {
   if (!name)
     return NULL;
 
-  for (const eos_native_app_manifest_t *app = _eos_apps_start;
-       app < _eos_apps_end; app++) {
-    if (strcmp(app->filename, name) == 0)
-      return app;
+  for (const eos_bin_t *bin = _eos_bins_start; bin < _eos_bins_end; bin++) {
+    if (strcmp(bin->filename, name) == 0)
+      return bin;
   }
   return NULL;
 }
 
-// Find app by index
-static const eos_native_app_manifest_t *binfs_get_app(uint32_t idx) {
-  if (idx >= binfs_app_count())
+// Find bin by index
+static const eos_bin_t *binfs_get_bin(uint32_t idx) {
+  if (idx >= binfs_bin_count())
     return NULL;
-  return &_eos_apps_start[idx];
+  return &_eos_bins_start[idx];
 }
 
 // ── FD Management ──────────────────────────────────────────────
 
-static int binfs_fd_alloc(const eos_native_app_manifest_t *app) {
+static int binfs_fd_alloc(const eos_bin_t *bin) {
   for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
     if (!binfs_fds[i].in_use) {
-      binfs_fds[i].app = app;
+      binfs_fds[i].bin = bin;
       binfs_fds[i].offset = 0;
       binfs_fds[i].in_use = true;
       return i;
@@ -72,7 +71,7 @@ static binfs_fd_t *binfs_fd_get(int fd) {
 static void binfs_fd_free(int fd) {
   if (fd >= 0 && fd < EOS_BINFS_MAX_FDS) {
     binfs_fds[fd].in_use = false;
-    binfs_fds[fd].app = NULL;
+    binfs_fds[fd].bin = NULL;
     binfs_fds[fd].offset = 0;
   }
 }
@@ -96,15 +95,15 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
   if (*name == '/')
     name++;
 
-  // Find the app
-  const eos_native_app_manifest_t *app = binfs_find_app(name);
-  if (!app) {
+  // Find the bin
+  const eos_bin_t *bin = binfs_find_bin(name);
+  if (!bin) {
     errno = ENOENT;
     return -1;
   }
 
   // Allocate FD
-  int fd = binfs_fd_alloc(app);
+  int fd = binfs_fd_alloc(bin);
   if (fd < 0) {
     errno = ENFILE;
     return -1;
@@ -134,12 +133,12 @@ static ssize_t binfs_read(void *ctx, int fd, void *buf, size_t len) {
   if (!buf || len == 0)
     return 0;
 
-  const eos_native_app_manifest_t *app = binfs_fd->app;
-  if (!app)
+  const eos_bin_t *bin = binfs_fd->bin;
+  if (!bin)
     return 0;
 
   // Calculate how much we can read from the manifest
-  off_t manifest_size = sizeof(eos_native_app_manifest_t);
+  off_t manifest_size = sizeof(eos_bin_t);
   off_t remaining = manifest_size - binfs_fd->offset;
 
   if (remaining <= 0)
@@ -149,7 +148,7 @@ static ssize_t binfs_read(void *ctx, int fd, void *buf, size_t len) {
   size_t to_read = (len < remaining) ? len : remaining;
 
   // Copy from manifest
-  uint8_t *src = (uint8_t *)app + binfs_fd->offset;
+  uint8_t *src = (uint8_t *)bin + binfs_fd->offset;
   memcpy(buf, src, to_read);
 
   binfs_fd->offset += to_read;
@@ -169,7 +168,7 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     return -1;
   }
 
-  off_t manifest_size = sizeof(eos_native_app_manifest_t);
+  off_t manifest_size = sizeof(eos_bin_t);
   off_t new_offset = 0;
 
   switch (whence) {
@@ -201,7 +200,7 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
 
 typedef struct {
   uint32_t esp_idf_fs_index;
-  uint32_t app_idx;
+  uint32_t bin_idx;
   struct dirent entry;
 } binfs_dir_t;
 
@@ -218,7 +217,7 @@ static DIR *binfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
-  dir->app_idx = 0;
+  dir->bin_idx = 0;
   return (DIR *)dir;
 }
 
@@ -229,15 +228,15 @@ static struct dirent *binfs_readdir(void *ctx, DIR *pdir) {
     return NULL;
   }
 
-  const eos_native_app_manifest_t *app = binfs_get_app(dir->app_idx);
-  if (!app)
+  const eos_bin_t *bin = binfs_get_bin(dir->bin_idx);
+  if (!bin)
     return NULL; // End of directory
 
-  dir->entry.d_ino = dir->app_idx;
+  dir->entry.d_ino = dir->bin_idx;
   dir->entry.d_type = DT_REG;
-  strlcpy(dir->entry.d_name, app->filename, sizeof(dir->entry.d_name));
+  strlcpy(dir->entry.d_name, bin->filename, sizeof(dir->entry.d_name));
 
-  dir->app_idx++;
+  dir->bin_idx++;
   return &dir->entry;
 }
 
@@ -245,14 +244,14 @@ static long binfs_telldir(void *ctx, DIR *pdir) {
   binfs_dir_t *dir = (binfs_dir_t *)pdir;
   if (!dir)
     return -1;
-  return (long)dir->app_idx;
+  return (long)dir->bin_idx;
 }
 
 static void binfs_seekdir(void *ctx, DIR *pdir, long offset) {
   binfs_dir_t *dir = (binfs_dir_t *)pdir;
   if (!dir)
     return;
-  dir->app_idx = (uint32_t)offset;
+  dir->bin_idx = (uint32_t)offset;
 }
 
 static int binfs_closedir(void *ctx, DIR *pdir) {
@@ -267,7 +266,7 @@ void eos_binfs_init(void) {
   // Initialize FD table
   for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
     binfs_fds[i].in_use = false;
-    binfs_fds[i].app = NULL;
+    binfs_fds[i].bin = NULL;
     binfs_fds[i].offset = 0;
   }
 
@@ -287,6 +286,6 @@ void eos_binfs_init(void) {
   };
 
   eos_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
-  EOS_LOGI("binfs mounted at %s with %d registered apps", EOS_BINFS_ROOT,
-           binfs_app_count());
+  EOS_LOGI("binfs mounted at %s with %d registered bins", EOS_BINFS_ROOT,
+           binfs_bin_count());
 }

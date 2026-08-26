@@ -7,7 +7,7 @@
 // representation of native apps in a form of
 // native manifest files
 
-#include "ecore/app.h"
+#include "ecore/bin.h"
 
 #ifndef EOS_BINFS_ROOT
 #define EOS_BINFS_ROOT "/bin"

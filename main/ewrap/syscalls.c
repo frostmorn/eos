@@ -98,9 +98,9 @@ int __wrap_system(const char *cmdline) {
   fread(&magic, sizeof(magic), 1, f);
 
   // native app — read full manifest from file, call entry_point directly
-  if (magic == EOS_NATIVE_APP_MAGIC) {
+  if (magic == EOS_BIN_MAGIC) {
     rewind(f);
-    eos_native_app_manifest_t manifest;
+    eos_bin_t manifest;
     fread(&manifest, sizeof(manifest), 1, f);
     fclose(f);
 
