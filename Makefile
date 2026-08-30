@@ -7,25 +7,43 @@ help:
 	@echo "===================================================="
 	@echo "     (^__^)==\\~ EOS building system ~/==(^__^)     "
 	@echo "===================================================="
-	@echo "  clean       - Cleans object files"
-	@echo "  menuconfig  - Launches configuration menu"
-	@echo "  reconfigure - Reconfigures building system"
-	@echo "  build       - Builds EOS"
-	@echo "  flash       - Flashes firmware"
-	@echo "  monitor     - Connects via serial interface"
-	@echo "  todo        - Makes TODO list for EOS"
-	@echo "  research    - Makes RESEARCH list for EOS"
-	@echo "  symbols     - Exposes builtin firmware symbols"
+	@echo "==>   Build"
+	@echo "===================================================="
+	@echo "  clean       - Clean object files"
+	@echo "  lsboard     - List supported boards"
+	@echo "  menuconfig  - Launch configuration menu"
+	@echo "  reconfigure - Reconfigure building system"
+	@echo "  build       - Build EOS"
+	@echo "===================================================="
+	@echo "==>   Flash & Test"
+	@echo "===================================================="
+	@echo "  flash       - Flash firmware"
+	@echo "  monitor     - Serial monitor"
+	@echo "  debug       - Launch gdb via builtin jtag"
+	@echo "  killdebug   - Kill OpenOCD Server"
+	@echo "===================================================="
+	@echo "==>   Tools"
+	@echo "===================================================="
+	@echo "  symbols     - List builtin firmware symbols"
 	@echo "  disasm      - Disassemble generated elf"
-	@echo "  cppcheck    - Static analyzis of a c code"
-	@echo "  debug       - Tries to launch gdb via builtin jtag"
-	@echo "  killdebug   - An action to peform after debuging"
-	@echo "                Effectively kills OpenOCD"
+	@echo "  cppcheck    - Static analyzis of a C code"
+	@echo "===================================================="
+	@echo "==>   Misc"
+	@echo "===================================================="
+	@echo "  todo        - Make TODO list for EOS"
+	@echo "  research    - Make RESEARCH list for EOS"
 	@echo "===================================================="
 
 clean:
 	@echo "Cleaning build artifacts..."
 	idf.py fullclean
+
+lsboard:
+	@echo "===================================================="
+	@echo "==>   EOS Boards"
+	@echo "===================================================="
+	@find main/eboard/* -type d | awk -F '/' '{ i++; print i,".", $$3 }';
+	@echo "===================================================="
 
 menuconfig:
 	@echo "Runing build configuration menu"
@@ -48,12 +66,14 @@ todo:
 	@echo "  (^_^)==\~  TODO:"
 	@echo "===================================================="
 	@grep -R "TODO" main
+	@echo "===================================================="
 
 research:
 	@echo "===================================================="
 	@echo "  (^_^)==\~  RESEARCH:"
 	@echo "===================================================="
 	@grep -R "RESEARCH" main
+	@echo "===================================================="
 
 
 monitor:
@@ -67,7 +87,7 @@ disasm:
 	xtensa-esp32-elf-objdump -D build/eos.elf|less -R
 
 cppcheck:
-	cppcheck main/*/* 2>&1|less -R
+	cppcheck $$(find main -name *.[ch])  |less -R
 
 debug:
 	tools/./debug_${TARGET}.sh ${FIRMWARE_ELF} 
