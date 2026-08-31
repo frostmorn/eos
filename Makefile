@@ -10,7 +10,7 @@ help:
 	@echo "==>   Build"
 	@echo "===================================================="
 	@echo "  clean       - Clean object files"
-	@echo "  lsboard     - List supported boards"
+	@echo "  setboard    - Select board"
 	@echo "  menuconfig  - Launch configuration menu"
 	@echo "  reconfigure - Reconfigure building system"
 	@echo "  build       - Build EOS"
@@ -38,12 +38,8 @@ clean:
 	@echo "Cleaning build artifacts..."
 	idf.py fullclean
 
-lsboard:
-	@echo "===================================================="
-	@echo "==>   EOS Boards"
-	@echo "===================================================="
-	@find main/eboard/* -type d | awk -F '/' '{ i++; print i,".", $$3 }';
-	@echo "===================================================="
+setboard:
+	python tools/setboard.py
 
 menuconfig:
 	@echo "Runing build configuration menu"
