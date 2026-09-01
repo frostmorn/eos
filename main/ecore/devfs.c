@@ -124,7 +124,7 @@ static off_t devfs_lseek(void *ctx, int fd, off_t offset, int whence) {
 static DIR *devfs_opendir(void *ctx, const char *path) {
   eos_dev_t *dev = NULL;
   
-  if (strcmp(path, EOS_DEVFS_ROOT) == 0)
+  if (path[0]=='\0' || (path[0] == '/' && path[1] == '\0'))
     goto allocate;  // allow devfs root
 
   // if there's a device associated with path
