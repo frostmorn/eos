@@ -174,3 +174,13 @@ int eos_dev_ioctl_call(eos_dev_t *dev, int cmd, ...) {
   return ret;
 }
 
+eos_dev_t *eos_dev_find_by_name(const char *name){
+  // Obviously invalid params
+  if (!name || name[0] == '\0') return NULL;
+
+  for (int i = 0; i < EOS_MAX_DEVICES; i++){
+    if (strcmp(eos_devices[i].name, name) == 0)
+      return &(eos_devices[i]);
+  }
+  return NULL;
+}

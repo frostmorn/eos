@@ -3,11 +3,17 @@
 #include "ecore/error.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
+#include <errno.h>
 
 bool eos_driver_init_empty(eos_dev_t *dev) {
   EOS_LOGW("Call init() not implemented for driver %s/%s", dev->driver->scope,
            dev->driver->name);
   return true;
+}
+
+void eos_driver_shutdown_empty(eos_dev_t *dev) {
+  EOS_LOGW("Call shutdown() not implemented for driver %s/%s",
+           dev->driver->scope, dev->driver->name);
 }
 
 int eos_driver_read_empty(eos_dev_t *dev, void *buf, size_t len) {
@@ -34,9 +40,49 @@ off_t eos_driver_lseek_empty(eos_dev_t *dev, off_t offset, int whence) {
   return 0;
 }
 
-void eos_driver_shutdown_empty(eos_dev_t *dev) {
-  EOS_LOGW("Call shutdown() not implemented for driver %s/%s",
-           dev->driver->scope, dev->driver->name);
+DIR *eos_driver_opendir_empty(eos_dev_t *dev, const char *name){
+  EOS_LOGW("Call opendir() not implemented for driver %s/%s", 
+      dev->driver->scope,
+      dev->driver->name
+  );
+  errno = ENOSYS;
+  return NULL;
+}
+
+struct dirent *eos_driver_readdir_empty(eos_dev_t *dev, DIR *pdir){
+  EOS_LOGW("Call readdir() not implemented for driver %s/%s", 
+      dev->driver->scope,
+      dev->driver->name
+  );
+
+  errno = ENOSYS;
+  return NULL;
+}
+
+void eos_driver_seekdir_empty(eos_dev_t *dev, DIR *pdir, long offset){
+  EOS_LOGW("Call seekdir() not implemented for driver %s/%s", 
+      dev->driver->scope,
+      dev->driver->name
+  );
+  errno = ENOSYS;
+}
+
+long eos_driver_telldir_empty(eos_dev_t *dev, DIR *pdir){
+  EOS_LOGW("Call telldir() not implemented for driver %s/%s", 
+      dev->driver->scope,
+      dev->driver->name
+  );
+  errno = ENOSYS;
+  return -1;
+}
+
+int eos_driver_closedir_empty(eos_dev_t *dev, DIR *dirp){
+  EOS_LOGW("Call closedir() not implemented for driver %s/%s", 
+      dev->driver->scope,
+      dev->driver->name
+  );
+  errno = EBADF;
+  return -1;  
 }
 
 eos_driver_t *eos_driver_find(const char *scope, const char *name) {

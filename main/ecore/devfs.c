@@ -26,34 +26,34 @@ static eos_dev_t *eos_devfs_path_to_dev(const char *path) {
   if (!path)
     return NULL;
 
-  const char *name = path;
-  if (*name == '/')
-    name++;
-  if (*name == '\0')
-    return NULL;
+  char *mem = strdup(path);
+  char *name = mem;
 
-  for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
-    eos_dev_t *dev = &eos_devices[i];
-    if (!dev->in_use)
-      continue;
-    if (!dev->driver)
-      continue;
-    if (strcmp(dev->name, name) == 0)
-      return dev;
+  eos_dev_t *dev = NULL;
+
+  // Iterate by path parts and return first found device
+  // Should support both relative and absolute devnames
+  do {
+    dev = eos_dev_find_by_name(name);
+    if (dev) break;
   }
-  return NULL;
+  while((name = strtok(name, "/")));
+
+  
+  free(mem);
+
+  return dev;
 }
 
 // ── Dir state ─────────────────────────────────────────────────
-
 typedef struct {
   uint32_t esp_idf_fs_index;
   uint32_t dev_idx;
   struct dirent entry;
+  eos_dev_t *dev;
 } devfs_dir_t;
 
 // ── ESP-IDF VFS callbacks ─────────────────────────────────────
-
 static int devfs_open(void *ctx, const char *path, int flags, int mode) {
   eos_dev_t *dev = eos_devfs_path_to_dev(path);
   if (!dev) {
@@ -122,18 +122,40 @@ static off_t devfs_lseek(void *ctx, int fd, off_t offset, int whence) {
 }
 
 static DIR *devfs_opendir(void *ctx, const char *path) {
+  eos_dev_t *dev = NULL;
+  
+  if (strcmp(path, EOS_DEVFS_ROOT) == 0)
+    goto allocate;  // allow devfs root
+
+  // if there's a device associated with path
+  dev = eos_devfs_path_to_dev(path);
+  if (!dev){
+    errno = EBADF;
+    return NULL;
+  }  
+
+  allocate:
   devfs_dir_t *dir = malloc(sizeof(devfs_dir_t));
+
+  memset(dir, 0, sizeof(eos_dev_t));
+  dir->dev = dev; 
   if (!dir) {
     errno = ENOMEM;
     return NULL;
   }
-  dir->dev_idx = 0;
+ 
   return (DIR *)dir;
 }
 
 static struct dirent *devfs_readdir(void *ctx, DIR *pdir) {
   devfs_dir_t *dir = (devfs_dir_t *)pdir;
 
+  // If there's an associated device
+  if (dir->dev){
+    return dir->dev->driver->readdir(dir->dev, pdir);
+  }
+
+  // WALK ROOT :
   // walk flat eos_devices[], yield only leaf devices
   while (dir->dev_idx < EOS_MAX_DEVICES) {
     eos_dev_t *dev = &eos_devices[dir->dev_idx++];
