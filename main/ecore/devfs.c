@@ -170,7 +170,13 @@ static struct dirent *devfs_readdir(void *ctx, DIR *pdir) {
 
     memset(&dir->entry, 0, sizeof(dir->entry));
     dir->entry.d_ino = dir->dev_idx - 1;
-    dir->entry.d_type = DT_CHR;
+
+    // Deduce file type based on drv opendir implementation
+    if (dev->driver->opendir != eos_driver_opendir_empty)
+      dir->entry.d_type = DT_CHR;
+    else
+      dir->entry.d_type = DT_DIR;
+
     strlcpy(dir->entry.d_name, dev->name, EOS_SMALL_STR_LEN);
     return &dir->entry;
   }
