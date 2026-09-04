@@ -226,6 +226,7 @@ void eos_drv_seekdir(eos_dev_t *dev, DIR *pdir, long offset){
   // TODO: implement through telldir++? hm, this is a dumb one
   if (dev && dev->driver && dev->driver->seekdir){
     dev->driver->seekdir(dev, pdir, offset);
+    return;
   }
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
