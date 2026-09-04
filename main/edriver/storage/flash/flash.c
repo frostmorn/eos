@@ -93,7 +93,7 @@ int driver_storage_flash_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
   return len;
 }
 
-int driver_storage_flash_write(eos_dev_t *dev, int fd, void *buf, size_t len) {
+int driver_storage_flash_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   flash_state_t *state = dev->state;
 
   if (!state || !buf)

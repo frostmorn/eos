@@ -114,7 +114,7 @@ extern const eos_drv_t _eos_drivers_end[];
   .access     = NULL,                                                           \
   .truncate   = NULL,                                                           \
   .ftruncate  = NULL,                                                           \
-  .utime      = NULL,
+  .utime      = NULL
 
 // Seeks for driver with particular scope/name/pair
 eos_drv_t *eos_drv_find(const char *scope, const char *name);

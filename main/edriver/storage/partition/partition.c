@@ -50,7 +50,7 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
 
   // get sector size from parent
   uint32_t sector_size = 512; // fallback if parent can't tell us
-  if (eos_dev_ioctl_call(dev->parent, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
+  if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
                          &sector_size) != EOS_ERR_NO_ERROR) {
     EOS_LOGW("partition: %s failed to query parent sector size, "
              "defaulting to %lu",
@@ -74,7 +74,7 @@ void driver_storage_partition_shutdown(eos_dev_t *dev) {
 }
 
 // ── IO ────────────────────────────────────────────────────────
-int driver_storage_partition_read(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_partition_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
   partition_state_t *state = dev->state;
   if (!state || !dev->parent)
     return -1;
@@ -93,17 +93,17 @@ int driver_storage_partition_read(eos_dev_t *dev, void *buf, size_t len) {
   size_t clamped_len = sectors * state->sector_size;
 
   off_t abs_lba = (off_t)state->info->lba_start + state->offset;
-  if (dev->parent->driver->lseek(dev->parent, abs_lba, SEEK_SET) != abs_lba)
+  if (dev->parent->driver->lseek(dev->parent, EOS_DRV_FD, abs_lba, SEEK_SET) != abs_lba)
     return -1;
 
-  int ret = dev->parent->driver->read(dev->parent, buf, clamped_len);
+  int ret = dev->parent->driver->read(dev->parent, EOS_DRV_FD, buf, clamped_len);
   if (ret > 0)
     state->offset += ret / state->sector_size;
 
   return ret;
 }
 
-int driver_storage_partition_write(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_partition_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   partition_state_t *state = dev->state;
   if (!state || !dev->parent)
     return -1;
@@ -121,17 +121,17 @@ int driver_storage_partition_write(eos_dev_t *dev, void *buf, size_t len) {
   size_t clamped_len = sectors * state->sector_size;
 
   off_t abs_lba = (off_t)state->info->lba_start + state->offset;
-  if (dev->parent->driver->lseek(dev->parent, abs_lba, SEEK_SET) != abs_lba)
+  if (dev->parent->driver->lseek(dev->parent, EOS_DRV_FD, abs_lba, SEEK_SET) != abs_lba)
     return -1;
 
-  int ret = dev->parent->driver->write(dev->parent, buf, clamped_len);
+  int ret = dev->parent->driver->write(dev->parent, EOS_DRV_FD, buf, clamped_len);
   if (ret > 0)
     state->offset += ret / state->sector_size;
 
   return ret;
 }
 
-off_t driver_storage_partition_lseek(eos_dev_t *dev, off_t offset, int whence) {
+off_t driver_storage_partition_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
   partition_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -194,10 +194,10 @@ static DRESULT eos_ff_disk_read(BYTE pdrv, BYTE *buff, uint32_t sector,
   partition_state_t *state = dev->state;
   size_t len = (size_t)count * state->sector_size;
 
-  if (dev->driver->lseek(dev, (off_t)sector, SEEK_SET) != (off_t)sector)
+  if (dev->driver->lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
     return RES_ERROR;
 
-  return (dev->driver->read(dev, buff, len) == (int)len) ? RES_OK : RES_ERROR;
+  return (dev->driver->read(dev, EOS_DRV_FD, buff, len) == (int)len) ? RES_OK : RES_ERROR;
 }
 
 static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
@@ -209,10 +209,10 @@ static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
   partition_state_t *state = dev->state;
   size_t len = (size_t)count * state->sector_size;
 
-  if (dev->driver->lseek(dev, (off_t)sector, SEEK_SET) != (off_t)sector)
+  if (dev->driver->lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
     return RES_ERROR;
 
-  return (dev->driver->write(dev, (void *)buff, len) == (int)len) ? RES_OK
+  return (dev->driver->write(dev, EOS_DRV_FD, (void *)buff, len) == (int)len) ? RES_OK
                                                                   : RES_ERROR;
 }
 
@@ -359,7 +359,7 @@ bool driver_storage_partition_mount(eos_dev_t *dev, const char *path) {
   return false;
 }
 
-int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+int driver_storage_partition_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   partition_state_t *state = dev->state;
 
   switch (cmd) {

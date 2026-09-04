@@ -163,7 +163,7 @@ int driver_storage_sd_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
   return len;
 }
 
-int driver_storage_sd_write(eos_dev_t *dev, int fd,  void *buf, size_t len) {
+int driver_storage_sd_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -240,7 +240,7 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) 
   }
 }
 
-int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   sd_state_t *state = dev->state;
 
   int ret = EOS_ERR_NO_ERROR;
