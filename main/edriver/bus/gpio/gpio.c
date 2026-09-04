@@ -1,5 +1,5 @@
 #include "includes.h"
-#ifdef EOS_DRIVER_BUS_GPIO_ENABLED
+#ifdef EOS_DRV_BUS_GPIO_ENABLED
 #include <dirent.h>
 #include <driver/gpio.h>
 #include <errno.h>

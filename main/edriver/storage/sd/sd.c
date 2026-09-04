@@ -1,5 +1,5 @@
 #include "includes.h"
-#ifdef EOS_DRIVER_STORAGE_SD_ENABLED
+#ifdef EOS_DRV_STORAGE_SD_ENABLED
 
 #include <driver/sdspi_host.h>
 #include <driver/spi_master.h>
@@ -86,7 +86,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   }
 
   // Find generic partition driver
-  eos_driver_t *drv = eos_driver_find("storage", "partition");
+  eos_drv_t *drv = eos_drv_find("storage", "partition");
 
   if (drv == NULL) {
     EOS_LOGE("Can't find a generic partition driver\n");
@@ -271,8 +271,8 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   return ret;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_storage_sd = {
-    EOS_DRIVER_INIT,
+EOS_DRV_ATTR eos_drv_t driver_storage_sd = {
+    EOS_DRV_INIT,
     .scope = "storage",
     .name = "sd",
     .devname = "sd",

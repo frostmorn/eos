@@ -26,7 +26,7 @@ bool eos_drv_init(eos_dev_t *dev) {
 
 void eos_drv_shutdown(eos_dev_t *dev) {
   if (dev && dev->driver && dev->driver->shutdown){
-    dev->driver->shutdow(dev);
+    dev->driver->shutdown(dev);
     return;
   }
 
@@ -99,7 +99,7 @@ ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offs
 
 ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size, off_t offset) {
   if (dev && dev->driver && dev->driver->pwrite)
-    return dev->driver->pwrite(dev, fd, data, size, offset);
+    return dev->driver->pwrite(dev, fd, src, size, offset);
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -151,7 +151,7 @@ int eos_drv_stat(eos_dev_t *dev, const char *path, struct stat *st){
   return -1;
 }
 
-int eos_drv_link(eos_dev_t *dev, const char *n1, cont char *n2){
+int eos_drv_link(eos_dev_t *dev, const char *n1, const char *n2){
   // TODO: theoretically we can support cross device linkage in case
   // we control all filesystems through proxy vfs, and implement
   // path resolution for each proxied vfs by own
@@ -213,8 +213,8 @@ struct dirent *eos_drv_readdir(eos_dev_t *dev, DIR *pdir){
 }
 
 long eos_drv_telldir(eos_dev_t *dev, DIR *pdir){
-  if (dev && dev->driver && dev->driver->rename)
-    return dev->driver->rename(dev, src, dst);
+  if (dev && dev->driver && dev->driver->telldir)
+    return dev->driver->telldir(dev, pdir);
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -254,8 +254,8 @@ int eos_drv_mkdir(eos_dev_t *dev, const char *name, mode_t mode){
 }
 
 int eos_drv_rmdir(eos_dev_t *dev, const char *name){
-  if (dev && dev->driver && dev->driver->mkdir)
-    return dev->driver->mkdir(dev, name, mode);
+  if (dev && dev->driver && dev->driver->rmdir)
+    return dev->driver->rmdir(dev, name);
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -286,7 +286,7 @@ int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args){
 
   // Still not handled, check driver implementation
   if (dev && dev->driver && dev->driver->ioctl)
-    return dev->driver->ioctl(dev, fd, cmd, arg);
+    return dev->driver->ioctl(dev, fd, cmd, args);
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -344,13 +344,13 @@ int eos_drv_utime(eos_dev_t *dev, const char *path, const struct utimbuf *times)
   return -1;
 }
 
-eos_driver_t *eos_driver_find(const char *scope, const char *name) {
-  for (const eos_driver_t *driver = _eos_drivers_start;
+eos_drv_t *eos_drv_find(const char *scope, const char *name) {
+  for (const eos_drv_t *driver = _eos_drivers_start;
        driver < _eos_drivers_end; ++driver) {
 
     if (strcmp(scope, driver->scope) == 0 && strcmp(name, driver->name) == 0) {
       EOS_LOGI("Found driver %s/%s", scope, name);
-      return (eos_driver_t *)driver;
+      return (eos_drv_t *)driver;
     }
   }
 

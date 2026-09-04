@@ -4,6 +4,7 @@
 ///////////////////////////////////////////////////////
 #include <esp_vfs.h>
 #include <dirent.h>
+#include "emisc/strlimits.h"
 
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
@@ -72,12 +73,13 @@ struct eos_drv_t {
 
 //============================================(^_^)==\~
 
-// Attribute to be used for static eos_driver_t allocation
+// Attribute to be used for static eos_drv_t allocation
 #define EOS_DRV_ATTR __attribute__((section(".eos_drivers"))) const
 
 extern const eos_drv_t _eos_drivers_start[];
 extern const eos_drv_t _eos_drivers_end[];
 
+// TODO: maybe we no need that
 #define EOS_DRV_INIT                                                    	\
   .scope      = "undefined",                                                    \
   .name       = "undefined",                                                    \

@@ -1,5 +1,5 @@
 #include "includes.h"
-#ifdef EOS_DRIVER_BUS_SPI_ENABLED
+#ifdef EOS_DRV_BUS_SPI_ENABLED
 
 #include "ecore/ioctl.h"
 #include "ecore/driver.h"

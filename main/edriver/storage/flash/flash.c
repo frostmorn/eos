@@ -1,6 +1,6 @@
 #include "includes.h"
 
-#ifdef EOS_DRIVER_STORAGE_FLASH_ENABLED
+#ifdef EOS_DRV_STORAGE_FLASH_ENABLED
 #include <esp_flash.h>
 #include <spi_flash_mmap.h>
 #include "ecore/dev.h"

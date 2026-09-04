@@ -11,7 +11,7 @@
 #include "ecore/rootfs.h"
 #include "includes.h"
 
-#ifdef EOS_DRIVER_STORAGE_PARTITION_ENABLED
+#ifdef EOS_DRV_STORAGE_PARTITION_ENABLED
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -388,8 +388,8 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int cmd, va_list args) {
   return EOS_ERR_NO_ERROR;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_storage_partition = {
-    EOS_DRIVER_INIT,
+EOS_DRV_ATTR eos_drv_t driver_storage_partition = {
+    EOS_DRV_INIT,
     .scope = "storage",
     .name = "partition",
     .devname = "part",

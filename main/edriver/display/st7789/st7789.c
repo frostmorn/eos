@@ -1,5 +1,5 @@
 #include "includes.h"
-#ifdef EOS_DRIVER_DISPLAY_ST7789_ENABLED
+#ifdef EOS_DRV_DISPLAY_ST7789_ENABLED
 
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
@@ -156,7 +156,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
                          rotation);
 
   esp_lcd_panel_disp_on_off(state->panel, true);
-#ifdef EOS_DRIVER_DISPLAY_ST7789_TEST
+#ifdef EOS_DRV_DISPLAY_ST7789_TEST
   st7789_test(dev);
   // st7789_test2(dev);
 #endif
@@ -217,7 +217,7 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   dev->state = NULL;
 }
 
-EOS_DRIVER_ATTR eos_drv_t driver_display_st7789 = {
+EOS_DRV_ATTR eos_drv_t driver_display_st7789 = {
     EOS_DRV_INIT,
     .scope = "display",
     .name = "st7789",
