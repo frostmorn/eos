@@ -1,6 +1,5 @@
 #include "dev.h"
 #include "ecore/driver.h"
-#include "ecore/ioctl.h"
 
 // Generates eos_dev_t_tree_attach/detach/detach_subtree/walk,
 // operating on this struct's parent/child/next fields (see
@@ -54,7 +53,7 @@ void eos_devtree_init() {
   bzero(eos_devices, sizeof(eos_devices));
 
   // Setup root device
-  EOS_ROOT_DEV.driver = eos_driver_find("bus", "root");
+  EOS_ROOT_DEV.driver = eos_drv_find("bus", "root");
   EOS_ROOT_DEV.in_use = true;
   eos_dev_assign_id(&EOS_ROOT_DEV);
   eos_dev_assign_name(&EOS_ROOT_DEV);
@@ -156,22 +155,6 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   bzero(dev, sizeof(eos_dev_t));
 
   return EOS_ERR_NO_ERROR;
-}
-
-// Bridges the va_list-based driver->ioctl() signature back to a normal
-// call site. devfs_ioctl() gets its va_list "for free" from the VFS
-// syscall layer; internal driver-to-driver calls (e.g. a partition
-// asking its parent for its sector size) don't have that, so they need
-// a small variadic shim to open one.
-int eos_dev_ioctl_call(eos_dev_t *dev, int cmd, ...) {
-  if (!dev || !dev->driver || !dev->driver->ioctl)
-    return EOS_ERR_NOT_SUPPORTED;
-
-  va_list args;
-  va_start(args, cmd);
-  int ret = dev->driver->ioctl(dev, cmd, args);
-  va_end(args);
-  return ret;
 }
 
 eos_dev_t *eos_dev_find_by_name(const char *name){

@@ -163,7 +163,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   return true;
 }
 
-int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
+int driver_display_st7789_write(eos_dev_t *dev, int fd, void *buf, size_t len) {
   st7789_state_t *state = dev->state;
   return esp_lcd_panel_draw_bitmap(state->panel, 0, 0, state->width,
                                    state->height, buf) == ESP_OK
@@ -171,7 +171,7 @@ int driver_display_st7789_write(eos_dev_t *dev, void *buf, size_t len) {
              : -1;
 }
 
-int driver_display_st7789_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   st7789_state_t *state = dev->state;
 
   int ret = EOS_ERR_NO_ERROR;
@@ -217,8 +217,8 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   dev->state = NULL;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_display_st7789 = {
-    EOS_DRIVER_INIT,
+EOS_DRIVER_ATTR eos_drv_t driver_display_st7789 = {
+    EOS_DRV_INIT,
     .scope = "display",
     .name = "st7789",
     .devname = "fb",

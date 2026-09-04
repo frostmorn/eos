@@ -7,7 +7,7 @@ void eos_board_init() {
   // ===================== I2C bus =====================
   // Shared between touch controller and ES8311 codec
   eos_dev_t *i2c = eos_dev_alloc();
-  i2c->driver = eos_driver_find("bus", "i2c");
+  i2c->driver = eos_drv_find("bus", "i2c");
   i2c->pins = (eos_pin_t[]){{"sda_io_num", 7}, {"scl_io_num", 8}, {NULL, 0}};
   i2c->cfg = (eos_cfg_t[]){{"port", EOS_CFG_INT, .val.i = I2C_NUM_0},
                            {"clk_speed", EOS_CFG_INT, .val.i = 400000},
@@ -18,7 +18,7 @@ void eos_board_init() {
   // ST7701S via MIPI DSI — no GPIO pin assignments needed,
   // DSI lanes are hardwired on ESP32-P4
   eos_dev_t *display = eos_dev_alloc();
-  display->driver = eos_driver_find("display", "st7701s");
+  display->driver = eos_drv_find("display", "st7701s");
   display->pins = (eos_pin_t[]){{"backlight_pwm", 45}, // LCD_PWM
                                 {NULL, 0}};
   display->cfg = (eos_cfg_t[]){{"width", EOS_CFG_INT, .val.i = 480},
@@ -30,7 +30,7 @@ void eos_board_init() {
   // ===================== Touch controller =====================
   // GT911 or similar CTP via I2C
   eos_dev_t *touch = eos_dev_alloc();
-  touch->driver = eos_driver_find("input", "touch");
+  touch->driver = eos_drv_find("input", "touch");
   touch->pins = (eos_pin_t[]){{"int_io_num", 21}, // TOUCH_INT
                               {"rst_io_num", 22}, // TOUCH_RST
                               {NULL, 0}};
@@ -42,7 +42,7 @@ void eos_board_init() {
 
   // ===================== ES8311 audio codec =====================
   eos_dev_t *codec = eos_dev_alloc();
-  codec->driver = eos_driver_find("sound", "es8311");
+  codec->driver = eos_drv_find("sound", "es8311");
   codec->pins = (eos_pin_t[]){{"mclk_io_num", 13}, // CODEC_I2S0_MCLK
                               {"bclk_io_num", 12}, // CODEC_I2S0_SCLK
                               {"lrck_io_num", 10}, // CODEC_I2S0_LRCK
@@ -57,7 +57,7 @@ void eos_board_init() {
   // ===================== Speaker amplifier =====================
   // NS4150 controlled via PA_CTRL
   eos_dev_t *speaker = eos_dev_alloc();
-  speaker->driver = eos_driver_find("sound", "ns4150");
+  speaker->driver = eos_drv_find("sound", "ns4150");
   speaker->pins = (eos_pin_t[]){{"ctrl_io_num", 20}, // PA_CTRL
                                 {NULL, 0}};
   eos_dev_attach(speaker, eos_devtree_root());
@@ -65,12 +65,12 @@ void eos_board_init() {
   // ===================== Microphone =====================
   // MSM381A3729H9CP via ES8311 ADC
   eos_dev_t *mic = eos_dev_alloc();
-  mic->driver = eos_driver_find("sensor", "microphone");
+  mic->driver = eos_drv_find("sensor", "microphone");
   eos_dev_attach(mic, codec);
 
   // ===================== SD card (SDMMC) =====================
   eos_dev_t *sd = eos_dev_alloc();
-  sd->driver = eos_driver_find("storage", "sdmmc");
+  sd->driver = eos_drv_find("storage", "sdmmc");
   sd->pins = (eos_pin_t[]){{"clk_io_num", 36}, // SD_CLK
                            {"cmd_io_num", 37}, // SD_CMD
                            {"d0_io_num", 38},  // SD_DATA0
@@ -85,7 +85,7 @@ void eos_board_init() {
 
   // ===================== Battery ADC =====================
   eos_dev_t *battery = eos_dev_alloc();
-  battery->driver = eos_driver_find("sensor", "adc");
+  battery->driver = eos_drv_find("sensor", "adc");
   battery->pins = (eos_pin_t[]){{"io_num", 53}, {NULL, 0}};
   battery->cfg = (eos_cfg_t[]){{"unit", EOS_CFG_INT, .val.i = ADC_UNIT_1},
                                {"channel", EOS_CFG_INT, .val.i = ADC_CHANNEL_0},
@@ -95,7 +95,7 @@ void eos_board_init() {
 
   // ===================== RS485 =====================
   eos_dev_t *rs485 = eos_dev_alloc();
-  rs485->driver = eos_driver_find("bus", "rs485");
+  rs485->driver = eos_drv_find("bus", "rs485");
   rs485->pins = (eos_pin_t[]){{"tx_io_num", 26}, // TX1
                               {"rx_io_num", 27}, // RX1
                               {NULL, 0}};
@@ -107,7 +107,7 @@ void eos_board_init() {
   // ===================== ESP32-C6 (WiFi/BT) =====================
   // Secondary controller via UART
   eos_dev_t *c6 = eos_dev_alloc();
-  c6->driver = eos_driver_find("wireless", "esp32c6");
+  c6->driver = eos_drv_find("wireless", "esp32c6");
   c6->pins = (eos_pin_t[]){
       {"tx_io_num", 37}, // C6_U0TXD — NOTE: verify, may conflict with SD
       {"rx_io_num", 38}, // C6_U0RXD — NOTE: verify, may conflict with SD
@@ -117,7 +117,7 @@ void eos_board_init() {
   // ===================== Camera (CSI) =====================
   // Optional — JC4880P443C_I_W_Y variant includes camera
   eos_dev_t *cam = eos_dev_alloc();
-  cam->driver = eos_driver_find("sensor", "camera");
+  cam->driver = eos_drv_find("sensor", "camera");
   cam->cfg = (eos_cfg_t[]){// CSI lanes hardwired on ESP32-P4
                            {"width", EOS_CFG_INT, .val.i = 1920},
                            {"height", EOS_CFG_INT, .val.i = 1080},

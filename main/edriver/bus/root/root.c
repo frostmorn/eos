@@ -6,5 +6,5 @@
 
 // Do I actually need that crap?
 
-EOS_DRIVER_ATTR eos_driver_t driver_bus_root = {EOS_DRIVER_INIT, .scope = "bus",
+EOS_DRV_ATTR eos_drv_t driver_bus_root = {EOS_DRV_INIT, .scope = "bus",
                                                 .name = "root"};

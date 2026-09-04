@@ -141,7 +141,7 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
 
 // ── IO — raw block operations ─────────────────────────────────
 
-int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_sd_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -163,7 +163,7 @@ int driver_storage_sd_read(eos_dev_t *dev, void *buf, size_t len) {
   return len;
 }
 
-int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_sd_write(eos_dev_t *dev, int fd,  void *buf, size_t len) {
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -184,7 +184,7 @@ int driver_storage_sd_write(eos_dev_t *dev, void *buf, size_t len) {
   return len;
 }
 
-off_t driver_storage_sd_lseek(eos_dev_t *dev, off_t offset, int whence) {
+off_t driver_storage_sd_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
   sd_state_t *state = dev->state;
 
   if (!state) {

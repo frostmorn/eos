@@ -72,7 +72,7 @@ void driver_storage_flash_shutdown(eos_dev_t *dev) {
 
 // ── IO — raw flash operations ─────────────────────────────────
 
-int driver_storage_flash_read(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_flash_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
   flash_state_t *state = dev->state;
 
   if (!state || !buf)
@@ -93,7 +93,7 @@ int driver_storage_flash_read(eos_dev_t *dev, void *buf, size_t len) {
   return len;
 }
 
-int driver_storage_flash_write(eos_dev_t *dev, void *buf, size_t len) {
+int driver_storage_flash_write(eos_dev_t *dev, int fd, void *buf, size_t len) {
   flash_state_t *state = dev->state;
 
   if (!state || !buf)
@@ -114,7 +114,7 @@ int driver_storage_flash_write(eos_dev_t *dev, void *buf, size_t len) {
   return len;
 }
 
-off_t driver_storage_flash_lseek(eos_dev_t *dev, off_t offset, int whence) {
+off_t driver_storage_flash_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
 
   flash_state_t *state = dev->state;
 
@@ -171,7 +171,7 @@ off_t driver_storage_flash_lseek(eos_dev_t *dev, off_t offset, int whence) {
 
 // ── IOCTL ──────────────────────────────────────────────────────
 
-int driver_storage_flash_ioctl(eos_dev_t *dev, int cmd, va_list args) {
+int driver_storage_flash_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   flash_state_t *state = dev->state;
 
@@ -206,8 +206,8 @@ int driver_storage_flash_ioctl(eos_dev_t *dev, int cmd, va_list args) {
 
 // ── Driver ─────────────────────────────────────────────────────
 
-EOS_DRIVER_ATTR eos_driver_t driver_storage_flash = {
-    EOS_DRIVER_INIT,
+EOS_DRV_ATTR eos_drv_t driver_storage_flash = {
+    EOS_DRV_INIT,
     .scope = "storage",
     .name = "flash",
     .devname = "flash",

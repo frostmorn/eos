@@ -131,7 +131,7 @@ void driver_bus_spi_shutdown(eos_dev_t *dev) {
   dev->state = NULL;
 }
 
-EOS_DRIVER_ATTR eos_driver_t driver_bus_spi = {EOS_DRIVER_INIT,
+EOS_DRV_ATTR eos_drv_t driver_bus_spi = {EOS_DRV_INIT,
                                                .scope = "bus",
                                                .name = "spi",
                                                .init = driver_bus_spi_init,

@@ -12,11 +12,11 @@
 // Structure representing device in EOS dev tree
 ///////////////////////////////////////////////////////
 
-typedef struct eos_driver_t eos_driver_t;
+typedef struct eos_drv_t eos_drv_t;
 typedef struct eos_dev_t eos_dev_t;
 struct eos_dev_t {
   // Driver to be used to control device
-  eos_driver_t *driver;
+  eos_drv_t *driver;
 
   // Device pinmap
   eos_pin_t *pins; // {"miso", 13}, {"mosi", 11}, {NULL, 0}
