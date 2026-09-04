@@ -194,10 +194,10 @@ static DRESULT eos_ff_disk_read(BYTE pdrv, BYTE *buff, uint32_t sector,
   partition_state_t *state = dev->state;
   size_t len = (size_t)count * state->sector_size;
 
-  if (dev->driver->lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
+  if (eos_drv_lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
     return RES_ERROR;
 
-  return (dev->driver->read(dev, EOS_DRV_FD, buff, len) == (int)len) ? RES_OK : RES_ERROR;
+  return (eos_drv_read(dev, EOS_DRV_FD, buff, len) == (int)len) ? RES_OK : RES_ERROR;
 }
 
 static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
@@ -209,10 +209,10 @@ static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
   partition_state_t *state = dev->state;
   size_t len = (size_t)count * state->sector_size;
 
-  if (dev->driver->lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
+  if (eos_drv_lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
     return RES_ERROR;
 
-  return (dev->driver->write(dev, EOS_DRV_FD, (void *)buff, len) == (int)len) ? RES_OK
+  return (eos_drv_write(dev, EOS_DRV_FD, (void *)buff, len) == (int)len) ? RES_OK
                                                                   : RES_ERROR;
 }
 

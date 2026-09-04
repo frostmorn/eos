@@ -116,5 +116,52 @@ extern const eos_drv_t _eos_drivers_end[];
   .ftruncate  = NULL,                                                           \
   .utime      = NULL
 
-// Seeks for driver with particular scope/name/pair
+// Find suitable driver by scope/name
 eos_drv_t *eos_drv_find(const char *scope, const char *name);
+
+
+///////////////////////////////////////////////////////
+// Dev operations:
+///////////////////////////////////////////////////////
+bool eos_drv_init(eos_dev_t *dev);
+void eos_drv_shutdown(eos_dev_t *dev);
+///////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+// Inform operations
+///////////////////////////////////////////////////////
+bool eos_drv_attach_req(eos_dev_t *dev, eos_dev_t *child);
+bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child);
+///////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////
+// VFS operations:
+///////////////////////////////////////////////////////
+ssize_t eos_drv_write(eos_dev_t *dev, int fd, void *data, size_t size);
+off_t eos_drv_lseek(eos_dev_t *dev, int fd, off_t offset, int whence);
+ssize_t eos_drv_read(eos_dev_t *dev, int fd, void *dst, size_t size);
+ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offset);
+ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size, off_t offset);
+int eos_drv_open(eos_dev_t *dev, const char *path, int flags, int mode);
+int eos_drv_close(eos_dev_t *dev, int fd);
+int eos_drv_fstat(eos_dev_t *dev, int fd, struct stat *st);
+int eos_drv_stat(eos_dev_t *dev, const char *path, struct stat *st);
+int eos_drv_link(eos_dev_t *dev, const char *n1, const char *n2);
+int eos_drv_unlink(eos_dev_t *dev, const char *path);
+int eos_drv_rename(eos_dev_t *dev, const char *src, const char *dst);
+DIR *eos_drv_opendir(eos_dev_t *dev, const char *path);
+struct dirent *eos_drv_readdir(eos_dev_t *dev, DIR *pdir);
+long eos_drv_telldir(eos_dev_t *dev, DIR *pdir);
+void eos_drv_seekdir(eos_dev_t *dev, DIR *pdir, long offset);
+int eos_drv_closedir(eos_dev_t *dev, DIR *pdir);
+int eos_drv_mkdir(eos_dev_t *dev, const char *name, mode_t mode);
+int eos_drv_rmdir(eos_dev_t *dev, const char *name);
+int eos_drv_fcntl(eos_dev_t *dev, int fd, int cmd, int arg);
+int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args);
+int eos_drv_fsync(eos_dev_t *dev, int fd);
+int eos_drv_access(eos_dev_t *dev, const char *path, int amode);
+int eos_drv_truncate(eos_dev_t *dev, const char *path, off_t length);
+int eos_drv_ftruncate(eos_dev_t *dev, int fd, off_t length);
+int eos_drv_utime(eos_dev_t *dev, const char *path, const struct utimbuf *times);
+///////////////////////////////////////////////////////

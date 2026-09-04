@@ -204,11 +204,11 @@ static eos_error_t read_sector(eos_dev_t *dev, uint32_t lba, void *buf,
            (unsigned long)lba, (unsigned long)count, (long long)offset,
            (unsigned long)bytes);
 
-  if (dev->driver->lseek(dev, EOS_DRV_FD, offset, SEEK_SET) != offset) {
+  if (eos_drv_lseek(dev, EOS_DRV_FD, offset, SEEK_SET) != offset) {
     EOS_LOGI("diskpart: READ seek FAILED offset=%lld", (long long)offset);
     return EOS_ERR_DEVICE_INVALID;
   }
-  if (dev->driver->read(dev, EOS_DRV_FD, buf, bytes) != (int)bytes) {
+  if (eos_drv_read(dev, EOS_DRV_FD, buf, bytes) != (int)bytes) {
     EOS_LOGI("diskpart: READ FAILED lba=%lu offset=%lld bytes=%lu",
              (unsigned long)lba, (long long)offset, (unsigned long)bytes);
     return EOS_ERR_DEVICE_INVALID;
@@ -223,11 +223,11 @@ static eos_error_t write_sector(eos_dev_t *dev, uint32_t lba, const void *buf,
   EOS_LOGI("diskpart: WRITE lba=%lu count=%lu offset=%lld bytes=%lu",
            (unsigned long)lba, (unsigned long)count, (long long)offset,
            (unsigned long)bytes);
-  if (dev->driver->lseek(dev, EOS_DRV_FD, offset, SEEK_SET) != offset) {
+  if (eos_drv_lseek(dev, EOS_DRV_FD, offset, SEEK_SET) != offset) {
     EOS_LOGI("diskpart: WRITE seek FAILED offset=%lld", (long long)offset);
     return EOS_ERR_DEVICE_INVALID;
   }
-  if (dev->driver->write(dev, EOS_DRV_FD, (void *)buf, bytes) != (int)bytes) {
+  if (eos_drv_write(dev, EOS_DRV_FD, (void *)buf, bytes) != (int)bytes) {
     EOS_LOGI("diskpart: WRITE FAILED lba=%lu offset=%lld bytes=%lu",
              (unsigned long)lba, (long long)offset, (unsigned long)bytes);
     return EOS_ERR_DEVICE_INVALID;
