@@ -111,7 +111,7 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   eos_dev_assign_name(dev);
 
   // Launch driver
-  if (!dev->driver->init(dev)) {
+  if (!eos_drv_init(dev)) {
     eos_dev_detach(dev);
     return EOS_ERR_DEVICE_INIT_FAILED;
   }
@@ -143,7 +143,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   }
 
   // Shutdown device driver
-  dev->driver->shutdown(dev);
+  eos_drv_shutdown(dev);
 
   // Unlink dev from the tree. Any child that refused detach_req above
   // (still attached at this point) gets reparented onto dev->parent
@@ -173,13 +173,11 @@ eos_dev_t *eos_dev_find_by_name(const char *name){
 // syscall layer; internal driver-to-driver calls (e.g. a partition
 // asking its parent for its sector size) don't have that, so they need
 // a small variadic shim to open one.
+// TODO: should be a part of ecore/driver ? 
 int eos_dev_ioctl_call(eos_dev_t *dev, int fd, int cmd, ...) {
-  if (!dev || !dev->driver || !dev->driver->ioctl)
-    return EOS_ERR_NOT_SUPPORTED;
-
   va_list args;
   va_start(args, cmd);
-  int ret = dev->driver->ioctl(dev, fd, cmd, args);
+  int ret = eos_drv_ioctl(dev, fd, cmd, args);
   va_end(args);
   return ret;
 }

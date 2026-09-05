@@ -15,13 +15,62 @@
 // TODO: place calls below in IRAM
 
 bool eos_drv_init(eos_dev_t *dev) {
+  if (!dev) {
+    EOS_LOGE("Invalid device trying to %s", __PRETTY_FUNCTION__);
+    return false;
+  }
 
-  if (dev && dev->driver && dev->driver->init)
-    return dev->driver->init(dev);
+  // By default, init is always successful, unless driver thinks different
+  bool initDone = true;
 
-  // Default behaviour
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
-  return true;
+  if (dev->driver && dev->driver->init)
+    initDone = dev->driver->init(dev);
+  else
+    EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+
+  if (initDone){
+    // TODO: Driver VFS EXPOSE /////!+++!+!++
+    static const esp_vfs_t drvfs = { 
+      .flags       = ESP_VFS_FLAG_CONTEXT_PTR,
+      .write_p     = eos_drv_write,
+      .lseek_p     = eos_drv_lseek,
+      .read_p      = eos_drv_read,
+      .pread_p     = eos_drv_pread,
+      .pwrite_p    = eos_drv_pwrite,
+      .open_p      = eos_drv_open,
+      .close_p     = eos_drv_close,
+      .fstat_p     = eos_drv_fstat,
+      .stat_p      = eos_drv_stat,
+      .link_p      = eos_drv_link,
+      .unlink_p    = eos_drv_unlink,
+      .rename_p    = eos_drv_rename,
+      .opendir_p   = eos_drv_opendir,
+      .readdir_p   = eos_drv_readdir,
+      .telldir_p   = eos_drv_telldir,
+      .seekdir_p   = eos_drv_seekdir,
+      .closedir_p  = eos_drv_closedir,
+      .mkdir_p     = eos_drv_mkdir,
+      .rmdir_p     = eos_drv_rmdir,
+      .fcntl_p     = eos_drv_fcntl,
+      .ioctl_p     = eos_drv_ioctl,
+      .fsync_p     = eos_drv_fsync,
+      .access_p    = eos_drv_access,
+      .truncate_p  = eos_drv_truncate,
+      .ftruncate_p = eos_drv_ftruncate,
+      .utime       = eos_drv_utime
+    }; 
+   // Here we need to solve two problems
+   // 1. Naming and location of device on a filesystem
+   // 2. Exposal of device as file, as dir, as both? 
+
+   // 3. Do rootfs have to provide something to solve first two problems?
+   // 3 a) We actually have no real needness in rootfs existence,
+   // Since all it's work can be done by TMPFS, and it should lol
+    eos_vfs_register("//path???", &drvfs, dev);
+    // Maybe add into this call DT_CHR, DT_FILE, DT_DIR something?
+  }
+
+  return initDone;
 }
 
 void eos_drv_shutdown(eos_dev_t *dev) {

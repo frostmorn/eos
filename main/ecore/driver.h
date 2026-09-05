@@ -2,28 +2,41 @@
 ///////////////////////////////////////////////////////
 // EOS Project header file
 ///////////////////////////////////////////////////////
+//
+// Each driver represents ESP-IDF VFS initialized with 
+// dev passed as ctx pointer 
+// 
+//
+// 
+
 #include <esp_vfs.h>
 #include <dirent.h>
 #include "emisc/strlimits.h"
 
 ///////////////////////////////////////////////////////
-// Structure representing a device driver for EOS
+// Forward declarations(circular dependencies)
 ///////////////////////////////////////////////////////
+typedef struct eos_dev_t eos_dev_t;
 
-// Each driver represents ESP-IDF VFS initialized with 
-// dev passed as ctx pointer at attach
 
 // TODO: maybe it would change, for now just mark places
 // DEFAULT FD if driver is meant to be used as a file
 #define EOS_DRV_FD 0
 
-typedef struct eos_dev_t eos_dev_t;
+///////////////////////////////////////////////////////
+// eos driver flags
+///////////////////////////////////////////////////////
 
+///////////////////////////////////////////////////////
+// Structure representing a device driver for EOS
+///////////////////////////////////////////////////////
 typedef struct eos_drv_t eos_drv_t;
 struct eos_drv_t {
   char scope[EOS_XSMALL_STR_LEN];
   char name[EOS_XSMALL_STR_LEN];
-  char devname[EOS_XSMALL_STR_LEN];
+  char devname[EOS_XSMALL_STR_LEN]; // setters/getters?
+  // TODO: do we've two names, one for dir and another
+  // for file or it's enough?
   uint32_t flags;
 ///////////////////////////////////////////////////////
 // Dev operations:

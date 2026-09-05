@@ -49,6 +49,8 @@ int main() {
 #define AC_KVEC_H
 
 #include <stdlib.h>
+// TODO: kvec require allocator adjust
+// setup allocator on kv_init, use heap_caps_realloc instead of realloc
 
 #define kv_roundup32(x)                                                        \
   (--(x), (x) |= (x) >> 1, (x) |= (x) >> 2, (x) |= (x) >> 4, (x) |= (x) >> 8,  \
