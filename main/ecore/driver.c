@@ -3,6 +3,7 @@
 #include "ecore/error.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
+#include <esp_vfs.h>
 #include <errno.h>
 
 // Most of calls specified here are wrappers around per driver implementations
@@ -32,32 +33,32 @@ bool eos_drv_init(eos_dev_t *dev) {
     // TODO: Driver VFS EXPOSE /////!+++!+!++
     static const esp_vfs_t drvfs = { 
       .flags       = ESP_VFS_FLAG_CONTEXT_PTR,
-      .write_p     = eos_drv_write,
-      .lseek_p     = eos_drv_lseek,
-      .read_p      = eos_drv_read,
-      .pread_p     = eos_drv_pread,
-      .pwrite_p    = eos_drv_pwrite,
-      .open_p      = eos_drv_open,
-      .close_p     = eos_drv_close,
-      .fstat_p     = eos_drv_fstat,
-      .stat_p      = eos_drv_stat,
-      .link_p      = eos_drv_link,
-      .unlink_p    = eos_drv_unlink,
-      .rename_p    = eos_drv_rename,
-      .opendir_p   = eos_drv_opendir,
-      .readdir_p   = eos_drv_readdir,
-      .telldir_p   = eos_drv_telldir,
-      .seekdir_p   = eos_drv_seekdir,
-      .closedir_p  = eos_drv_closedir,
-      .mkdir_p     = eos_drv_mkdir,
-      .rmdir_p     = eos_drv_rmdir,
-      .fcntl_p     = eos_drv_fcntl,
-      .ioctl_p     = eos_drv_ioctl,
-      .fsync_p     = eos_drv_fsync,
-      .access_p    = eos_drv_access,
-      .truncate_p  = eos_drv_truncate,
-      .ftruncate_p = eos_drv_ftruncate,
-      .utime       = eos_drv_utime
+      .write_p     = (void *)eos_drv_write,
+      .lseek_p     = (void *)eos_drv_lseek,
+      .read_p      = (void *)eos_drv_read,
+      .pread_p     = (void *)eos_drv_pread,
+      .pwrite_p    = (void *)eos_drv_pwrite,
+      .open_p      = (void *)eos_drv_open,
+      .close_p     = (void *)eos_drv_close,
+      .fstat_p     = (void *)eos_drv_fstat,
+      .stat_p      = (void *)eos_drv_stat,
+      .link_p      = (void *)eos_drv_link,
+      .unlink_p    = (void *)eos_drv_unlink,
+      .rename_p    = (void *)eos_drv_rename,
+      .opendir_p   = (void *)eos_drv_opendir,
+      .readdir_p   = (void *)eos_drv_readdir,
+      .telldir_p   = (void *)eos_drv_telldir,
+      .seekdir_p   = (void *)eos_drv_seekdir,
+      .closedir_p  = (void *)eos_drv_closedir,
+      .mkdir_p     = (void *)eos_drv_mkdir,
+      .rmdir_p     = (void *)eos_drv_rmdir,
+      .fcntl_p     = (void *)eos_drv_fcntl,
+      .ioctl_p     = (void *)eos_drv_ioctl,
+      .fsync_p     = (void *)eos_drv_fsync,
+      .access_p    = (void *)eos_drv_access,
+      .truncate_p  = (void *)eos_drv_truncate,
+      .ftruncate_p = (void *)eos_drv_ftruncate,
+      .utime       = (void *)eos_drv_utime
     }; 
    // Here we need to solve two problems
    // 1. Naming and location of device on a filesystem
@@ -66,7 +67,7 @@ bool eos_drv_init(eos_dev_t *dev) {
    // 3. Do rootfs have to provide something to solve first two problems?
    // 3 a) We actually have no real needness in rootfs existence,
    // Since all it's work can be done by TMPFS, and it should lol
-    eos_vfs_register("//path???", &drvfs, dev);
+    esp_vfs_register("//path???", &drvfs, dev);
     // Maybe add into this call DT_CHR, DT_FILE, DT_DIR something?
   }
 

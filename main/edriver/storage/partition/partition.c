@@ -8,7 +8,6 @@
 #include "ecore/driver.h"
 #include "ecore/error.h"
 #include "ecore/ioctl.h"
-#include "ecore/rootfs.h"
 #include "includes.h"
 
 #ifdef EOS_DRV_STORAGE_PARTITION_ENABLED
@@ -287,7 +286,7 @@ bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path) {
   strlcpy(state->mount_path, path, sizeof(state->mount_path));
 
   // Register in EOS
-  eos_vfs_register_dummy(path);
+  //esp_vfs_register_dummy(path);
 
   EOS_LOGI("partition: mounted %s at %s (pdrv=%d)", dev->name, path, pdrv);
   return true;
@@ -323,7 +322,7 @@ bool driver_storage_partition_fat_umount(eos_dev_t *dev) {
   EOS_LOGI("partition: unmounted %s from %s (pdrv=%d)", dev->name,
            state->mount_path, state->fat_pdrv);
 
-  eos_vfs_unregister_dummy(state->mount_path);
+  esp_vfs_unregister(state->mount_path);
 
   state->fat_mounted = false;
   state->fat_pdrv = 0;

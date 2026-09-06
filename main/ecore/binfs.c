@@ -1,5 +1,4 @@
 #include "binfs.h"
-#include "ecore/rootfs.h"
 #include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <errno.h>
@@ -9,6 +8,8 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+
+// TODO: use tmpfs instead
 
 // File descriptor entry for binfs
 
@@ -285,7 +286,7 @@ void eos_binfs_init(void) {
       .closedir_p = binfs_closedir,
   };
 
-  eos_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
+  esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
   EOS_LOGI("binfs mounted at %s with %d registered bins", EOS_BINFS_ROOT,
            binfs_bin_count());
 }

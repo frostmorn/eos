@@ -2,7 +2,6 @@
 #include "ecore/binfs.h"
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
-#include "ecore/rootfs.h"
 #include "ecore/threadctx.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -12,7 +11,6 @@
 
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {
-  eos_rootfs_init();
   eos_capsmgr_init();
   eos_devtree_init();
   eos_board_init();

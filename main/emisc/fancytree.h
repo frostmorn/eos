@@ -70,6 +70,12 @@
     T *node,                                \
     bool (*visit)(T *node, void *ctx),      \
     void *ctx                               \
+  );                                        \
+                                             \
+  T *T##_tree_find_child(                    \
+    T *parent,                               \
+    bool (*match)(T *node, void *ctx),       \
+    void *ctx                                \
   )
 
 #define EOS_TREE_DEFINE(T) \
@@ -169,4 +175,11 @@ bool T##_tree_walk(T *node, bool (*visit)(T *node, void *ctx), void *ctx){ \
   for (T *kid = node->child; kid != NULL; kid = kid->next) \
     if (!T##_tree_walk(kid, visit, ctx)) return false; \
   return true; \
+} \
+\
+T *T##_tree_find_child(T *parent, bool (*match)(T *node, void *ctx), void *ctx){ \
+  if (!parent) return NULL; \
+  for (T *kid = parent->child; kid != NULL; kid = kid->next) \
+    if (match(kid, ctx)) return kid; \
+  return NULL; \
 }
