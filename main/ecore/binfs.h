@@ -18,4 +18,4 @@
 #endif
 
 // Inits EOS binfs
-void eos_binfs_init(void);
+void eos_binfs_init();

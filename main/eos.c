@@ -6,19 +6,25 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include "ecore/tmpfs.h"
+#include "ecore/devfs.h"
 
 #define EOS_MAIN_TASK_STACK_SIZE 8192
 
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {
+  eos_tmpfs_init();
   eos_capsmgr_init();
   eos_devtree_init();
+  eos_devfs_init();
   eos_board_init();
   eos_binfs_init();
 
   while (1) {
     // Run shell
     system("ush");
+    usleep(1000000);
   }
 }
 

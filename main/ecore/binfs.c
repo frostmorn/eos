@@ -285,7 +285,7 @@ void eos_binfs_init(void) {
       .telldir_p = binfs_telldir,
       .closedir_p = binfs_closedir,
   };
-
+  mkdir(EOS_BINFS_ROOT, 0755);
   esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
   EOS_LOGI("binfs mounted at %s with %d registered bins", EOS_BINFS_ROOT,
            binfs_bin_count());

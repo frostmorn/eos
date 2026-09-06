@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/error.h"
 #include "ecore/ioctl.h"
+#include "ecore/fapi.h"
 #include "emisc/fancymacro.h"
 #include <esp_vfs.h>
 #include <errno.h>
@@ -59,7 +60,12 @@ bool eos_drv_init(eos_dev_t *dev) {
       .truncate_p  = (void *)eos_drv_truncate,
       .ftruncate_p = (void *)eos_drv_ftruncate,
       .utime       = (void *)eos_drv_utime
-    }; 
+    };
+   char *bPath = eos_fapi_get_buffer(0);
+   strcpy(bPath, "/dev/");
+   strcat(bPath, dev->name);
+
+   EOS_LOGI("Registering vfs for a driver with path %s", bPath);
    // Here we need to solve two problems
    // 1. Naming and location of device on a filesystem
    // 2. Exposal of device as file, as dir, as both? 
@@ -67,7 +73,9 @@ bool eos_drv_init(eos_dev_t *dev) {
    // 3. Do rootfs have to provide something to solve first two problems?
    // 3 a) We actually have no real needness in rootfs existence,
    // Since all it's work can be done by TMPFS, and it should lol
-    esp_vfs_register("//path???", &drvfs, dev);
+   esp_vfs_register(bPath, &drvfs, dev);
+   // Ensure /dev exists
+   mkdir("/dev", 0755);
     // Maybe add into this call DT_CHR, DT_FILE, DT_DIR something?
   }
 

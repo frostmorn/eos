@@ -52,6 +52,7 @@ typedef struct {
 } tmpfs_fd_t;
 
 typedef struct {
+  uint32_t esp_idf_fs_index;
   tmpfs_fnode_t *dir; // the directory node being listed
   tmpfs_fnode_t *cur; // next child to hand back, NULL = exhausted
 } tmpfs_dir_t;
@@ -60,6 +61,9 @@ typedef struct {
   tmpfs_fnode_t *root;
   kvec_t(tmpfs_fd_t) fds;
 } tmpfs_state_t;
+
+static tmpfs_state_t* eos_tmpfs_state = NULL;
+
 
 #define FD_VALID(state, fd)                                                    \
   ((fd) >= 0 && (fd) < (int)kv_size((state)->fds) &&                           \
@@ -811,11 +815,11 @@ static int tmpfs_utime(void *ctx, const char *path,
 // Mount
 ///////////////////////////////////////////////////////////////////
 
-void eos_tmpfs_mount(const char *path) {
+tmpfs_state_t * eos_tmpfs_mount(const char *path) {
   tmpfs_state_t *state = malloc(sizeof(tmpfs_state_t));
   if (!state) {
     EOS_LOGE("Failed to allocate tmpfs state for mount at %s\n", path);
-    return;
+    return NULL;
   }
   memset(state, 0, sizeof(tmpfs_state_t));
 
@@ -823,7 +827,7 @@ void eos_tmpfs_mount(const char *path) {
   if (!state->root) {
     EOS_LOGE("Failed to allocate tmpfs root node for mount at %s\n", path);
     free(state);
-    return;
+    return NULL;
   }
   memset(state->root, 0, sizeof(tmpfs_fnode_t));
   strlcpy(state->root->name, "/", sizeof(state->root->name));
@@ -859,4 +863,10 @@ void eos_tmpfs_mount(const char *path) {
 
   esp_vfs_register(path, &vfs, state);
   EOS_LOGI("tmpfs mounted at %s\n", path);
+
+  return state;
+}
+
+void eos_tmpfs_init(){
+  eos_tmpfs_state = eos_tmpfs_mount(EOS_TMPFS_ROOT);
 }

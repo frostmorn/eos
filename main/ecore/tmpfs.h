@@ -24,13 +24,13 @@
 #include "emisc/strlimits.h"
 
 // Configuration:
+#ifndef EOS_TMPFS_ROOT
+#define EOS_TMPFS_ROOT "" // Mount as root dir
+#endif
 
 #define TMP_NODE_NAME_MAX 16
 #define TMP_DIR_MODE      (S_IFDIR|0755)
 #define TMP_FILE_MODE     (S_IFREG|0644)
 #define TMP_SECTOR_SIZE   512
 
-// Mounts a tmpfs instance at the given path (e.g. "/tmp"). Each call
-// creates its own independent, empty root - mounting twice gives two
-// unrelated filesystems, not two views of the same one.
-void eos_tmpfs_mount(const char *path);
+void eos_tmpfs_init();
