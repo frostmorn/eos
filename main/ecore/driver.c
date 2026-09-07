@@ -118,27 +118,33 @@ ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size, off_t off
   return -1;
 }
 
-int eos_drv_open(eos_dev_t *dev, const char *path, int flags, int mode){
-  if (dev && dev->driver && dev->driver->open)
-    return dev->driver->open(dev, path, flags, mode);
+int eos_drv_open(eos_dev_t *dev, const char *path, int flags, int mode)
+{
+    if (!dev || !dev->driver) {
+        errno = ENODEV;
+        return -1;
+    }
 
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+    if (dev->driver->open)
+        return dev->driver->open(dev, path, flags, mode);
 
-  // TODO: check flags and allow open with empty path
-  errno = ENOSYS;
-  return -1;
+    return EOS_DRV_FD;
 }
 
-int eos_drv_close(eos_dev_t *dev, int fd){
-  if (dev && dev->driver && dev->driver->close)
-    return dev->driver->close(dev, fd);
 
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+int eos_drv_close(eos_dev_t *dev, int fd)
+{
+    if (!dev || !dev->driver) {
+        errno = ENODEV;
+        return -1;
+    }
 
-  // TODO: check flags and allow close DEFAULT_DESCRIPTOR? 
-  errno = ENOSYS;
-  return -1;
+    if (dev->driver->close)
+        return dev->driver->close(dev, fd);
+
+    return 0;
 }
+
 
 int eos_drv_fstat(eos_dev_t *dev, int fd, struct stat *st){
   if (dev && dev->driver && dev->driver->fstat)
