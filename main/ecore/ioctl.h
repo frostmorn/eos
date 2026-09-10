@@ -22,7 +22,7 @@ EOS_GPIO_IOCTL_SET_FLOATING,
 EOS_GPIO_IOCTL_SET_PULLUP,          
 EOS_GPIO_IOCTL_SET_PULLDOWN,        
 EOS_GPIO_IOCTL_SET_PULLUPDOWN,  
-EOS_GPIO_IOCTL_SET_DEBOUNCE,        // hysteresis,t-delta between reads
+EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US,
 //EOS_GPIO_IOCTL_SET_ BUFFERING setvbuf() ?
 //=====================================================
 

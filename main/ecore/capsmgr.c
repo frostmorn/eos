@@ -3,6 +3,7 @@
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "error.h"
+#include <driver/gpio.h>
 #include <esp_bit_defs.h>
 #include <soc/soc_caps.h>
 
@@ -67,7 +68,16 @@ void eos_capsmgr_init() {
 
   // Claim reserved gpios
   for (int32_t i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
-    if (esp_gpio_is_reserved(BIT64(i)))
+    if ((!GPIO_IS_VALID_GPIO(i)) || esp_gpio_is_reserved(BIT64(i)))
       eos_cap_claim(EOS_CAPS_GPIO, i, NULL);
   }
+}
+
+bool eos_cap_is_free(eos_cap_type_t type, int32_t no) {
+  for (size_t i = 0; i < kv_size(ecaps); i++) {
+    if (kv_A(ecaps, i).type == type && kv_A(ecaps, i).no == no)
+      return false;
+  }
+
+  return true;
 }

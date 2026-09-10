@@ -33,5 +33,8 @@ bool eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev);
 // Releases capability
 bool eos_cap_release(eos_cap_type_t type, int32_t no, eos_dev_t *dev);
 
+// Checks if capability is free
+bool eos_cap_is_free(eos_cap_type_t type, int32_t no);
+
 // Inits capsmgr
 void eos_capsmgr_init();
