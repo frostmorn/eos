@@ -85,7 +85,7 @@ bool driver_bus_gpio_init(eos_dev_t *dev) {
     // but it's somehow hardware dependent
 
     // This thing can blow up right in a face in case something wrong
-    //gpio_config(&state->pins[i].cfg);
+    // gpio_config(&state->pins[i].cfg);
   }
 
   return true;
@@ -98,7 +98,8 @@ void driver_bus_gpio_shutdown(eos_dev_t *dev) {
 //=====================================================================
 int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
                          int mode) {
-  EOS_LOGI("Opening gpio %s", path);
+  // EOS_LOGI("GPIO OPEN: path='%s' flags=%d mode=%d\n", path ? path : "(null)",
+  //          flags, mode);
   // Duplicate
   char *gPath = strdup(path);
 
@@ -211,7 +212,7 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
     return -1;
   }
 
-  // Maybe ban opening? 
+  // Maybe ban opening?
   if (!GPIO_IS_VALID_OUTPUT_GPIO(fd)) {
     errno = EFAULT;
     return -1;
@@ -337,36 +338,37 @@ DIR *driver_bus_gpio_opendir(eos_dev_t *dev, const char *name) {
   }
 
   memset(dirp, 0, sizeof(gpio_dir_t));
-  dirp->idx = -1;
+  dirp->idx = 0;
 
   return (DIR *)dirp;
 }
 //=====================================================================
 struct dirent *driver_bus_gpio_readdir(eos_dev_t *dev, DIR *pdir) {
-  // Check args
   gpio_dir_t *gpdir = (gpio_dir_t *)pdir;
+
   if (!gpdir) {
     errno = EBADF;
     return NULL;
   }
 
-  // Proceed to next entry
-  gpdir->idx++;
-
-  // Entry index is outside of pin range
-  if (!IS_VALID_FD(gpdir->idx))
-    return NULL;
-
-  // TODO: should it be thread local?
   static struct dirent entry;
 
-  // Filling new entry data
-  entry.d_type = DT_CHR;
-  entry.d_ino = (ino_t)gpdir->idx;
+  for (;;) {
+    if (!IS_VALID_FD(gpdir->idx))
+      return NULL;
 
-  sprintf(entry.d_name, "%d", gpdir->idx);
+    if (GPIO_IS_VALID_GPIO(gpdir->idx)) {
+      memset(&entry, 0, sizeof(entry));
+      entry.d_type = DT_CHR;
+      entry.d_ino = (ino_t)gpdir->idx;
+      snprintf(entry.d_name, sizeof(entry.d_name), "%d", gpdir->idx);
 
-  return &entry;
+      gpdir->idx++; // advance AFTER selecting entry
+      return &entry;
+    }
+
+    gpdir->idx++;
+  }
 }
 //=====================================================================
 void driver_bus_gpio_seekdir(eos_dev_t *dev, DIR *pdir, long offset) {

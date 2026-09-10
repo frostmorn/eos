@@ -1,19 +1,19 @@
 #include "ecore/driver.h"
 #include "ecore/dev.h"
 #include "ecore/error.h"
-#include "ecore/ioctl.h"
 #include "ecore/fapi.h"
+#include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
-#include <esp_vfs.h>
 #include <errno.h>
+#include <esp_vfs.h>
 
 // Most of calls specified here are wrappers around per driver implementations
 // Them are used to provide basic functionality for driver VFS
 
-// For reentry 
+// For reentry
 // TODO: Semaphores/Mutex for wrappers
 
-// Since all those calls are shared for all drivers there's a sense to 
+// Since all those calls are shared for all drivers there's a sense to
 // TODO: place calls below in IRAM
 
 bool eos_drv_init(eos_dev_t *dev) {
@@ -34,7 +34,7 @@ bool eos_drv_init(eos_dev_t *dev) {
 }
 
 void eos_drv_shutdown(eos_dev_t *dev) {
-  if (dev && dev->driver && dev->driver->shutdown){
+  if (dev && dev->driver && dev->driver->shutdown) {
     dev->driver->shutdown(dev);
     return;
   }
@@ -43,7 +43,7 @@ void eos_drv_shutdown(eos_dev_t *dev) {
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 }
 
-bool eos_drv_attach_req(eos_dev_t *dev, eos_dev_t *child){
+bool eos_drv_attach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (dev && dev->driver && dev->driver->attach_req)
     return dev->driver->attach_req(dev, child);
 
@@ -52,7 +52,7 @@ bool eos_drv_attach_req(eos_dev_t *dev, eos_dev_t *child){
   return true;
 }
 
-bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child){
+bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (dev && dev->driver && dev->driver->detach_req)
     return dev->driver->detach_req(dev, child);
 
@@ -94,7 +94,8 @@ ssize_t eos_drv_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   return -1;
 }
 
-ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offset) {
+ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size,
+                      off_t offset) {
   if (dev && dev->driver && dev->driver->pread)
     return dev->driver->pread(dev, fd, dst, size, offset);
 
@@ -106,7 +107,8 @@ ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offs
   return -1;
 }
 
-ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size, off_t offset) {
+ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size,
+                       off_t offset) {
   if (dev && dev->driver && dev->driver->pwrite)
     return dev->driver->pwrite(dev, fd, src, size, offset);
 
@@ -118,35 +120,34 @@ ssize_t eos_drv_pwrite(eos_dev_t *dev, int fd, void *src, size_t size, off_t off
   return -1;
 }
 
-int eos_drv_open(eos_dev_t *dev, const char *path, int flags, int mode)
-{
-    if (!dev || !dev->driver) {
-        errno = ENODEV;
-        return -1;
-    }
+int eos_drv_open(eos_dev_t *dev, const char *path, int flags, int mode) {
+  // printf("DRV OPEN: dev=%p driver=%p path='%s'\n", (void *)dev,
+  //        dev ? (void *)dev->driver : NULL, path ? path : "(null)");
 
-    if (dev->driver->open)
-        return dev->driver->open(dev, path, flags, mode);
+  if (!dev || !dev->driver) {
+    errno = ENODEV;
+    return -1;
+  }
 
-    return EOS_DRV_FD;
+  if (dev->driver->open)
+    return dev->driver->open(dev, path, flags, mode);
+
+  return EOS_DRV_FD;
 }
 
+int eos_drv_close(eos_dev_t *dev, int fd) {
+  if (!dev || !dev->driver) {
+    errno = ENODEV;
+    return -1;
+  }
 
-int eos_drv_close(eos_dev_t *dev, int fd)
-{
-    if (!dev || !dev->driver) {
-        errno = ENODEV;
-        return -1;
-    }
+  if (dev->driver->close)
+    return dev->driver->close(dev, fd);
 
-    if (dev->driver->close)
-        return dev->driver->close(dev, fd);
-
-    return 0;
+  return 0;
 }
 
-
-int eos_drv_fstat(eos_dev_t *dev, int fd, struct stat *st){
+int eos_drv_fstat(eos_dev_t *dev, int fd, struct stat *st) {
   if (dev && dev->driver && dev->driver->fstat)
     return dev->driver->fstat(dev, fd, st);
 
@@ -156,7 +157,7 @@ int eos_drv_fstat(eos_dev_t *dev, int fd, struct stat *st){
   return -1;
 }
 
-int eos_drv_stat(eos_dev_t *dev, const char *path, struct stat *st){
+int eos_drv_stat(eos_dev_t *dev, const char *path, struct stat *st) {
   if (dev && dev->driver && dev->driver->stat)
     return dev->driver->stat(dev, path, st);
 
@@ -166,7 +167,7 @@ int eos_drv_stat(eos_dev_t *dev, const char *path, struct stat *st){
   return -1;
 }
 
-int eos_drv_link(eos_dev_t *dev, const char *n1, const char *n2){
+int eos_drv_link(eos_dev_t *dev, const char *n1, const char *n2) {
   // TODO: theoretically we can support cross device linkage in case
   // we control all filesystems through proxy vfs, and implement
   // path resolution for each proxied vfs by own
@@ -183,7 +184,7 @@ int eos_drv_link(eos_dev_t *dev, const char *n1, const char *n2){
   return -1;
 }
 
-int eos_drv_unlink(eos_dev_t *dev, const char *path){
+int eos_drv_unlink(eos_dev_t *dev, const char *path) {
   // TODO: check eos_drv_link one
 
   if (dev && dev->driver && dev->driver->unlink)
@@ -195,7 +196,7 @@ int eos_drv_unlink(eos_dev_t *dev, const char *path){
   return -1;
 }
 
-int eos_drv_rename(eos_dev_t *dev, const char *src, const char *dst){
+int eos_drv_rename(eos_dev_t *dev, const char *src, const char *dst) {
 
   // TODO: cross device rename, look at link/unlink
   if (dev && dev->driver && dev->driver->rename)
@@ -207,7 +208,7 @@ int eos_drv_rename(eos_dev_t *dev, const char *src, const char *dst){
   return -1;
 }
 
-DIR *eos_drv_opendir(eos_dev_t *dev, const char *path){
+DIR *eos_drv_opendir(eos_dev_t *dev, const char *path) {
   if (dev && dev->driver && dev->driver->opendir)
     return dev->driver->opendir(dev, path);
 
@@ -217,7 +218,7 @@ DIR *eos_drv_opendir(eos_dev_t *dev, const char *path){
   return NULL;
 }
 
-struct dirent *eos_drv_readdir(eos_dev_t *dev, DIR *pdir){
+struct dirent *eos_drv_readdir(eos_dev_t *dev, DIR *pdir) {
   if (dev && dev->driver && dev->driver->readdir)
     return dev->driver->readdir(dev, pdir);
 
@@ -227,7 +228,7 @@ struct dirent *eos_drv_readdir(eos_dev_t *dev, DIR *pdir){
   return NULL;
 }
 
-long eos_drv_telldir(eos_dev_t *dev, DIR *pdir){
+long eos_drv_telldir(eos_dev_t *dev, DIR *pdir) {
   if (dev && dev->driver && dev->driver->telldir)
     return dev->driver->telldir(dev, pdir);
 
@@ -237,9 +238,9 @@ long eos_drv_telldir(eos_dev_t *dev, DIR *pdir){
   return -1;
 }
 
-void eos_drv_seekdir(eos_dev_t *dev, DIR *pdir, long offset){
+void eos_drv_seekdir(eos_dev_t *dev, DIR *pdir, long offset) {
   // TODO: implement through telldir++? hm, this is a dumb one
-  if (dev && dev->driver && dev->driver->seekdir){
+  if (dev && dev->driver && dev->driver->seekdir) {
     dev->driver->seekdir(dev, pdir, offset);
     return;
   }
@@ -249,7 +250,7 @@ void eos_drv_seekdir(eos_dev_t *dev, DIR *pdir, long offset){
   errno = ENOSYS;
 }
 
-int eos_drv_closedir(eos_dev_t *dev, DIR *pdir){
+int eos_drv_closedir(eos_dev_t *dev, DIR *pdir) {
   if (dev && dev->driver && dev->driver->closedir)
     return dev->driver->closedir(dev, pdir);
 
@@ -259,7 +260,7 @@ int eos_drv_closedir(eos_dev_t *dev, DIR *pdir){
   return -1;
 }
 
-int eos_drv_mkdir(eos_dev_t *dev, const char *name, mode_t mode){
+int eos_drv_mkdir(eos_dev_t *dev, const char *name, mode_t mode) {
   if (dev && dev->driver && dev->driver->mkdir)
     return dev->driver->mkdir(dev, name, mode);
 
@@ -269,7 +270,7 @@ int eos_drv_mkdir(eos_dev_t *dev, const char *name, mode_t mode){
   return -1;
 }
 
-int eos_drv_rmdir(eos_dev_t *dev, const char *name){
+int eos_drv_rmdir(eos_dev_t *dev, const char *name) {
   if (dev && dev->driver && dev->driver->rmdir)
     return dev->driver->rmdir(dev, name);
 
@@ -279,7 +280,7 @@ int eos_drv_rmdir(eos_dev_t *dev, const char *name){
   return -1;
 }
 
-int eos_drv_fcntl(eos_dev_t *dev, int fd, int cmd, int arg){
+int eos_drv_fcntl(eos_dev_t *dev, int fd, int cmd, int arg) {
   // RESEARCH: how does that differ from ioctl?
   if (dev && dev->driver && dev->driver->fcntl)
     return dev->driver->fcntl(dev, fd, cmd, arg);
@@ -290,7 +291,7 @@ int eos_drv_fcntl(eos_dev_t *dev, int fd, int cmd, int arg){
   return -1;
 }
 
-int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args){
+int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   // Provide cross driver ioctl functionality
   switch (cmd) {
@@ -310,7 +311,7 @@ int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args){
   return -1;
 }
 
-int eos_drv_fsync(eos_dev_t *dev, int fd){
+int eos_drv_fsync(eos_dev_t *dev, int fd) {
   if (dev && dev->driver && dev->driver->fsync)
     return dev->driver->fsync(dev, fd);
 
@@ -320,7 +321,7 @@ int eos_drv_fsync(eos_dev_t *dev, int fd){
   return -1;
 }
 
-int eos_drv_access(eos_dev_t *dev, const char *path, int amode){
+int eos_drv_access(eos_dev_t *dev, const char *path, int amode) {
   if (dev && dev->driver && dev->driver->access)
     return dev->driver->access(dev, path, amode);
 
@@ -330,7 +331,7 @@ int eos_drv_access(eos_dev_t *dev, const char *path, int amode){
   return -1;
 }
 
-int eos_drv_truncate(eos_dev_t *dev, const char *path, off_t length){
+int eos_drv_truncate(eos_dev_t *dev, const char *path, off_t length) {
   if (dev && dev->driver && dev->driver->truncate)
     return dev->driver->truncate(dev, path, length);
 
@@ -340,7 +341,7 @@ int eos_drv_truncate(eos_dev_t *dev, const char *path, off_t length){
   return -1;
 }
 
-int eos_drv_ftruncate(eos_dev_t *dev, int fd, off_t length){
+int eos_drv_ftruncate(eos_dev_t *dev, int fd, off_t length) {
   if (dev && dev->driver && dev->driver->ftruncate)
     return dev->driver->ftruncate(dev, fd, length);
 
@@ -350,7 +351,8 @@ int eos_drv_ftruncate(eos_dev_t *dev, int fd, off_t length){
   return -1;
 }
 
-int eos_drv_utime(eos_dev_t *dev, const char *path, const struct utimbuf *times){
+int eos_drv_utime(eos_dev_t *dev, const char *path,
+                  const struct utimbuf *times) {
   if (dev && dev->driver && dev->driver->utime)
     return dev->driver->utime(dev, path, times);
 
@@ -361,8 +363,8 @@ int eos_drv_utime(eos_dev_t *dev, const char *path, const struct utimbuf *times)
 }
 
 eos_drv_t *eos_drv_find(const char *scope, const char *name) {
-  for (const eos_drv_t *driver = _eos_drivers_start;
-       driver < _eos_drivers_end; ++driver) {
+  for (const eos_drv_t *driver = _eos_drivers_start; driver < _eos_drivers_end;
+       ++driver) {
 
     if (strcmp(scope, driver->scope) == 0 && strcmp(name, driver->name) == 0) {
       EOS_LOGI("Found driver %s/%s", scope, name);

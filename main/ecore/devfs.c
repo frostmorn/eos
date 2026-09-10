@@ -174,17 +174,51 @@ ssize_t eos_devfs_pwrite(devfs_state_t *dstate, int fd, void *src, size_t size,
 
   return eos_drv_pwrite(fdmap->dev, fdmap->drvfd, src, size, offset);
 }
-
 int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
                    int mode) {
-  eos_dev_t *dev = devfs_resolve(path);
+  // EOS_LOGI("DEVFS OPEN: path='%s' flags=%d mode=%d\n", path ? path : "(null)",
+  //          flags, mode);
+
+  if (!path) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  while (*path == '/')
+    path++;
+
+  const char *slash = strchr(path, '/');
+
+  char devname[EOS_XSMALL_STR_LEN];
+
+  if (slash) {
+    size_t len = slash - path;
+
+    if (len == 0 || len >= sizeof(devname)) {
+      errno = ENAMETOOLONG;
+      return -1;
+    }
+
+    memcpy(devname, path, len);
+    devname[len] = '\0';
+  } else {
+    strlcpy(devname, path, sizeof(devname));
+  }
+
+  EOS_LOGI("DEVFS OPEN: device='%s' driver_path='%s'\n", devname,
+           slash ? slash : "");
+
+  eos_dev_t *dev = eos_dev_find_by_name(devname);
 
   if (!dev) {
+    EOS_LOGI("DEVFS OPEN: device '%s' not found\n", devname);
     errno = ENOENT;
     return -1;
   }
 
-  int drvfd = eos_drv_open(dev, "", flags, mode);
+  int drvfd = eos_drv_open(dev, slash ? slash : "", flags, mode);
+
+  EOS_LOGI("DEVFS OPEN: driver fd=%d\n", drvfd);
 
   if (drvfd < 0)
     return -1;
