@@ -116,18 +116,22 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
 
   // Ensure zero if zero
   if (gpioNum == 0 && (strcmp(lastToken, "0") != 0)) {
+    errno = EBADF;
+    free(gPath);
     return -1;
   }
 
   // Ensure GPIO range
   if (!IS_VALID_FD(gpioNum)) {
     errno = EINVAL;
+    free(gPath);
     return -1;
   }
 
   // Claiming pin
   if (!eos_cap_claim(EOS_CAPS_GPIO, gpioNum, dev)) {
     errno = EBUSY;
+    free(gPath);
     return -1;
   }
 
