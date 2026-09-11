@@ -26,6 +26,12 @@ typedef struct eos_dev_t eos_dev_t;
 ///////////////////////////////////////////////////////
 // eos driver flags
 ///////////////////////////////////////////////////////
+// Device associated with driver 
+// doesn't require exposal of it's VFS
+#define EOS_DRV_FLAG_NO_VFS         (1ULL << 0)
+// Device associated with driver doesn't require indexing
+#define EOS_DRV_FLAG_NO_INDEX       (1ULL << 1)
+///////////////////////////////////////////////////////
 
 ///////////////////////////////////////////////////////
 // Structure representing a device driver for EOS
@@ -35,8 +41,6 @@ struct eos_drv_t {
   char scope[EOS_XSMALL_STR_LEN];
   char name[EOS_XSMALL_STR_LEN];
   char devname[EOS_XSMALL_STR_LEN]; // setters/getters?
-  // TODO: do we've two names, one for dir and another
-  // for file or it's enough?
   uint32_t flags;
 ///////////////////////////////////////////////////////
 // Dev operations:

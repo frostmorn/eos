@@ -6,5 +6,9 @@
 
 // Do I actually need that crap?
 
-EOS_DRV_ATTR eos_drv_t driver_bus_root = {EOS_DRV_INIT, .scope = "bus",
-                                                .name = "root"};
+EOS_DRV_ATTR eos_drv_t driver_bus_root = {
+  EOS_DRV_INIT, 
+  .flags = EOS_DRV_FLAG_NO_VFS,
+  .scope = "bus",
+  .name = "root"
+};

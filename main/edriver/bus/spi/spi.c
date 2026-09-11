@@ -20,6 +20,8 @@ typedef struct {
 
 // ── Init / Shutdown ───────────────────────────────────────────
 
+
+// TODO: ioctl based configuration
 bool driver_bus_spi_init(eos_dev_t *dev) {
   spi_state_t *state = malloc(sizeof(spi_state_t));
   if (!state)
@@ -134,6 +136,7 @@ void driver_bus_spi_shutdown(eos_dev_t *dev) {
 EOS_DRV_ATTR eos_drv_t driver_bus_spi = {EOS_DRV_INIT,
                                                .scope = "bus",
                                                .name = "spi",
+                                               .devname = "spi",
                                                .init = driver_bus_spi_init,
                                               // .ioctl = driver_bus_spi_ioctl,
                                                .shutdown =

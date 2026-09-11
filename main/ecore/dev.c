@@ -41,9 +41,15 @@ void eos_dev_assign_id(eos_dev_t *dev) {
 }
 
 void eos_dev_assign_name(eos_dev_t *dev) {
-  if (dev->driver->devname[0] != '\0')
-    snprintf(dev->name, EOS_SMALL_STR_LEN, "%s%" PRIu32, dev->driver->devname,
-             dev->id);
+  if (dev->driver->devname[0] != '\0'){
+    if (dev->driver->flags & EOS_DRV_FLAG_NO_INDEX){
+      strcpy(dev->name, dev->driver->devname);
+    }
+    else{
+      snprintf(dev->name, EOS_SMALL_STR_LEN, "%s%" PRIu32, dev->driver->devname,
+        dev->id);
+    }
+  }
   else
     dev->name[0] = '\0';
 }

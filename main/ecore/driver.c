@@ -366,6 +366,7 @@ eos_drv_t *eos_drv_find(const char *scope, const char *name) {
   for (const eos_drv_t *driver = _eos_drivers_start; driver < _eos_drivers_end;
        ++driver) {
 
+    // EOS_LOGI("Testing driver %s/%s", driver->scope, driver->name);
     if (strcmp(scope, driver->scope) == 0 && strcmp(name, driver->name) == 0) {
       EOS_LOGI("Found driver %s/%s", scope, name);
       return (eos_drv_t *)driver;

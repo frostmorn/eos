@@ -26,15 +26,15 @@
 // DRIVER DATA:
 ///////////////////////////////////////////////////////////////////////
 typedef struct {
-  TaskHandle_t task_owner;  // xTaskGetCurrentTaskHandle [can be NULL]
-  int32_t sample_period_us; // count of microseconds till next read
-  int64_t last_sample;      // time mark when last sample has been made
-  gpio_config_t cfg;        // pin configuration derived from idf
+  TaskHandle_t task_owner;   // xTaskGetCurrentTaskHandle [can be NULL]
+  int32_t sample_period_us;  // count of microseconds till next read
+  int64_t last_sample;       // time mark when last sample has been made
+  gpio_config_t cfg;         // pin configuration derived from idf
 } gpio_pin_t;
 //=====================================================================
 typedef struct {
   uint32_t esp_idf_fs_index;
-  int idx; // also gpioNum
+  int idx;                   // also gpioNum
 } gpio_dir_t;
 //=====================================================================
 // GPIO count is always constant, meaning if we want to have a blocking
@@ -175,7 +175,7 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     errno = EFAULT;
     return -1;
   }
-
+  // TODO: allow to read as '1' character
   gpio_pin_t *pin = &((gpio_bus_state_t *)dev->state)->pins[fd];
 
   if (pin->cfg.mode != GPIO_MODE_INPUT) {
@@ -241,7 +241,7 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
 
   for (size_t i = 0; i < size; i++) {
     uint8_t value;
-
+    // TODO: skip spaces
     if (p[i] == 0 || p[i] == '0')
       value = 0;
     else if (p[i] == 1 || p[i] == '1')
@@ -273,7 +273,6 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
 
   return size;
 }
-
 //=====================================================================
 int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   if (!IS_VALID_FD(fd)) {
@@ -329,7 +328,6 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   return 0;
 }
-
 //=====================================================================
 DIR *driver_bus_gpio_opendir(eos_dev_t *dev, const char *name) {
   EOS_LOGI("Entering gpio opendir with path=%s\n", name);
@@ -417,6 +415,7 @@ int driver_bus_gpio_closedir(eos_dev_t *dev, DIR *pdir) {
 ///////////////////////////////////////////////////////////////////////
 EOS_DRV_ATTR eos_drv_t driver_bus_gpio = {
     EOS_DRV_INIT,
+    .flags = EOS_DRV_FLAG_NO_INDEX,
     .scope = "bus",
     .name = "gpio",
     .devname = "gpio",

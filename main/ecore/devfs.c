@@ -468,6 +468,12 @@ struct dirent *eos_devfs_readdir(devfs_state_t *dstate, DIR *pdir) {
     if (!dev->in_use)
       continue;
 
+    if (!dev->driver)
+      continue;
+    
+    if (dev->driver->flags & EOS_DRV_FLAG_NO_VFS)
+      continue;
+
     if (dev->name[0] == '\0')
       continue;
 
