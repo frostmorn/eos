@@ -16,15 +16,25 @@ EOS_IOCTL_GET_DEV=10,               // eos_dev_t **dev
 
 EOS_IOCTL_BASE = 100,
 //=====================================================
-// edriver/gpio
+// edriver/bus/gpio
 //=====================================================
-EOS_GPIO_IOCTL_SET_FLOATING, 
-EOS_GPIO_IOCTL_SET_PULLUP,          
-EOS_GPIO_IOCTL_SET_PULLDOWN,        
-EOS_GPIO_IOCTL_SET_PULLUPDOWN,  
-EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US,
+EOS_GPIO_IOCTL_SET_FLOATING,        // no args 
+EOS_GPIO_IOCTL_SET_PULLUP,          // no args
+EOS_GPIO_IOCTL_SET_PULLDOWN,        // no args
+EOS_GPIO_IOCTL_SET_PULLUPDOWN,      // no args
+EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US,// uint32_t period
 //EOS_GPIO_IOCTL_SET_ BUFFERING setvbuf() ?
 //=====================================================
+//=====================================================
+// edriver/bus/spi
+//=====================================================
+/*
+  MODE 0: CPOL=0, CPHA=0
+  MODE 1: CPOL=0, CPHA=1
+  MODE 2: CPOL=1, CPHA=0
+  MODE 3: CPOL=1, CPHA=1
+*/
+EOS_SPI_IOCTL_SET_MODE,             // uint32_t mode
 
 //=====================================================
 // edriver/dispay
