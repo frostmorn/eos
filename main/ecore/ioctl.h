@@ -27,8 +27,24 @@ typedef enum {
   //=====================================================
   // edriver/bus/spi
   //=====================================================
+  // spi role:
+  EOS_SPI_IOCTL_SET_ROLE_MASTER,    // no args
+  EOS_SPI_IOCTL_SET_ROLE_SLAVE,
+  // spi pins:
+  EOS_SPI_IOCTL_SET_MOSI,           // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_MISO,           // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_SCLK,           // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA0,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA1,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA2,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA3,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA4,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA5,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA6,          // int pinNo, -1 if unused
+  EOS_SPI_IOCTL_SET_DATA7,          // int pinNo, -1 if unused
+  //-----------------------------------------------------
   EOS_SPI_IOCTL_SET_MODE,           // uint32_t mode (0-3)
-                                    // MODE 0: CPOL=0, CPHA=0
+                                    // MODE 0: CPOL=0, CPHA=0 [DEFAULT]
                                     // MODE 1: CPOL=0, CPHA=1
                                     // MODE 2: CPOL=1, CPHA=0
                                     // MODE 3: CPOL=1, CPHA=1
