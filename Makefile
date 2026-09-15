@@ -24,6 +24,7 @@ help:
 	@echo "===================================================="
 	@echo "==>   Tools"
 	@echo "===================================================="
+	@echo "  driver      - Generate EOS driver code"
 	@echo "  symbols     - List builtin firmware symbols"
 	@echo "  disasm      - Disassemble generated elf"
 	@echo "  cppcheck    - Static analyzis of a C code"
@@ -75,6 +76,9 @@ research:
 monitor:
 	@echo "Starting serial monitor..."
 	idf.py monitor
+
+driver:
+	python tools/codegen.py edriver -o main/edriver
 
 symbols:
 	readelf ${FIRMWARE_ELF} -s -X|less -R

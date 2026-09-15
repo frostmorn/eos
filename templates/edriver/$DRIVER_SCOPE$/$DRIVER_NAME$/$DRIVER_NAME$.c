@@ -1,4 +1,4 @@
-#ifdef EOS_DRV_$DRIVER_SCOPE$_$DRIVER_NAME$_ENABLED
+#ifdef EOS_DRV_$DRIVER_SCOPE:upper$_$DRIVER_NAME:upper$_ENABLED
 #include <errno.h>
 #include <dirent.h>
 #include "ecore/dev.h"
@@ -42,7 +42,7 @@
 //  int         mode
 //){}
 //=====================================================================
-//int driver_$DRIVER_SCOPE$_$DRIVER_NAME_close$(
+//int driver_$DRIVER_SCOPE$_$DRIVER_NAME$_close$(
 //  eos_dev_t   *dev, 
 //  int         fd
 //){}
