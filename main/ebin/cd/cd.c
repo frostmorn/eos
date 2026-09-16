@@ -8,7 +8,7 @@ int cd_main(int argc, char **argv){
   const char *path = (argc < 2) ? "/" : argv[1];
 
   if (chdir(path) !=0){
-    printf("cd: %s: %d:%s", path, errno, strerror(errno));
+    printf("cd: %s: %d:%s\n", path, errno, strerror(errno));
     return -1;
   }
 
