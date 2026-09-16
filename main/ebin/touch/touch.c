@@ -21,7 +21,8 @@ int touch_main(int argc, char **argv){
   fp = fopen(path, "w");
 
   if (!fp){
-    printf("Can't create file %s. %d: %s\n", path, errno, strerror(errno));
+    printf("touch %d: %s\n", errno, strerror(errno));
+    return -1;
   }
   
   fclose(fp);

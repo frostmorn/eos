@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <ctype.h>
+#include <string.h>
+#include <errno.h>
 
 // This call isn't implemented in picolib, but cause it have a declaration
 // burried somewhere in <stdlib.h> why not to use it, right?
@@ -48,7 +50,7 @@ int __wrap_system(const char *cmdline) {
   // Copy command line
   char *buf = strdup(cmdline);
   if (!buf) {
-    EOS_LOGE("eos_system() out of memory");
+    EOS_LOGE("eos_system() %d: %s", errno, strerror(errno));
     return -1;
   }
 
@@ -63,6 +65,13 @@ int __wrap_system(const char *cmdline) {
 
   // build
   char **argv = calloc(argc + 1, sizeof(*argv));
+
+  if (!argv){
+    EOS_LOGE("eos_system() %d: %s", errno, strerror(errno));
+    free(buf);
+    return -1;
+  }
+
   argc = 0;
   p = skip_ws(buf);
   while (p) {
