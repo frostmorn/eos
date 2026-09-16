@@ -7,6 +7,11 @@ help:
 	@echo "===================================================="
 	@echo "     (^__^)==\\~ EOS building system ~/==(^__^)     "
 	@echo "===================================================="
+	@echo "==>   Code generation"
+	@echo "===================================================="
+	@echo "  driver      - Generate EOS driver code"
+	@echo "  bin         - Generate EOS bin code"
+	@echo "===================================================="
 	@echo "==>   Build"
 	@echo "===================================================="
 	@echo "  clean       - Clean object files"
@@ -24,7 +29,6 @@ help:
 	@echo "===================================================="
 	@echo "==>   Tools"
 	@echo "===================================================="
-	@echo "  driver      - Generate EOS driver code"
 	@echo "  symbols     - List builtin firmware symbols"
 	@echo "  disasm      - Disassemble generated elf"
 	@echo "  cppcheck    - Static analyzis of a C code"
@@ -79,6 +83,9 @@ monitor:
 
 driver:
 	python tools/codegen.py edriver -o main/edriver
+
+bin:
+	python tools/codegen.py ebin -o main/ebin
 
 symbols:
 	readelf ${FIRMWARE_ELF} -s -X|less -R
