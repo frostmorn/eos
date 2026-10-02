@@ -20,7 +20,7 @@ struct eos_tctx_t {
   kvec_t(int) fds;
   // Opened directories
   kvec_t(DIR *) dirs;
-  // Allocated memory block
+  // Allocated memory blocks
   kvec_t(void *) memblocks;
 };
 
@@ -36,8 +36,8 @@ void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx);
 void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx);
 
 // Memory management
-void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
-void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx);
+void eos_tctx_reg_memblock(void *block, eos_tctx_t *tctx);
+void eos_tctx_unreg_memblock(void *block, eos_tctx_t *tctx);
 
 /// => thread wrap
 

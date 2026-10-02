@@ -3,6 +3,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
+#include <esp_heap_caps.h>
+#include <string.h>
 
 // This requires system wide TLS INDEX register
 #define EOS_TCTX_TLS_INDEX 1 // 0 is reserved
@@ -12,7 +14,11 @@
 #endif
 
 static eos_tctx_t *eos_tctx_alloc() {
-  eos_tctx_t *tctx = malloc(sizeof(eos_tctx_t));
+  // Use heap_caps directly to avoid recursion with our wrappers
+  // MALLOC_CAP_DEFAULT allows allocation from internal heap or SPIRAM
+  // IMPORTANT: Must use __real_ heap_caps_aligned_alloc_base to avoid recursion with our wrappers
+  extern void *__real_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_t caps);
+  eos_tctx_t *tctx = __real_heap_caps_aligned_alloc_base(4, sizeof(eos_tctx_t), MALLOC_CAP_DEFAULT);
 
   if (!tctx) {
     EOS_LOGE("Can't allocate new thread context. Not enough memory?\n");
@@ -36,12 +42,13 @@ static void eos_tctx_free(eos_tctx_t *tctx) {
 
   EOS_LOGI("Cleaning up thread context\n");
 
-  // Cleanup
+  // Cleanup - use __real_heap_caps_free directly to avoid recursion with our wrappers
   kv_destroy(tctx->fds);
   kv_destroy(tctx->dirs);
   kv_destroy(tctx->memblocks);
 
-  free(tctx);
+  extern void __real_heap_caps_free(void *ptr);
+  __real_heap_caps_free(tctx);
 }
 
 static void eos_tctx_set(eos_tctx_t *tctx) {
@@ -175,9 +182,21 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
   kv_opt(DIR *, tctx->dirs);
 }
 
-void eos_tctx_reg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
+void eos_tctx_reg_memblock(void *block, eos_tctx_t *tctx) {
+  if (!tctx || !block) return;
+  kv_push(void *, tctx->memblocks, block);
+}
 
-void eos_tctx_unreg_memblock(void *block, size_t blocksize, eos_tctx_t *tctx) {}
+void eos_tctx_unreg_memblock(void *block, eos_tctx_t *tctx) {
+  if (!tctx || !block) return;
+  for (size_t i = 0; i < kv_size(tctx->memblocks); i++) {
+    if (kv_A(tctx->memblocks, i) == block) {
+      kv_drop_fast(void *, tctx->memblocks, i);
+      kv_opt(void *, tctx->memblocks);
+      break;
+    }
+  }
+}
 
 /// => thread wrap
 eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
@@ -240,8 +259,20 @@ void *eos_twrap_pthread(void *data) {
   }
 
   while (kv_size(tctx->dirs)) {
-    EOS_LOGW("Closing leaked fd %p\n", kv_A(tctx->dirs, 0));
+    EOS_LOGW("Closing leaked dir %p\n", kv_A(tctx->dirs, 0));
     closedir(kv_A(tctx->dirs, 0));
+  }
+
+  // Free any leaked memory blocks
+  // Use __real_heap_caps_free directly to avoid recursion through our wrappers
+  while (kv_size(tctx->memblocks)) {
+    void *ptr = kv_A(tctx->memblocks, 0);
+    EOS_LOGW("Freeing leaked mem block %p\n", ptr);
+    // Remove from vector and free - no need to unregister since we're cleaning up
+    kv_drop_fast(void *, tctx->memblocks, 0);
+    kv_opt(void *, tctx->memblocks);
+    extern void __real_heap_caps_free(void *ptr);
+    __real_heap_caps_free(ptr);
   }
 
   // Cleanup context

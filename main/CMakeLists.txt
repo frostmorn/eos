@@ -25,6 +25,8 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=pthread_create"
 "-Wl,--wrap=xTaskCreateStaticPinnedToCore"
 "-Wl,--wrap=xTaskCreatePinnedToCore"
+"-Wl,--wrap=heap_caps_aligned_alloc_base"
+"-Wl,--wrap=heap_caps_free"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
