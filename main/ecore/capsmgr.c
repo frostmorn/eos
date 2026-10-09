@@ -6,6 +6,7 @@
 #include <driver/gpio.h>
 #include <esp_bit_defs.h>
 #include <soc/soc_caps.h>
+#include <soc/usb_pins.h>
 
 // consider using bitmask for caps
 extern bool esp_gpio_is_reserved(uint64_t bitmask);
@@ -71,6 +72,9 @@ void eos_capsmgr_init() {
     if ((!GPIO_IS_VALID_GPIO(i)) || esp_gpio_is_reserved(BIT64(i)))
       eos_cap_claim(EOS_CAPS_GPIO, i, NULL);
   }
+  // Claim USB related pins
+  eos_cap_claim(EOS_CAPS_GPIO, USBPHY_DP_NUM, NULL);
+  eos_cap_claim(EOS_CAPS_GPIO, USBPHY_DM_NUM, NULL);
 }
 
 bool eos_cap_is_free(eos_cap_type_t type, int32_t no) {
