@@ -7,6 +7,9 @@ idf_component_register(
     LDFRAGMENTS "eld/driver.lf"
     LDFRAGMENTS "eld/bin.lf"
 )
+idf_build_set_property(
+    COMPILE_OPTIONS "-DFD_SETSIZE=128" APPEND
+)
 
 target_link_libraries(
 ${COMPONENT_LIB} INTERFACE
