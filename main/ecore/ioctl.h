@@ -17,11 +17,17 @@ typedef enum {
   //=====================================================
   // edriver/bus/gpio
   //=====================================================
+  // Pin configuration:
   EOS_GPIO_IOCTL_SET_FLOATING,         // no args
   EOS_GPIO_IOCTL_SET_PULLUP,           // no args
   EOS_GPIO_IOCTL_SET_PULLDOWN,         // no args
   EOS_GPIO_IOCTL_SET_PULLUPDOWN,       // no args
+  // IO:
+  EOS_GPIO_IOCTL_IOMODE_BIN,        // no args 1/0
+  EOS_GPIO_IOCTL_IOMODE_CHAR,     // no args '1'/'0'
+  // Sampling:
   EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US, // uint32_t period
+
   // EOS_GPIO_IOCTL_SET_ BUFFERING setvbuf() ?
   //=====================================================
   //=====================================================

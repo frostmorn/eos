@@ -22,6 +22,11 @@
 
 #define IS_VALID_FD(FD) (!((FD < 0) || (FD >= SOC_GPIO_PIN_COUNT)))
 
+// Controls read/write ops
+typedef enum{
+  EOS_GPIO_IOMODE_BIN,  // Pin state represented as raw 0 or 1
+  EOS_GPIO_IOMODE_CHAR  // Pins starte represented as character '0' or '1'
+} gpio_pin_iomode_t;
 ///////////////////////////////////////////////////////////////////////
 // DRIVER DATA:
 ///////////////////////////////////////////////////////////////////////
@@ -30,6 +35,7 @@ typedef struct {
   int32_t sample_period_us;  // count of microseconds till next read
   int64_t last_sample;       // time mark when last sample has been made
   gpio_config_t cfg;         // pin configuration derived from idf
+  gpio_pin_iomode_t iomode;
 } gpio_pin_t;
 //=====================================================================
 typedef struct {
@@ -83,6 +89,8 @@ bool driver_bus_gpio_init(eos_dev_t *dev) {
     // GPIO_INTR_HIGH_LEVEL,
     // TODO: there's an option to control hysteresis in that struct
     // but it's somehow hardware dependent
+    // Default io mode
+    state->pins[i].iomode = EOS_GPIO_IOMODE_BIN;
 
     // This thing can blow up right in a face in case something wrong
     // gpio_config(&state->pins[i].cfg);
@@ -175,7 +183,6 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     errno = EFAULT;
     return -1;
   }
-  // TODO: allow to read as '1' character
   gpio_pin_t *pin = &((gpio_bus_state_t *)dev->state)->pins[fd];
 
   if (pin->cfg.mode != GPIO_MODE_INPUT) {
@@ -201,8 +208,12 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
           vTaskDelay(ticks);
       }
     }
-
-    p[i] = gpio_get_level(fd) ? 1 : 0;
+    if (pin->iomode == EOS_GPIO_IOMODE_BIN){
+      p[i] = gpio_get_level(fd) ? 1 : 0;
+    }
+    else if (pin->iomode == EOS_GPIO_IOMODE_CHAR){
+      p[i] = gpio_get_level(fd) ? '1' : '0';
+    }
     pin->last_sample = esp_timer_get_time();
   }
 
@@ -302,6 +313,12 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   case EOS_GPIO_IOCTL_SET_PULLUPDOWN:
     pin->cfg.pull_up_en = GPIO_PULLUP_ENABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
+    break;
+  case EOS_GPIO_IOCTL_IOMODE_BIN:
+    pin->iomode = EOS_GPIO_IOMODE_BIN;
+    break;
+  case EOS_GPIO_IOMODE_CHAR:
+    pin->iomode = EOS_GPIO_IOMODE_CHAR;
     break;
 
   case EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US: {
