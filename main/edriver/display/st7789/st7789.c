@@ -212,9 +212,43 @@ int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t 
   uint32_t h = state->has_clip ? state->clip_h : state->height;
   state->has_clip = false;
 
-  return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK
-             ? 0
-             : -1;
+  size_t expected_len = (size_t)w * h * 2;
+  if (len > expected_len) len = expected_len;
+
+  // Try allocating DMA-capable memory for the bitmap transfer
+  void *dma_buf = heap_caps_malloc(len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (dma_buf) {
+    memcpy(dma_buf, buf, len);
+    int ret = esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, dma_buf) == ESP_OK ? 0 : -1;
+    free(dma_buf);
+    return ret;
+  }
+
+  // If DMA allocation failed (e.g. too large), send in row strips
+  size_t row_bytes = (size_t)w * 2;
+  size_t strip_h = 16384 / row_bytes;
+  if (strip_h == 0) strip_h = 1;
+  if (strip_h > h) strip_h = h;
+
+  void *strip_buf = heap_caps_malloc(strip_h * row_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  if (!strip_buf) {
+    return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK ? 0 : -1;
+  }
+
+  const uint8_t *src = buf;
+  int ret = 0;
+  for (uint32_t sy = 0; sy < h; sy += strip_h) {
+    uint32_t sh = (sy + strip_h <= h) ? strip_h : (h - sy);
+    size_t chunk_len = sh * row_bytes;
+    memcpy(strip_buf, src + sy * row_bytes, chunk_len);
+    if (esp_lcd_panel_draw_bitmap(state->panel, x, y + sy, x + w, y + sy + sh, strip_buf) != ESP_OK) {
+      ret = -1;
+      break;
+    }
+  }
+
+  free(strip_buf);
+  return ret;
 }
 
 int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
