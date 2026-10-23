@@ -1,28 +1,36 @@
-# Display Driver Scope
+# Display Driver Scope & Framebuffer Architecture
 
-Display drivers expose a `/dev` interface to output graphics frames. Multiple displays can be hot-swapped if they implement identical semantics (framebuffer size, color depth). The actual panel is chosen at runtime via device tree initialization.
+Display drivers expose a standard VFS interface under `/dev` (typically `/dev/fb*`) for rendering graphics frames. Multiple display panels can be utilized or hot-swapped provided they adhere to compatible display semantics (such as framebuffer dimensions and color depth). The active panel is selected at runtime via device tree initialization.
 
-## Frame Format Contract
+---
 
-The driver accepts `ioctl(WRITE)` to set the framebuffer mode (width, height, bit depth) and then writes the scan-out buffer to the appropriate interface (e.g., SPI or parallel LCD).
+## Frame Format & IOCTL Contract
+
+Display drivers accept standard POSIX file operations (`write`) combined with `ioctl` calls to query dimensions or configure display windows.
 
 ```c
-// Example frame commit via ioctl():  
-ioctl(fd, EOS_IOCTL_DISPLAY_SET_MODE(width, ST7789_RGB565));  
-write(fd, buf->data(), width * height * 2); // Frame pixels (BGR layout)
+// Example frame rendering via VFS ioctl and write:
+int width, height;
+ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width);
+ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height);
+
+// Write scan-out buffer (e.g., RGB565 / BGR layout)
+write(fd, frame_buffer, width * height * 2);
 ```
 
-## Initialization & Hot-Swap
+---
 
-*   **init():** Initializes the TFT controller via register map.
-*   **shutdown():** Powers off the display and releases GPIOs.
-*   **Hot-swap:** Drivers must handle mode changes seamlessly (e.g., swapping panels with different SPI timings).
+*   **`init(eos_dev_t *dev)`:** Initializes the TFT controller via SPI/parallel register configuration, allocating panel state and DMA buffers.
+*   **`shutdown(eos_dev_t *dev)`:** Powers off the display panel, de-initializes hardware interfaces, and releases allocated GPIO capability pins.
+*   **Hot-swapping:** Drivers should support seamless transition of display targets and window sizing.
+
+---
 
 ## Adding a Custom Display Driver
 
-1.  **Placement:** Place file in `display/<panel>.c`.
-2.  **Guard:** Use an `#ifdef` guard (e.g., `EOS_DRIVER_DISPLAY_OLED_ENABLED`).
-3.  **Registration:** Register via `EOSS_DRIVER_REG(display, <name>)`.
+1.  **Placement:** Create your driver implementation under `main/edriver/display/<panel>/<panel>.c`.
+2.  **Guarding:** Guard the driver with an appropriate configuration macro (e.g., `EOS_DRIVER_DISPLAY_<NAME>_ENABLED`).
+3.  **Registration:** Register the driver using the standard macro (e.g., `EOS_DRIVER_REG(display, <name>, priority)`).
 
 ---
 [Back to EOS Project Index](../Readme.md) | [See Sound Drivers](./sound-driver-scope.md)
