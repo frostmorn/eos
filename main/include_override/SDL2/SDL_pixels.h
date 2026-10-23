@@ -1,0 +1,9 @@
+#pragma once
+#include "SDL_stdinc.h"
+
+typedef enum {
+  SDL_PIXELFORMAT_UNKNOWN,
+  SDL_PIXELFORMAT_RGB565 = 0x15150202,
+  SDL_PIXELFORMAT_RGB888 = 0x16160404,
+  SDL_PIXELFORMAT_ARGB8888 = 0x16362004
+} SDL_PixelFormatEnum;
