@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <limits.h>
+#include <ctype.h>
 
 #define USH_LINE_MAX 256
 #define USH_WELCOME EOS_MASCOT_R " "
@@ -66,6 +67,18 @@ static int ush_readline(char *buf, size_t size) {
   }
 }
 
+static char *skip_ws(char *p) {
+  while (*p && isspace((unsigned char)*p))
+    p++;
+  return *p ? p : NULL;
+}
+
+static char *token_end(char *p) {
+  while (*p && !isspace((unsigned char)*p))
+    p++;
+  return p;
+}
+
 int ush_main(int argc, char **argv) {
   printf("\neos shell — type 'help' for available commands\n\n");
 
@@ -89,13 +102,64 @@ int ush_main(int argc, char **argv) {
       break;
 
     if (!strcmp(line, "help")) {
-      system("tree /bin");
+      // Execute tree via execv
+      char *help_argv[] = {"tree", "/bin", NULL};
+      if (execv("tree", help_argv) == 0) {
+        int status = 0;
+        eos_wait(&status);
+      }
       continue;
     }
 
     fflush(stdout);
 
-    int ret = system(line);
+    char *buf = strdup(line);
+    int ret = 0;
+    if (buf) {
+      int c_argc = 0;
+      char *p = skip_ws(buf);
+      while (p) {
+        c_argc++;
+        char *end = token_end(p);
+        p = *end ? skip_ws(end) : NULL;
+      }
+
+      if (c_argc > 0) {
+        char **c_argv = calloc(c_argc + 1, sizeof(*c_argv));
+        if (c_argv) {
+          c_argc = 0;
+          p = skip_ws(buf);
+          while (p) {
+            char *end = token_end(p);
+            c_argv[c_argc++] = p;
+            if (*end) {
+              *end = '\0';
+              p = skip_ws(end + 1);
+            } else
+              p = NULL;
+          }
+          c_argv[c_argc] = NULL;
+
+          if (execv(c_argv[0], c_argv) == 0) {
+            int status = 0;
+            if (eos_wait(&status) == 0) {
+              ret = status;
+            } else {
+              ret = -1;
+            }
+          } else {
+            perror("execv");
+            ret = -1;
+          }
+          free(c_argv);
+        } else {
+          ret = -1;
+        }
+      }
+      free(buf);
+    } else {
+      ret = -1;
+    }
 
     if (ret)
       printf("exit code: %d\n", ret);

@@ -2,7 +2,7 @@ file(GLOB_RECURSE EOS_SRCS "*.c")
 
 idf_component_register(
     SRCS ${EOS_SRCS}
-    INCLUDE_DIRS "."
+    INCLUDE_DIRS "include_override" "."
     WHOLE_ARCHIVE 
     LDFRAGMENTS "eld/driver.lf"
     LDFRAGMENTS "eld/bin.lf"
@@ -30,6 +30,7 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=xTaskCreatePinnedToCore"
 "-Wl,--wrap=heap_caps_aligned_alloc_base"
 "-Wl,--wrap=heap_caps_free"
+"-Wl,--wrap=usleep"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
