@@ -5,6 +5,7 @@
 #include "SDL_surface.h"
 #include "SDL_video.h"
 #include "SDL_timer.h"
+#include "SDL_events.h"
 
 #ifdef __cplusplus
 extern "C" {

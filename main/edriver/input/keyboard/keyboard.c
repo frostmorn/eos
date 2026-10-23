@@ -11,6 +11,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/input.h"
+#include "ecore/ioctl.h"
 
 typedef struct {
   int gpio_num;
@@ -121,6 +122,34 @@ ssize_t driver_input_keyboard_read(eos_dev_t *dev, int fd, void *dst, size_t siz
   }
 }
 
+int driver_input_keyboard_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
+  (void)fd;
+  keyboard_state_t *state = dev->state;
+  if (!state) return -1;
+
+  switch (cmd) {
+    case EOS_KEYBOARD_IOCTL_POLL: {
+      eos_input_event_t *ev = va_arg(args, eos_input_event_t *);
+      if (!ev) return -1;
+      for (int i = 0; i < state->key_count; i++) {
+        int level = gpio_get_level(state->keys[i].gpio_num);
+        bool pressed = (level == 0); // Active low
+        if (pressed && !state->keys[i].last_pressed) {
+          state->keys[i].last_pressed = true;
+          ev->type = EOS_INPUT_EVENT_KEYBOARD;
+          ev->code = state->keys[i].key_code;
+          return 1;
+        } else if (!pressed) {
+          state->keys[i].last_pressed = false;
+        }
+      }
+      return 0;
+    }
+    default:
+      return -1;
+  }
+}
+
 EOS_DRV_ATTR eos_drv_t driver_input_keyboard = {
     EOS_DRV_INIT,
     .scope = "input",
@@ -129,6 +158,7 @@ EOS_DRV_ATTR eos_drv_t driver_input_keyboard = {
     .init = driver_input_keyboard_init,
     .shutdown = driver_input_keyboard_shutdown,
     .read = driver_input_keyboard_read,
+    .ioctl = driver_input_keyboard_ioctl,
 };
 
 #endif

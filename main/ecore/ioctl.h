@@ -96,6 +96,11 @@ typedef enum {
   EOS_STORAGE_IOCTL_GET_CAPACITY,    // uint32_t *capacity
   EOS_STORAGE_IOCTL_MOUNT,           // const char *path, bool *result
   EOS_STORAGE_IOCTL_UMOUNT,          // bool *result
+
+  //=====================================================
+  // edriver/input/keyboard
+  //=====================================================
+  EOS_KEYBOARD_IOCTL_POLL,           // eos_input_event_t *ev
 } eos_ioctl_t;
 
 // (^__^)==\~

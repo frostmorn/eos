@@ -1,6 +1,7 @@
 #include "SDL2/SDL.h"
 #include "ecore/ioctl.h"
 #include "ecore/error.h"
+#include "ecore/input.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -10,10 +11,26 @@
 #include <stdarg.h>
 #include <sys/time.h>
 
-static int sdl2_fb_fd = -1;
-static int sdl2_width = 0;
-static int sdl2_height = 0;
-static char sdl2_error_buf[256] = {0};
+typedef struct {
+  int fb_fd;
+  int keyboard_fd;
+  int width;
+  int height;
+  char error_buf[256];
+} sdl2_context_t;
+
+static sdl2_context_t *sdl2_ctx = NULL;
+
+static sdl2_context_t *sdl2_get_context(void) {
+  if (!sdl2_ctx) {
+    sdl2_ctx = calloc(1, sizeof(sdl2_context_t));
+    if (sdl2_ctx) {
+      sdl2_ctx->fb_fd = -1;
+      sdl2_ctx->keyboard_fd = -1;
+    }
+  }
+  return sdl2_ctx;
+}
 
 struct SDL_Window {
   int w, h;
@@ -30,46 +47,67 @@ struct SDL_Texture {
   uint16_t *pixels;
 };
 
-static void sdl2_query_display_size(void) {
-  if (sdl2_fb_fd < 0) {
+static void sdl2_query_display_and_input(sdl2_context_t *ctx) {
+  if (!ctx) return;
+  if (ctx->fb_fd < 0) {
     const char *fb_path = getenv("EOS_FB");
     if (!fb_path) {
       fb_path = "/dev/fb0";
     }
-    sdl2_fb_fd = open(fb_path, O_RDWR);
+    ctx->fb_fd = open(fb_path, O_RDWR);
   }
-  if (sdl2_fb_fd >= 0) {
+  if (ctx->fb_fd >= 0) {
     uint32_t w = 0, h = 0;
-    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR && w > 0) {
-      sdl2_width = (int)w;
+    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR && w > 0) {
+      ctx->width = (int)w;
     }
-    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR && h > 0) {
-      sdl2_height = (int)h;
+    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR && h > 0) {
+      ctx->height = (int)h;
     }
+  }
+
+  if (ctx->keyboard_fd < 0) {
+    const char *kbd_path = getenv("EOS_KEYBOARD");
+    if (!kbd_path) {
+      kbd_path = "/dev/keyboard0";
+    }
+    ctx->keyboard_fd = open(kbd_path, O_RDONLY);
   }
 }
 
 int __attribute__((weak)) SDL_Init(Uint32 flags) {
   (void)flags;
-  sdl2_query_display_size();
+  sdl2_context_t *ctx = sdl2_get_context();
+  if (ctx) {
+    sdl2_query_display_and_input(ctx);
+  }
   return 0;
 }
 
 void __attribute__((weak)) SDL_Quit(void) {
-  if (sdl2_fb_fd >= 0) {
-    close(sdl2_fb_fd);
-    sdl2_fb_fd = -1;
+  if (sdl2_ctx) {
+    if (sdl2_ctx->fb_fd >= 0) {
+      close(sdl2_ctx->fb_fd);
+    }
+    if (sdl2_ctx->keyboard_fd >= 0) {
+      close(sdl2_ctx->keyboard_fd);
+    }
+    free(sdl2_ctx);
+    sdl2_ctx = NULL;
   }
 }
 
 const char * __attribute__((weak)) SDL_GetError(void) {
-  return sdl2_error_buf;
+  sdl2_context_t *ctx = sdl2_get_context();
+  return ctx ? ctx->error_buf : "";
 }
 
 void __attribute__((weak)) SDL_SetError(const char *fmt, ...) {
+  sdl2_context_t *ctx = sdl2_get_context();
+  if (!ctx) return;
   va_list args;
   va_start(args, fmt);
-  vsnprintf(sdl2_error_buf, sizeof(sdl2_error_buf), fmt, args);
+  vsnprintf(ctx->error_buf, sizeof(ctx->error_buf), fmt, args);
   va_end(args);
 }
 
@@ -80,13 +118,15 @@ SDL_Window *SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
   (void)w;
   (void)h;
   SDL_Init(SDL_INIT_VIDEO);
-  sdl2_query_display_size();
+  sdl2_context_t *ctx = sdl2_get_context();
+  if (!ctx) return NULL;
+  sdl2_query_display_and_input(ctx);
 
-  if (sdl2_width <= 0) sdl2_width = 240;
-  if (sdl2_height <= 0) sdl2_height = 280;
+  if (ctx->width <= 0) ctx->width = 240;
+  if (ctx->height <= 0) ctx->height = 280;
 
-  int window_w = sdl2_width;
-  int window_h = sdl2_height;
+  int window_w = ctx->width;
+  int window_h = ctx->height;
 
   SDL_Window *win = malloc(sizeof(SDL_Window));
   if (!win) return NULL;
@@ -130,10 +170,11 @@ SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int access
   (void)renderer;
   (void)format;
   (void)access;
+  sdl2_context_t *ctx = sdl2_get_context();
   if (w <= 0 || h <= 0) {
-    sdl2_query_display_size();
-    w = sdl2_width > 0 ? sdl2_width : 240;
-    h = sdl2_height > 0 ? sdl2_height : 280;
+    if (ctx) sdl2_query_display_and_input(ctx);
+    w = (ctx && ctx->width > 0) ? ctx->width : 240;
+    h = (ctx && ctx->height > 0) ? ctx->height : 280;
   }
   SDL_Texture *tex = malloc(sizeof(SDL_Texture));
   if (!tex) return NULL;
@@ -203,10 +244,11 @@ int SDL_RenderCopy(SDL_Renderer *renderer, SDL_Texture *texture, const SDL_Rect 
 }
 
 void SDL_RenderPresent(SDL_Renderer *renderer) {
-  if (!renderer || sdl2_fb_fd < 0 || !renderer->pixels) return;
+  sdl2_context_t *ctx = sdl2_get_context();
+  if (!renderer || !ctx || ctx->fb_fd < 0 || !renderer->pixels) return;
   eos_display_rect_t rect = { .x = 0, .y = 0, .w = renderer->window->w, .h = renderer->window->h };
-  ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &rect);
-  write(sdl2_fb_fd, renderer->pixels, renderer->window->w * renderer->window->h * 2);
+  ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &rect);
+  write(ctx->fb_fd, renderer->pixels, renderer->window->w * renderer->window->h * 2);
 }
 
 Uint32 __attribute__((weak)) SDL_GetTicks(void) {
@@ -217,4 +259,53 @@ Uint32 __attribute__((weak)) SDL_GetTicks(void) {
 
 void __attribute__((weak)) SDL_Delay(Uint32 ms) {
   usleep(ms * 1000);
+}
+
+void __attribute__((weak)) SDL_PumpEvents(void) {
+  // no-op
+}
+
+static Uint32 eos_to_sdl2_key(uint16_t code) {
+  switch (code) {
+    case KEY_UP: return 1073741906;
+    case KEY_DOWN: return 1073741905;
+    case KEY_LEFT: return 1073741904;
+    case KEY_RIGHT: return 1073741903;
+    case KEY_ENTER: return 13;
+    case KEY_SPACE: return 32;
+    case KEY_A: return 97;
+    case KEY_B: return 98;
+    case KEY_C: return 99;
+    case KEY_D: return 100;
+    case KEY_ESC: return 27;
+    default: return 0;
+  }
+}
+
+int __attribute__((weak)) SDL_PollEvent(SDL_Event *event) {
+  if (!event) return 0;
+  sdl2_context_t *ctx = sdl2_get_context();
+  if (!ctx) return 0;
+  sdl2_query_display_and_input(ctx);
+  if (ctx->keyboard_fd < 0) return 0;
+
+  eos_input_event_t ev;
+  int ret = ioctl(ctx->keyboard_fd, EOS_KEYBOARD_IOCTL_POLL, &ev);
+  if (ret > 0 && ev.type == EOS_INPUT_EVENT_KEYBOARD) {
+    event->type = SDL_KEYDOWN;
+    event->key.state = 1;
+    event->key.keysym.sym = eos_to_sdl2_key(ev.code);
+    event->key.keysym.scancode = event->key.keysym.sym;
+    return 1;
+  }
+  return 0;
+}
+
+int __attribute__((weak)) SDL_WaitEvent(SDL_Event *event) {
+  while (1) {
+    if (SDL_PollEvent(event)) {
+      return 1;
+    }
+    usleep(10000);
+  }
 }
