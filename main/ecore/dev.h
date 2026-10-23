@@ -57,14 +57,14 @@ void eos_devtree_init();
 eos_dev_t *eos_devtree_root();
 
 // Allocates a new device or returns NULL in case of error
-// and sets eos_errno value
+// and sets errno value
 eos_dev_t *eos_dev_alloc();
 
 // Attaches device to EOS device tree
-eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent);
+int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent);
 
 // Detaches device and all it's childs from EOS device tree
-eos_error_t eos_dev_detach(eos_dev_t *dev);
+int eos_dev_detach(eos_dev_t *dev);
 
 // Seek device in a tree
 eos_dev_t *eos_dev_find_by_name(const char *name);

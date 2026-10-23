@@ -2,7 +2,6 @@
 #include "ecore/driver.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
-#include "error.h"
 #include <driver/gpio.h>
 #include <esp_bit_defs.h>
 #include <soc/soc_caps.h>

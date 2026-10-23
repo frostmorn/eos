@@ -8,7 +8,6 @@
 // Max value for mbr, and practically we would work mostly with it
 #define EOS_MAX_PARTITIONS 4
 
-#include "error.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -129,33 +128,33 @@ typedef struct {
 } eos_part_table_t;
 
 // detect what's on the device and how many partitions
-eos_error_t eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out);
+int eos_diskpart_parse(eos_dev_t *dev, eos_part_table_t *out);
 // get partition count
 uint32_t eos_diskpart_count(eos_part_table_t *dp);
 
 // get partition info by index
-eos_error_t eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
+int eos_diskpart_get(eos_part_table_t *dp, uint32_t idx,
                              eos_part_info_t *out);
 // ── Partition table creation ──────────────────────────────────
 
 // initialize a fresh MBR partition table on device
-eos_error_t eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
+int eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
                                 eos_part_table_t **out);
 
 // ── Partition management ──────────────────────────────────────
 
 // add a new partition
-eos_error_t eos_diskpart_add(eos_part_table_t *dp, uint32_t lba_start,
+int eos_diskpart_add(eos_part_table_t *dp, uint32_t lba_start,
                              uint32_t lba_size, eos_part_type_t part_type);
 
 // remove partition by index
-eos_error_t eos_diskpart_remove(eos_part_table_t *dp, uint32_t idx);
+int eos_diskpart_remove(eos_part_table_t *dp, uint32_t idx);
 
 // write partition table back to device
-eos_error_t eos_diskpart_commit(eos_part_table_t *dp);
+int eos_diskpart_commit(eos_part_table_t *dp);
 
 // calculate free/unpartitioned space
-eos_error_t eos_diskpart_free_space(eos_part_table_t *dp,
+int eos_diskpart_free_space(eos_part_table_t *dp,
                                     uint32_t *lba_start_out,
                                     uint32_t *lba_size_out);
 

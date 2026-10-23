@@ -8,7 +8,6 @@
 #include "ecore/capsmgr.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 
 #include <errno.h>
@@ -82,7 +81,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   sdmmc_card_print_info(stdout, &state->card);
 
   // Read partition table
-  if (eos_diskpart_parse(dev, &state->part_table) != EOS_ERR_NO_ERROR) {
+  if (eos_diskpart_parse(dev, &state->part_table) != 0) {
     EOS_LOGE("Something happened during partition table reading\n");
     driver_storage_sd_shutdown(dev);
     return false;
@@ -248,7 +247,7 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) 
 int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   sd_state_t *state = dev->state;
 
-  int ret = EOS_ERR_NO_ERROR;
+  int ret = 0;
 
   switch (cmd) {
   case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE:{

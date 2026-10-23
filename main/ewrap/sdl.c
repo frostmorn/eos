@@ -1,6 +1,5 @@
 #include "SDL.h"
 #include "ecore/ioctl.h"
-#include "ecore/error.h"
 #include "ecore/input.h"
 #include <fcntl.h>
 #include <unistd.h>
@@ -51,10 +50,10 @@ static void sdl_query_display_and_input(sdl_context_t *ctx) {
   }
   if (ctx->fb_fd >= 0) {
     uint32_t w = 0, h = 0;
-    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR && w > 0) {
+    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == 0 && w > 0) {
       ctx->width = (int)w;
     }
-    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR && h > 0) {
+    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == 0 && h > 0) {
       ctx->height = (int)h;
     }
   }

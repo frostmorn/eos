@@ -1,5 +1,4 @@
 #include "ecore/bin.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 
 #include <fcntl.h>
@@ -74,14 +73,14 @@ static int test_lvgl_main(int argc, char **argv)
     int height;
 
     if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width)
-        != EOS_ERR_NO_ERROR) {
+        != 0) {
         printf("Failed to get display width\n");
         close(fb_fd);
         return -1;
     }
 
     if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height)
-        != EOS_ERR_NO_ERROR) {
+        != 0) {
         printf("Failed to get display height\n");
         close(fb_fd);
         return -1;

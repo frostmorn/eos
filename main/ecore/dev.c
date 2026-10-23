@@ -1,5 +1,6 @@
 #include "dev.h"
 #include "ecore/driver.h"
+#include <errno.h>
 
 // Generates eos_dev_t_tree_attach/detach/detach_subtree/walk,
 // operating on this struct's parent/child/next fields (see
@@ -80,30 +81,40 @@ eos_dev_t *eos_dev_alloc() {
     }
 
   // No slot found
-  eos_errno = EOS_ERR_DEVICE_COUNT_QUOTA_EXCEED;
+  errno = ENFILE;
   return NULL;
 }
 
 // Attaches device to EOS device tree
-eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
+int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   // Args check
-  if (dev == NULL || (!dev->in_use))
-    return EOS_ERR_DEVICE_INVALID;
-  if (parent == NULL || (!parent->in_use))
-    return EOS_ERR_DEVICE_PARENT_INVALID;
-  if (dev == parent)
-    return EOS_ERR_DEVICE_INVALID;
+  if (dev == NULL || (!dev->in_use)) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (parent == NULL || (!parent->in_use)) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (dev == parent) {
+    errno = EINVAL;
+    return -1;
+  }
 
   // Check if device already attached
-  if (dev->parent != NULL)
-    return EOS_ERR_DEVICE_ALREADY_ATTACHED;
+  if (dev->parent != NULL) {
+    errno = EEXIST;
+    return -1;
+  }
 
   // Inform bus through ioctl or other way about new device
   bool attachmentAllowed = eos_drv_attach_req(parent, dev);
 
   // Skip if bus not allowed attachment
-  if (!attachmentAllowed)
-    return EOS_ERR_DEVICE_ATTACH_DECLINED;
+  if (!attachmentAllowed) {
+    errno = EPERM;
+    return -1;
+  }
 
   // Attach to the device tree as parent's newest child (appended
   // after any existing children, so devfs enumeration order still
@@ -119,26 +130,31 @@ eos_error_t eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   // Launch driver
   if (!eos_drv_init(dev)) {
     eos_dev_detach(dev);
-    return EOS_ERR_DEVICE_INIT_FAILED;
+    errno = EIO;
+    return -1;
   }
 
-  return EOS_ERR_NO_ERROR;
+  return 0;
 }
 
 // Detaches device and all it's childs from EOS device tree
-eos_error_t eos_dev_detach(eos_dev_t *dev) {
-  if (dev == NULL || (!dev->in_use))
-    return EOS_ERR_DEVICE_INVALID;
+int eos_dev_detach(eos_dev_t *dev) {
+  if (dev == NULL || (!dev->in_use)) {
+    errno = EINVAL;
+    return -1;
+  }
 
   // Already detached (or root node)
   if (dev->parent == NULL)
-    return EOS_ERR_NO_ERROR;
+    return 0;
 
   // Ask bus permission to detach device
   bool detachAllowed = eos_drv_detach_req(dev->parent, dev);
 
-  if (!detachAllowed)
-    return EOS_ERR_DEVICE_DETACH_DECLINED;
+  if (!detachAllowed) {
+    errno = EPERM;
+    return -1;
+  }
 
   // Recursively detach all children first
   eos_dev_t *child = dev->child;
@@ -160,7 +176,7 @@ eos_error_t eos_dev_detach(eos_dev_t *dev) {
   // Cleanup
   bzero(dev, sizeof(eos_dev_t));
 
-  return EOS_ERR_NO_ERROR;
+  return 0;
 }
 
 eos_dev_t *eos_dev_find_by_name(const char *name){

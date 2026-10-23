@@ -6,7 +6,6 @@
 #include "ecore/dev.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 #include "includes.h"
 
@@ -50,7 +49,7 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
   // get sector size from parent
   uint32_t sector_size = 512; // fallback if parent can't tell us
   if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
-                         &sector_size) != EOS_ERR_NO_ERROR) {
+                         &sector_size) != 0) {
     EOS_LOGW("partition: %s failed to query parent sector size, "
              "defaulting to %lu",
              dev->name, (unsigned long)sector_size);
@@ -384,7 +383,7 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args
     break;
   }
   }
-  return EOS_ERR_NO_ERROR;
+  return 0;
 }
 
 EOS_DRV_ATTR eos_drv_t driver_storage_partition = {

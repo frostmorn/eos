@@ -1,7 +1,6 @@
 #include <stdio.h>
 
 #include "ecore/bin.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 #include <errno.h>
 #include <freertos/FreeRTOS.h>
@@ -13,9 +12,9 @@ static void test_colors(FILE *f) {
 
   int fd = fileno(f);
   int w, h;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != EOS_ERR_NO_ERROR)
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0)
    return;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != EOS_ERR_NO_ERROR)
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0)
    return;
 
   uint16_t *buf = malloc(w * h * sizeof(uint16_t));

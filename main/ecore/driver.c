@@ -1,6 +1,5 @@
 #include "ecore/driver.h"
 #include "ecore/dev.h"
-#include "ecore/error.h"
 #include "ecore/fapi.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"

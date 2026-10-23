@@ -5,7 +5,6 @@
 #include <spi_flash_mmap.h>
 #include "ecore/dev.h"
 #include "ecore/driver.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 
 #include <errno.h>
@@ -175,14 +174,18 @@ int driver_storage_flash_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   flash_state_t *state = dev->state;
 
-  if (!state)
-    return EOS_ERR_DRIVER_INVALID_STATE;
+  if (!state) {
+    errno = EINVAL;
+    return -1;
+  }
 
   switch (cmd) {
   case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE: {
     uint32_t *sector_size = va_arg(args, uint32_t *);
-    if (!sector_size)
-      return EOS_ERR_INVALID_ARG;
+    if (!sector_size) {
+      errno = EINVAL;
+      return -1;
+    }
 
     *sector_size = state->sector_size;
     break;
@@ -190,18 +193,21 @@ int driver_storage_flash_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   case EOS_STORAGE_IOCTL_GET_CAPACITY: {
     uint32_t *capacity = va_arg(args, uint32_t *);
-    if (!capacity)
-      return EOS_ERR_INVALID_ARG;
+    if (!capacity) {
+      errno = EINVAL;
+      return -1;
+    }
 
     *capacity = state->size;
     break;
   }
 
   default:
-    return EOS_ERR_NOT_SUPPORTED;
+    errno = ENOTSUP;
+    return -1;
   }
 
-  return EOS_ERR_NO_ERROR;
+  return 0;
 }
 
 // ── Driver ─────────────────────────────────────────────────────

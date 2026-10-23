@@ -84,7 +84,7 @@ typedef enum {
   //=====================================================
   // edriver/dispay
   //=====================================================
-  // Those calls have to return eos_error_t
+  // Those calls have to return int (0 on success, -1 on error with errno set)
   EOS_DISPLAY_IOCTL_GET_WIDTH,  // uint32_t *width
   EOS_DISPLAY_IOCTL_GET_HEIGHT, // uint32_t *height
   EOS_DISPLAY_IOCTL_SET_WINDOW, // const eos_display_rect_t *rect

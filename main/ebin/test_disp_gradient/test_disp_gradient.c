@@ -1,5 +1,4 @@
 #include "ecore/bin.h"
-#include "ecore/error.h"
 #include "ecore/ioctl.h"
 #include "esp_timer.h"
 #include <fcntl.h>
@@ -24,9 +23,9 @@ static int test_disp_gradient_main(int argc, char **argv) {
   }
 
   int width, height;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width) != EOS_ERR_NO_ERROR)
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width) != 0)
    return -1;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height) != EOS_ERR_NO_ERROR)
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height) != 0)
    return -1;
 
   printf("Display resolution: %dx%d\n", width, height);
