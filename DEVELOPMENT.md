@@ -150,3 +150,16 @@ EOS includes built-in interactive template generators (`tools/codegen.py`) for c
 *   **`components/`**: External components such as LVGL graphics library.
 *   **`docs/`**: Detailed architecture scope documents (Bus, Display, Sound, Storage, VFS).
 *   **`tools/`**: Build setup and code generation scripts (`setboard.py`, `codegen.py`, debug scripts).
+
+---
+
+## 8. Project Memory & Custom Skills
+
+### Memory Loading Rule
+- **Explicit Rule:** Developers and AI agents must load and consult `.ai/MEMORY.md` at the start of tasks to retrieve project-specific private notes, architectural reminders, and workspace conventions.
+
+### Custom Skills (`.ai/skills/`)
+The repository includes workspace-scoped custom skills under `.ai/skills/`:
+- **`qemu-testing`**: Located in `.ai/skills/qemu-testing/SKILL.md`. Provides specialized procedures for building firmware, running QEMU in the background (`esp32s3_qemu`), serial log redirection, and process cleanup.
+- **Skill Loadage / Activation:** Activate workspace skills using the `activate_skill` tool (e.g., `activate_skill(name="qemu-testing")`) when performing corresponding specialized workflows.
+

@@ -3,3 +3,4 @@ trace/*
 .vscode/*
 .clangd
 .cache
+.ai/

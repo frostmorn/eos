@@ -1,16 +1,17 @@
-# EOS Project: ESP Operating System
+# EOS Documentation Index
 
-EOS is an advanced lightweight abstraction layer and operating system for ESP32 (specifically targeting ESP32-S3) implementing a **Unified Device Model**. It transforms heterogeneous hardware peripherals into a consistent, hierarchical **Device Tree** accessible via a standard **Virtual Filesystem (VFS)** interface (`/dev`), adhering to the "Everything is a file" philosophy.
-
----
-
-## Core Architecture & Subsystems
-
-*   [**Bus Drivers**](./bus-driver-scope.md): Implementation guidelines for bus scopes (SPI, I2C, GPIO, root) and parent-child attachment policies.
-*   [**Display Drivers**](./display-scope.md): Framebuffer management, display hot-swapping, and graphics output integration.
-*   [**Sound Drivers**](./sound-scope.md): Audio codec streaming, PCM data pipelines, and peripheral control.
-*   [**Storage Drivers**](./storage-driver-scope.md): Persistent storage, block devices, SD card access, and disk partitioning.
-*   [**Virtual Filesystem (VFS)**](./filesystem-driver-scope.md): The underlying `devfs` and `binfs` layers providing device nodes and executable binary blobs.
+Welcome to the EOS (ESP Operating System) documentation center. Below is the flat index of all architectural guides, scope definitions, and subsystem specifications.
 
 ---
-*This document serves as the primary navigation router for the EOS project documentation.*
+
+## Topic Index
+
+*   [Bus Drivers & Attachment Policies](./bus-driver-scope.md) — Topological roles, parent-child permissions, locking mechanisms, and reserved ioctl ranges.
+*   [Display Drivers & Framebuffer Architecture](./display-scope.md) — Frame formats, display hot-swapping, and scan-out buffer rendering.
+*   [Sound & Audio Codec Drivers](./sound-driver-scope.md) — PCM audio streaming, I2S/SPI/I2C peripheral integration, and device control.
+*   [Storage & Block Device Drivers](./storage-driver-scope.md) — SD/SDIO cards, sector-level access, MBR/GPT disk partitioning, and `off_t` handling.
+*   [Virtual Filesystem (VFS) & Subsystems](./filesystem-driver-scope.md) — `devfs` hierarchical node mapping and `binfs` statically linked native application execution.
+*   [Development & Build Guide](../DEVELOPMENT.md) — Environment prerequisites, board configuration tools (`setboard.py`), and QEMU execution workflows.
+
+---
+[Back to Project Root](../Readme.md)

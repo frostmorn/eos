@@ -1,38 +1,23 @@
 # EOS Project: ESP Operating System
 
-Note, this piece of software is in early development stage, therefore, those docs can't be
-much meaningful.
-
-Though, there's a minimal list of things I would like to achieve during its development.
-
-1. ESP-IDF do not allow to open Root directory(/), but EOS can. For this purpose currently 
-am currently using ``eos_vfs_register()`` intercepting any VFS registration, which at 
-some point may be an actual wrapper arround ``esp_vfs_register()`` utilizing magic of 
-linker based wrapers, whose now are heavily used to implement other additional features.
-
-2. EOS proposes a self-constructable list of drivers and apps in compile time completely 
-removing needness to maintain somewhere central list of all those things, as well as 
-an ability to add into it additional data. This is done via linker scripts located in
-``main/eld``.
-
-3. Each driver should represent a quant of HAL and unify devices to a ``Everything is a 
-FILE`` philosophy. Things whose can't be represented in a form of standard I/O should be 
-done via ``ioctl()`` calls specific but unified per each device scope.
-
-4. Each app have a special system whose not allow to leak resources(like file 
-descriptors, dirs and probably even memory blocks) increasing system survival.
-
-AI generated stuff below ->>
-
-EOS is an abstraction layer for ESP32 that implements a **Unified Device Model**. It transforms heterogeneous hardware peripherals into a consistent, hierarchical **Device Tree** accessible via a standard **Virtual Files/system (VFS)** interface (`/dev`).
-
-## Core Architecture
-
-*   [**Bus Drivers**](./docs/bus-driver-scope.md): How buses and anchors are implemented.
-*   [**Display Drivers**](./docs/display-scope.md): Graphics and framebuffer management.
-*   [**Sound Drivers**](./docs/sound-scope.md): Audio streaming and codec integration.
-*   [**Storage Drivers**](./docs/storage-driver-scope.md): SD Card and persistent storage access.
-*   [**Virtual Filesystem (VFS)**](./docs/vfs-scope.md): The `devfs` and `binfs` implementation layers.
+EOS is an advanced lightweight operating system and abstraction layer for the ESP32 (specifically targeting ESP32-S3). It implements a **Unified Device Model**, transforming heterogeneous hardware peripherals into a hierarchical **Device Tree** accessible via a standard **Virtual Filesystem (VFS)** interface under `/dev`.
 
 ---
-*This document serves as the primary router for the EOS project documentation.*
+
+## Core Design Goals
+
+1. **Root Directory VFS Handling:** Unlike standard ESP-IDF limitations prohibiting direct root directory (`/`) mounting, EOS utilizes `eos_vfs_register()` and linker-based wrappers to intercept and manage virtual filesystem registrations cleanly.
+2. **Compile-Time Registration:** Eliminates central maintenance of driver and application lists by utilizing custom linker scripts located in `main/eld` for automatic compile-time registration.
+3. **"Everything is a File" Philosophy:** Standardizes hardware control through POSIX I/O (`open`, `close`, `read`, `write`, `lseek`) and unified, scope-specific `ioctl()` commands.
+4. **Resource Leak Prevention:** Automatically tracks and cleans up system resources (file descriptors, directories, and thread contexts) per application to guarantee high system stability and survival.
+
+---
+
+## Topic Index
+
+*   [Development Guide](./DEVELOPMENT.md) — Environment setup, target board configuration, build commands, and debugging workflows.
+*   [Bus Drivers Scope](./docs/bus-driver-scope.md) — Topological bus roles (SPI, I2C, GPIO, root), permissions, locking, and IOCTL ranges.
+*   [Display Drivers Scope](./docs/display-scope.md) — Framebuffer management, scan-out buffers, and display hot-swapping.
+*   [Sound Drivers Scope](./docs/sound-driver-scope.md) — I2S/I2C/SPI audio codecs, PCM streaming, and gain/sample-rate configuration.
+*   [Storage Drivers Scope](./docs/storage-driver-scope.md) — Persistent storage, SD/SDIO cards, block access, partitioning, and 2GB `off_t` limits.
+*   [Virtual Filesystem (VFS)](./docs/filesystem-driver-scope.md) — `devfs` device tree mapping and `binfs` memory-mapped application binaries.
