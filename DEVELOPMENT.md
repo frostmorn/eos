@@ -25,6 +25,8 @@ make setboard
 ```
 This runs `python tools/setboard.py`, which lists available boards interactively and copies the appropriate `sdkconfig` to the project root directory.
 
+*(Tip: You can also select a board non-interactively via command line: `python tools/setboard.py esp32s3_qemu`).*
+
 ---
 
 ## 3. Build System & Compilation
@@ -68,6 +70,17 @@ The project uses a standard `Makefile` wrapper around ESP-IDF's `idf.py` build s
     ```bash
     make monitor
     ```
+
+*   **Run in QEMU Emulator:**
+    ```bash
+    make qemu
+    ```
+    *(Launches EOS in QEMU via `idf.py qemu` / `qemu-system-xtensa`).*
+    *(Note: `make qemu` requires Espressif's custom QEMU (`qemu-xtensa`) with ESP32-S3 machine support (`-M esp32s3`). If you encounter an `unsupported machine type: "esp32s3"` error when using system QEMU, install the IDF-provided QEMU tool by running:*
+    ```bash
+    python $IDF_PATH/tools/idf_tools.py install qemu-xtensa
+    ```
+    *)*
 
 *   **Launch JTAG Debugger (GDB + OpenOCD):**
     ```bash

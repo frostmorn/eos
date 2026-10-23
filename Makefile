@@ -1,7 +1,7 @@
 TARGET=esp32s3
 FIRMWARE_ELF=build/eos.elf
 
-.PHONY: clean reconfigure build flash monitor symbols debug killdebug
+.PHONY: clean reconfigure build flash monitor symbols debug killdebug qemu
 
 help:
 	@echo "===================================================="
@@ -26,6 +26,7 @@ help:
 	@echo "  monitor     - Serial monitor"
 	@echo "  debug       - Launch gdb via builtin jtag"
 	@echo "  killdebug   - Kill OpenOCD Server"
+	@echo "  qemu        - Run firmware in QEMU (qemu-system-xtensa)"
 	@echo "===================================================="
 	@echo "==>   Tools"
 	@echo "===================================================="
@@ -101,4 +102,8 @@ debug:
 killdebug:
 	@echo "Killing openocd server"
 	pkill -9 openocd
+
+qemu: build
+	@echo "Running QEMU..."
+	idf.py qemu
 
