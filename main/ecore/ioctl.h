@@ -3,6 +3,13 @@
 // EOS Project header file
 ///////////////////////////////////////////////////////
 
+typedef struct {
+  uint32_t x;
+  uint32_t y;
+  uint32_t w;
+  uint32_t h;
+} eos_display_rect_t;
+
 //=====================================================
 // ioctl call table
 // IOCTL CODE, ARGS
@@ -80,6 +87,7 @@ typedef enum {
   // Those calls have to return eos_error_t
   EOS_DISPLAY_IOCTL_GET_WIDTH,  // uint32_t *width
   EOS_DISPLAY_IOCTL_GET_HEIGHT, // uint32_t *height
+  EOS_DISPLAY_IOCTL_SET_WINDOW, // const eos_display_rect_t *rect
 
   //=====================================================
   // edriver/storage

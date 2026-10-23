@@ -25,6 +25,11 @@ typedef struct {
   int32_t width;  // width after rotation
   int32_t height; // height after rotation
   uint8_t rotation;
+  uint32_t clip_x;
+  uint32_t clip_y;
+  uint32_t clip_w;
+  uint32_t clip_h;
+  bool has_clip;
 } st7789_state_t;
 
 // Placement options
@@ -201,8 +206,13 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
 int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   st7789_state_t *state = dev->state;
-  return esp_lcd_panel_draw_bitmap(state->panel, 0, 0, state->width,
-                                   state->height, buf) == ESP_OK
+  uint32_t x = state->has_clip ? state->clip_x : 0;
+  uint32_t y = state->has_clip ? state->clip_y : 0;
+  uint32_t w = state->has_clip ? state->clip_w : state->width;
+  uint32_t h = state->has_clip ? state->clip_h : state->height;
+  state->has_clip = false;
+
+  return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK
              ? 0
              : -1;
 }
@@ -213,14 +223,29 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   int ret = EOS_ERR_NO_ERROR;
 
   switch (cmd) {
-  case EOS_DISPLAY_IOCTL_GET_WIDTH:
+  case EOS_DISPLAY_IOCTL_GET_WIDTH: {
     uint32_t *width = va_arg(args, uint32_t *);
     *width = state->width;
     break;
-  case EOS_DISPLAY_IOCTL_GET_HEIGHT:
+  }
+  case EOS_DISPLAY_IOCTL_GET_HEIGHT: {
     uint32_t *height = va_arg(args, uint32_t *);
     *height = state->height;
     break;
+  }
+  case EOS_DISPLAY_IOCTL_SET_WINDOW: {
+    const eos_display_rect_t *rect = va_arg(args, const eos_display_rect_t *);
+    if (rect) {
+      state->clip_x = rect->x;
+      state->clip_y = rect->y;
+      state->clip_w = rect->w;
+      state->clip_h = rect->h;
+      state->has_clip = true;
+    } else {
+      state->has_clip = false;
+    }
+    break;
+  }
   }
 
   return ret;
