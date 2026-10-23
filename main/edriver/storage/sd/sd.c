@@ -28,6 +28,8 @@ typedef struct {
 
 // ── Init / Shutdown ───────────────────────────────────────────
 
+void driver_storage_sd_shutdown(eos_dev_t *dev);
+
 bool driver_storage_sd_init(eos_dev_t *dev) {
   sd_state_t *state = malloc(sizeof(sd_state_t));
   if (!state)
@@ -37,6 +39,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
   if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
+    dev->state = NULL;
     free(state);
     return false;
   }
@@ -52,8 +55,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   dev_cfg.gpio_cs = cs_pin;
 
   if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
-    free(state);
+    driver_storage_sd_shutdown(dev);
     return false;
   }
 
@@ -63,9 +65,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   host_cfg.max_freq_khz = freq / 1000;
 
   if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
-    sdspi_host_remove_device(state->handle);
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
-    free(state);
+    driver_storage_sd_shutdown(dev);
     return false;
   }
 
@@ -73,8 +73,10 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   state->io_buff = (char *)malloc(state->card.csd.sector_size);
 
   // Gracefully die in case no mem :D
-  if (!state->io_buff)
+  if (!state->io_buff) {
+    driver_storage_sd_shutdown(dev);
     return false;
+  }
 
   // Print card info
   sdmmc_card_print_info(stdout, &state->card);
@@ -82,6 +84,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   // Read partition table
   if (eos_diskpart_parse(dev, &state->part_table) != EOS_ERR_NO_ERROR) {
     EOS_LOGE("Something happened during partition table reading\n");
+    driver_storage_sd_shutdown(dev);
     return false;
   }
 
@@ -90,6 +93,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   if (drv == NULL) {
     EOS_LOGE("Can't find a generic partition driver\n");
+    driver_storage_sd_shutdown(dev);
     return false;
   }
 
@@ -108,6 +112,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
     if (part_dev == NULL) {
       EOS_LOGE("Can't attach partition to dev tree. Device not allocated\n");
+      continue;
     }
 
     part_dev->driver = drv;
