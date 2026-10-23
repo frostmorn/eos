@@ -72,6 +72,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   st7789_state_t *state = malloc(sizeof(st7789_state_t));
   if (!state)
     return false;
+  memset(state, 0, sizeof(st7789_state_t));
   dev->state = state;
 
   // Native dimensions from config (before rotation)
@@ -89,17 +90,38 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   int32_t en_pin = eos_pin_get_no(dev->pins, "en");
   int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
-  // Claim pins
-  if (!eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev))
+  // Claim pins with proper cleanup on failure
+  if (!eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
+    free(state);
+    dev->state = NULL;
     return false;
-  if (!eos_cap_claim(EOS_CAPS_GPIO, dc_pin, dev))
+  }
+  if (!eos_cap_claim(EOS_CAPS_GPIO, dc_pin, dev)) {
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    free(state);
+    dev->state = NULL;
     return false;
-  if (en_pin >= 0)
-    if (!eos_cap_claim(EOS_CAPS_GPIO, en_pin, dev))
+  }
+  if (en_pin >= 0) {
+    if (!eos_cap_claim(EOS_CAPS_GPIO, en_pin, dev)) {
+      eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+      eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+      free(state);
+      dev->state = NULL;
       return false;
-  if (rst_pin >= 0)
-    if (!eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev))
+    }
+  }
+  if (rst_pin >= 0) {
+    if (!eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev)) {
+      if (en_pin >= 0)
+        eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
+      eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+      eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+      free(state);
+      dev->state = NULL;
       return false;
+    }
+  }
 
   // Enable display power before anything else
   if (en_pin >= 0) {
@@ -125,9 +147,16 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
   if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)host, &io_cfg,
                                &state->io) != ESP_OK) {
-    if (en_pin >= 0)
+    if (en_pin >= 0) {
       gpio_set_level(en_pin, 0);
+      eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
+    }
+    if (rst_pin >= 0)
+      eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
     free(state);
+    dev->state = NULL;
     return false;
   }
 
@@ -140,10 +169,17 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
   if (esp_lcd_new_panel_st7789(state->io, &panel_cfg, &state->panel) !=
       ESP_OK) {
-    if (en_pin >= 0)
+    if (en_pin >= 0) {
       gpio_set_level(en_pin, 0);
+      eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
+    }
+    if (rst_pin >= 0)
+      eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
     esp_lcd_panel_io_del(state->io);
     free(state);
+    dev->state = NULL;
     return false;
   }
 
@@ -200,13 +236,18 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   int32_t dc_pin = eos_pin_get_no(dev->pins, "dc");
   int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
+  if (state->panel) {
+    esp_lcd_panel_disp_on_off(state->panel, false);
+    esp_lcd_panel_del(state->panel);
+  }
+  if (state->io) {
+    esp_lcd_panel_io_del(state->io);
+  }
+
   if (en_pin >= 0) {
     gpio_set_level(en_pin, 0);
     eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
   }
-
-  esp_lcd_panel_del(state->panel);
-  esp_lcd_panel_io_del(state->io);
 
   eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
   eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);

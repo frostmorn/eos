@@ -38,8 +38,18 @@ bool eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev) {
 
   // Seek if cap already claimed
   for (size_t i = 0; i < kv_size(ecaps); i++) {
-    if ((kv_A(ecaps, i).type == type) && (kv_A(ecaps, i).no == no))
+    if ((kv_A(ecaps, i).type == type) && (kv_A(ecaps, i).no == no)) {
+      // If already claimed by NULL (system/reserved) and new claim is by a specific device,
+      // allow overriding/transferring ownership to the device.
+      if (kv_A(ecaps, i).dev == NULL && dev != NULL) {
+        kv_A(ecaps, i).dev = dev;
+        EOS_LOGI("Claimed reserved cap %s %d by dev %s/%s",
+                 eos_cap_type_to_str(type), no, dev->driver->scope,
+                 dev->driver->name);
+        return true;
+      }
       return false;
+    }
   }
 
   // Claiming cap
@@ -66,12 +76,15 @@ bool eos_cap_release(eos_cap_type_t type, int32_t no, eos_dev_t *dev) {
 // soc/gpio_sig_map.h per soc
 void eos_capsmgr_init() {
   kv_init(ecaps);
+  
+  EOS_LOGI("Claiming reserved gpio pins");
 
   // Claim reserved gpios
   for (int32_t i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
     if ((!GPIO_IS_VALID_GPIO(i)) || esp_gpio_is_reserved(BIT64(i)))
       eos_cap_claim(EOS_CAPS_GPIO, i, NULL);
   }
+
   // Claim USB related pins
   eos_cap_claim(EOS_CAPS_GPIO, USBPHY_DP_NUM, NULL);
   eos_cap_claim(EOS_CAPS_GPIO, USBPHY_DM_NUM, NULL);

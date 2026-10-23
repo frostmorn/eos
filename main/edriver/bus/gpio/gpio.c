@@ -41,6 +41,7 @@ typedef struct {
 typedef struct {
   uint32_t esp_idf_fs_index;
   int idx;                   // also gpioNum
+  struct dirent entry;       // per-instance dirent for thread safety
 } gpio_dir_t;
 //=====================================================================
 // GPIO count is always constant, meaning if we want to have a blocking
@@ -129,8 +130,8 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
     return -1;
   }
 
-  // Ensure GPIO range
-  if (!IS_VALID_FD(gpioNum)) {
+  // Ensure GPIO range and validity
+  if (!IS_VALID_FD(gpioNum) || !GPIO_IS_VALID_GPIO(gpioNum)) {
     errno = EINVAL;
     free(gPath);
     return -1;
@@ -145,10 +146,13 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
 
   // Trying to open GPIO
   gpio_bus_state_t *state = dev->state;
-  if (state->pins[gpioNum].task_owner == NULL)
+  if (state->pins[gpioNum].task_owner == NULL) {
     state->pins[gpioNum].task_owner = xTaskGetCurrentTaskHandle();
-  else
-    gpioNum = -1; // also fd no [Already Opened]
+  } else {
+    errno = EBUSY;
+    eos_cap_release(EOS_CAPS_GPIO, gpioNum, dev);
+    gpioNum = -1; // already opened
+  }
 
   // Cleanup
   free(gPath);
@@ -194,28 +198,30 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     }
   }
 
+  if (pin->sample_period_us > 0 && pin->last_sample > 0) {
+    int64_t elapsed = esp_timer_get_time() - pin->last_sample;
+
+    if (elapsed < pin->sample_period_us) {
+      int64_t remaining = pin->sample_period_us - elapsed;
+      TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
+
+      if (ticks > 0)
+        vTaskDelay(ticks);
+    }
+  }
+
   uint8_t *p = dst;
 
   for (size_t i = 0; i < size; i++) {
-    if (pin->sample_period_us > 0 && pin->last_sample > 0) {
-      int64_t elapsed = esp_timer_get_time() - pin->last_sample;
-
-      if (elapsed < pin->sample_period_us) {
-        int64_t remaining = pin->sample_period_us - elapsed;
-        TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
-
-        if (ticks > 0)
-          vTaskDelay(ticks);
-      }
-    }
     if (pin->iomode == EOS_GPIO_IOMODE_BIN){
       p[i] = gpio_get_level(fd) ? 1 : 0;
     }
     else if (pin->iomode == EOS_GPIO_IOMODE_CHAR){
       p[i] = gpio_get_level(fd) ? '1' : '0';
     }
-    pin->last_sample = esp_timer_get_time();
   }
+
+  pin->last_sample = esp_timer_get_time();
 
   return size;
 }
@@ -227,9 +233,9 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
     return -1;
   }
 
-  // Maybe ban opening?
+  // Input-only pins cannot be written to
   if (!GPIO_IS_VALID_OUTPUT_GPIO(fd)) {
-    errno = EFAULT;
+    errno = EPERM;
     return -1;
   }
 
@@ -250,9 +256,26 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
     }
   }
 
+  if (pin->sample_period_us > 0 && pin->last_sample > 0) {
+    int64_t elapsed = esp_timer_get_time() - pin->last_sample;
+
+    if (elapsed < pin->sample_period_us) {
+      int64_t remaining = pin->sample_period_us - elapsed;
+      TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
+
+      if (ticks > 0)
+        vTaskDelay(ticks);
+    }
+  }
+
+  uint8_t value = 0;
+  int set_count = 0;
+
   for (size_t i = 0; i < size; i++) {
-    uint8_t value;
-    // TODO: skip spaces
+    // Skip spaces, tabs, newlines, carriage returns
+    if (p[i] == ' ' || p[i] == '\t' || p[i] == '\n' || p[i] == '\r') {
+      continue;
+    }
     if (p[i] == 0 || p[i] == '0')
       value = 0;
     else if (p[i] == 1 || p[i] == '1')
@@ -261,26 +284,17 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
       errno = EINVAL;
       return -1;
     }
+    set_count++;
+  }
 
-    if (pin->sample_period_us > 0 && pin->last_sample > 0) {
-      int64_t elapsed = esp_timer_get_time() - pin->last_sample;
-
-      if (elapsed < pin->sample_period_us) {
-        int64_t remaining = pin->sample_period_us - elapsed;
-        TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
-
-        if (ticks > 0)
-          vTaskDelay(ticks);
-      }
-    }
-
+  if (set_count > 0) {
     if (gpio_set_level(fd, value) != ESP_OK) {
       errno = EIO;
       return -1;
     }
-
-    pin->last_sample = esp_timer_get_time();
   }
+
+  pin->last_sample = esp_timer_get_time();
 
   return size;
 }
@@ -314,10 +328,10 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     pin->cfg.pull_up_en = GPIO_PULLUP_ENABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
     break;
-  case EOS_GPIO_IOCTL_IOMODE_BIN:
+  case EOS_GPIO_IOCTL_SET_IOMODE_BIN:
     pin->iomode = EOS_GPIO_IOMODE_BIN;
     break;
-  case EOS_GPIO_IOMODE_CHAR:
+  case EOS_GPIO_IOCTL_SET_IOMODE_CHAR:
     pin->iomode = EOS_GPIO_IOMODE_CHAR;
     break;
 
@@ -370,20 +384,18 @@ struct dirent *driver_bus_gpio_readdir(eos_dev_t *dev, DIR *pdir) {
     return NULL;
   }
 
-  static struct dirent entry;
-
   for (;;) {
     if (!IS_VALID_FD(gpdir->idx))
       return NULL;
 
     if (GPIO_IS_VALID_GPIO(gpdir->idx)) {
-      memset(&entry, 0, sizeof(entry));
-      entry.d_type = DT_CHR;
-      entry.d_ino = (ino_t)gpdir->idx;
-      snprintf(entry.d_name, sizeof(entry.d_name), "%d", gpdir->idx);
+      memset(&gpdir->entry, 0, sizeof(gpdir->entry));
+      gpdir->entry.d_type = DT_CHR;
+      gpdir->entry.d_ino = (ino_t)gpdir->idx;
+      snprintf(gpdir->entry.d_name, sizeof(gpdir->entry.d_name), "%d", gpdir->idx);
 
       gpdir->idx++; // advance AFTER selecting entry
-      return &entry;
+      return &gpdir->entry;
     }
 
     gpdir->idx++;
