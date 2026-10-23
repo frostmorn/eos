@@ -12,7 +12,8 @@ static int test_sdl2_main(int argc, char **argv) {
     return -1;
   }
 
-  SDL_Window *window = SDL_CreateWindow("EOS SDL2 Test", 0, 0, 240, 280, SDL_WINDOW_SHOWN);
+  // Pass 0, 0 to automatically detect screen dimensions via ioctl inside SDL2 implementation
+  SDL_Window *window = SDL_CreateWindow("EOS SDL2 Test", 0, 0, 0, 0, SDL_WINDOW_SHOWN);
   if (!window) {
     printf("SDL_CreateWindow failed: %s\n", SDL_GetError());
     SDL_Quit();
@@ -27,7 +28,8 @@ static int test_sdl2_main(int argc, char **argv) {
     return -1;
   }
 
-  SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STATIC, 240, 280);
+  // Pass 0, 0 to SDL_CreateTexture to automatically use window/screen dimensions
+  SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STATIC, 0, 0);
   if (!texture) {
     printf("SDL_CreateTexture failed: %s\n", SDL_GetError());
     SDL_DestroyRenderer(renderer);
@@ -36,12 +38,16 @@ static int test_sdl2_main(int argc, char **argv) {
     return -1;
   }
 
-  uint16_t *tex_pixels = malloc(240 * 280 * 2);
+  int w, h;
+  SDL_QueryTexture(texture, NULL, NULL, &w, &h);
+  printf("SDL2 display resolution determined via ioctl: %dx%d\n", w, h);
+
+  uint16_t *tex_pixels = malloc(w * h * 2);
   if (tex_pixels) {
-    for (int i = 0; i < 240 * 280; i++) {
+    for (int i = 0; i < w * h; i++) {
       tex_pixels[i] = 0xF800; // red
     }
-    SDL_UpdateTexture(texture, NULL, tex_pixels, 240 * 2);
+    SDL_UpdateTexture(texture, NULL, tex_pixels, w * 2);
     free(tex_pixels);
   }
 
@@ -49,7 +55,7 @@ static int test_sdl2_main(int argc, char **argv) {
   SDL_RenderCopy(renderer, texture, NULL, NULL);
   SDL_RenderPresent(renderer);
 
-  printf("SDL2 test rendered red frame successfully.\n");
+  printf("SDL2 test rendered red frame successfully (%dx%d).\n", w, h);
 
   SDL_DestroyTexture(texture);
   SDL_DestroyRenderer(renderer);

@@ -11,28 +11,32 @@
 #include <sys/time.h>
 
 static int sdl_fb_fd = -1;
-static int sdl_width = 240;
-static int sdl_height = 280;
+static int sdl_width = 0;
+static int sdl_height = 0;
 static char sdl_error_buf[256] = {0};
 
-int __attribute__((weak)) SDL_Init(Uint32 flags) {
-  (void)flags;
+static void sdl_query_display_size(void) {
   if (sdl_fb_fd < 0) {
     const char *fb_path = getenv("EOS_FB");
     if (!fb_path) {
       fb_path = "/dev/fb0";
     }
     sdl_fb_fd = open(fb_path, O_RDWR);
-    if (sdl_fb_fd >= 0) {
-      uint32_t w = 240, h = 280;
-      if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR) {
-        sdl_width = (int)w;
-      }
-      if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR) {
-        sdl_height = (int)h;
-      }
+  }
+  if (sdl_fb_fd >= 0) {
+    uint32_t w = 0, h = 0;
+    if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR && w > 0) {
+      sdl_width = (int)w;
+    }
+    if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR && h > 0) {
+      sdl_height = (int)h;
     }
   }
+}
+
+int __attribute__((weak)) SDL_Init(Uint32 flags) {
+  (void)flags;
+  sdl_query_display_size();
   return 0;
 }
 
@@ -67,20 +71,16 @@ static SDL_PixelFormat default_pixel_format = {
 SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags) {
   (void)bpp;
   (void)flags;
+  (void)width;
+  (void)height;
   SDL_Init(SDL_INIT_VIDEO);
-  if (sdl_fb_fd >= 0) {
-    uint32_t w = 240, h = 280;
-    if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR) {
-      sdl_width = (int)w;
-    }
-    if (ioctl(sdl_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR) {
-      sdl_height = (int)h;
-    }
-  }
-  if (width <= 0) width = sdl_width;
-  if (height <= 0) height = sdl_height;
-  sdl_width = width;
-  sdl_height = height;
+  sdl_query_display_size();
+
+  if (sdl_width <= 0) sdl_width = 240;
+  if (sdl_height <= 0) sdl_height = 280;
+
+  int w = sdl_width;
+  int h = sdl_height;
 
   if (global_screen_surface) {
     if (global_screen_surface->pixels) {
@@ -94,17 +94,17 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags) {
   if (!global_screen_surface) return NULL;
   memset(global_screen_surface, 0, sizeof(SDL_Surface));
 
-  global_screen_surface->w = width;
-  global_screen_surface->h = height;
-  global_screen_surface->pitch = width * 2;
+  global_screen_surface->w = w;
+  global_screen_surface->h = h;
+  global_screen_surface->pitch = w * 2;
   global_screen_surface->format = &default_pixel_format;
-  global_screen_surface->pixels = malloc(width * height * 2);
+  global_screen_surface->pixels = malloc(w * h * 2);
   if (!global_screen_surface->pixels) {
     free(global_screen_surface);
     global_screen_surface = NULL;
     return NULL;
   }
-  memset(global_screen_surface->pixels, 0, width * height * 2);
+  memset(global_screen_surface->pixels, 0, w * h * 2);
   global_screen_surface->refcount = 1;
 
   return global_screen_surface;

@@ -11,8 +11,8 @@
 #include <sys/time.h>
 
 static int sdl2_fb_fd = -1;
-static int sdl2_width = 240;
-static int sdl2_height = 280;
+static int sdl2_width = 0;
+static int sdl2_height = 0;
 static char sdl2_error_buf[256] = {0};
 
 struct SDL_Window {
@@ -30,24 +30,28 @@ struct SDL_Texture {
   uint16_t *pixels;
 };
 
-int __attribute__((weak)) SDL_Init(Uint32 flags) {
-  (void)flags;
+static void sdl2_query_display_size(void) {
   if (sdl2_fb_fd < 0) {
     const char *fb_path = getenv("EOS_FB");
     if (!fb_path) {
       fb_path = "/dev/fb0";
     }
     sdl2_fb_fd = open(fb_path, O_RDWR);
-    if (sdl2_fb_fd >= 0) {
-      uint32_t w = 240, h = 280;
-      if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR) {
-        sdl2_width = (int)w;
-      }
-      if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR) {
-        sdl2_height = (int)h;
-      }
+  }
+  if (sdl2_fb_fd >= 0) {
+    uint32_t w = 0, h = 0;
+    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == EOS_ERR_NO_ERROR && w > 0) {
+      sdl2_width = (int)w;
+    }
+    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == EOS_ERR_NO_ERROR && h > 0) {
+      sdl2_height = (int)h;
     }
   }
+}
+
+int __attribute__((weak)) SDL_Init(Uint32 flags) {
+  (void)flags;
+  sdl2_query_display_size();
   return 0;
 }
 
@@ -73,25 +77,21 @@ SDL_Window *SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
   (void)x;
   (void)y;
   (void)flags;
+  (void)w;
+  (void)h;
   SDL_Init(SDL_INIT_VIDEO);
-  if (sdl2_fb_fd >= 0) {
-    uint32_t dw = 240, dh = 280;
-    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &dw) == EOS_ERR_NO_ERROR) {
-      sdl2_width = (int)dw;
-    }
-    if (ioctl(sdl2_fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &dh) == EOS_ERR_NO_ERROR) {
-      sdl2_height = (int)dh;
-    }
-  }
-  if (w <= 0) w = sdl2_width;
-  if (h <= 0) h = sdl2_height;
-  sdl2_width = w;
-  sdl2_height = h;
+  sdl2_query_display_size();
+
+  if (sdl2_width <= 0) sdl2_width = 240;
+  if (sdl2_height <= 0) sdl2_height = 280;
+
+  int window_w = sdl2_width;
+  int window_h = sdl2_height;
 
   SDL_Window *win = malloc(sizeof(SDL_Window));
   if (!win) return NULL;
-  win->w = w;
-  win->h = h;
+  win->w = window_w;
+  win->h = window_h;
   if (title) {
     snprintf(win->title, sizeof(win->title), "%s", title);
   } else {
@@ -130,6 +130,11 @@ SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int access
   (void)renderer;
   (void)format;
   (void)access;
+  if (w <= 0 || h <= 0) {
+    sdl2_query_display_size();
+    w = sdl2_width > 0 ? sdl2_width : 240;
+    h = sdl2_height > 0 ? sdl2_height : 280;
+  }
   SDL_Texture *tex = malloc(sizeof(SDL_Texture));
   if (!tex) return NULL;
   tex->w = w;
@@ -167,6 +172,15 @@ int SDL_UpdateTexture(SDL_Texture *texture, const SDL_Rect *rect, const void *pi
       }
     }
   }
+  return 0;
+}
+
+int SDL_QueryTexture(SDL_Texture *texture, Uint32 *format, int *access, int *w, int *h) {
+  if (!texture) return -1;
+  if (format) *format = SDL_PIXELFORMAT_RGB565;
+  if (access) *access = SDL_TEXTUREACCESS_STATIC;
+  if (w) *w = texture->w;
+  if (h) *h = texture->h;
   return 0;
 }
 

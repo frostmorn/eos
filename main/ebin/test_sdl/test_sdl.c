@@ -12,14 +12,16 @@ static int test_sdl_main(int argc, char **argv) {
     return -1;
   }
 
-  SDL_Surface *screen = SDL_SetVideoMode(240, 280, 16, SDL_SWSURFACE);
+  // Pass 0, 0 to automatically detect screen dimensions via ioctl inside SDL implementation
+  SDL_Surface *screen = SDL_SetVideoMode(0, 0, 16, SDL_SWSURFACE);
   if (!screen) {
     printf("SDL_SetVideoMode failed: %s\n", SDL_GetError());
     SDL_Quit();
     return -1;
   }
 
-  // Draw a color pattern (e.g. green fill)
+  printf("SDL video mode set with max dimensions: %dx%d\n", screen->w, screen->h);
+
   uint16_t *pixels = screen->pixels;
   for (int i = 0; i < screen->w * screen->h; i++) {
     pixels[i] = 0x07E0; // green
