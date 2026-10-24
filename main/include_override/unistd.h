@@ -23,6 +23,17 @@ int dup2(int oldfd, int newfd);
 // Explicit alias for EOS system() implementation
 int eos_system(const char *cmdline);
 
+// Environment variables (thread-local environ macro and env functions)
+char *eos_tctx_getenv(const char *name);
+int eos_tctx_setenv(const char *name, const char *value, int overwrite);
+int eos_tctx_unsetenv(const char *name);
+char **eos_tctx_get_environ(void);
+
+#define environ (eos_tctx_get_environ())
+#define getenv(name) eos_tctx_getenv(name)
+#define setenv(name, value, overwrite) eos_tctx_setenv(name, value, overwrite)
+#define unsetenv(name) eos_tctx_unsetenv(name)
+
 #ifdef __cplusplus
 }
 #endif

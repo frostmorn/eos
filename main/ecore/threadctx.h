@@ -25,10 +25,23 @@ struct eos_tctx_t {
   kvec_t(void *) memblocks;
   // Per-thread virtual descriptor mapping (index = virtual fd, value = real VFS fd or -1)
   int fd_map[FD_SETSIZE];
+  // Environment variables ("KEY=VALUE")
+  kvec_t(char *) env;
+  // Environment pointer array for environ macro
+  char **env_array;
+  // Last execution exit status ($?)
+  int last_exit_status;
 };
 
 // Retrieves current thread context
 eos_tctx_t *eos_tctx_get();
+
+// Environment management
+void eos_tctx_init_env(eos_tctx_t *tctx);
+char *eos_tctx_getenv(const char *name);
+int eos_tctx_setenv(const char *name, const char *value, int overwrite);
+int eos_tctx_unsetenv(const char *name);
+char **eos_tctx_get_environ(void);
 
 // FD management
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx);

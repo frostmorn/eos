@@ -15,6 +15,8 @@
     "Not enough FreeRTOS TLS pointers configured for eos_tctx(CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS)"
 #endif
 
+static void eos_tctx_set(eos_tctx_t *tctx);
+
 static eos_tctx_t *eos_tctx_alloc() {
   // Use heap_caps directly to avoid recursion with our wrappers
   // MALLOC_CAP_DEFAULT allows allocation from internal heap or SPIRAM
@@ -32,12 +34,123 @@ static eos_tctx_t *eos_tctx_alloc() {
   kv_init(tctx->fds);
   kv_init(tctx->dirs);
   kv_init(tctx->memblocks);
+  kv_init(tctx->env);
+  tctx->env_array = NULL;
+  tctx->last_exit_status = 0;
 
   for (int i = 0; i < FD_SETSIZE; i++) {
     tctx->fd_map[i] = -1;
   }
 
+  // Set TLS pointer early so recursive calls to eos_tctx_get() find this tctx during initialization
+  eos_tctx_set(tctx);
+
+  eos_tctx_init_env(tctx);
+
   return tctx;
+}
+
+static void eos_tctx_rebuild_env_array(eos_tctx_t *tctx) {
+  extern void *__real_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_t caps);
+  extern void __real_heap_caps_free(void *ptr);
+
+  if (tctx->env_array) {
+    __real_heap_caps_free(tctx->env_array);
+    tctx->env_array = NULL;
+  }
+
+  size_t n = kv_size(tctx->env);
+  tctx->env_array = __real_heap_caps_aligned_alloc_base(4, (n + 1) * sizeof(char *), MALLOC_CAP_DEFAULT);
+  if (tctx->env_array) {
+    for (size_t i = 0; i < n; i++) {
+      tctx->env_array[i] = kv_A(tctx->env, i);
+    }
+    tctx->env_array[n] = NULL;
+  }
+}
+
+static int eos_tctx_setenv_internal(eos_tctx_t *tctx, const char *name, const char *value, int overwrite) {
+  if (!tctx || !name || !value) return -1;
+
+  extern void *__real_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_t caps);
+  extern void __real_heap_caps_free(void *ptr);
+
+  size_t name_len = strlen(name);
+  for (size_t i = 0; i < kv_size(tctx->env); i++) {
+    char *entry = kv_A(tctx->env, i);
+    if (entry && strncmp(entry, name, name_len) == 0 && entry[name_len] == '=') {
+      if (!overwrite) return 0;
+      size_t new_len = name_len + 1 + strlen(value) + 1;
+      char *new_entry = __real_heap_caps_aligned_alloc_base(4, new_len, MALLOC_CAP_DEFAULT);
+      if (!new_entry) return -1;
+      snprintf(new_entry, new_len, "%s=%s", name, value);
+      __real_heap_caps_free(entry);
+      kv_A(tctx->env, i) = new_entry;
+      eos_tctx_rebuild_env_array(tctx);
+      return 0;
+    }
+  }
+
+  size_t new_len = name_len + 1 + strlen(value) + 1;
+  char *new_entry = __real_heap_caps_aligned_alloc_base(4, new_len, MALLOC_CAP_DEFAULT);
+  if (!new_entry) return -1;
+  snprintf(new_entry, new_len, "%s=%s", name, value);
+  kv_push(char *, tctx->env, new_entry);
+  eos_tctx_rebuild_env_array(tctx);
+  return 0;
+}
+
+void eos_tctx_init_env(eos_tctx_t *tctx) {
+  if (!tctx) return;
+  eos_tctx_setenv_internal(tctx, "PATH", "/bin", 1);
+  eos_tctx_setenv_internal(tctx, "HOME", "/", 1);
+  eos_tctx_setenv_internal(tctx, "USER", "root", 1);
+  eos_tctx_setenv_internal(tctx, "SHELL", "/bin/ush", 1);
+}
+
+char *eos_tctx_getenv(const char *name) {
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx || !name) return NULL;
+
+  size_t name_len = strlen(name);
+  for (size_t i = 0; i < kv_size(tctx->env); i++) {
+    char *entry = kv_A(tctx->env, i);
+    if (entry && strncmp(entry, name, name_len) == 0 && entry[name_len] == '=') {
+      return entry + name_len + 1;
+    }
+  }
+  return NULL;
+}
+
+int eos_tctx_setenv(const char *name, const char *value, int overwrite) {
+  eos_tctx_t *tctx = eos_tctx_get();
+  return eos_tctx_setenv_internal(tctx, name, value, overwrite);
+}
+
+int eos_tctx_unsetenv(const char *name) {
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx || !name) return -1;
+
+  extern void __real_heap_caps_free(void *ptr);
+
+  size_t name_len = strlen(name);
+  for (size_t i = 0; i < kv_size(tctx->env); i++) {
+    char *entry = kv_A(tctx->env, i);
+    if (entry && strncmp(entry, name, name_len) == 0 && entry[name_len] == '=') {
+      __real_heap_caps_free(entry);
+      kv_drop_fast(char *, tctx->env, i);
+      kv_opt(char *, tctx->env);
+      eos_tctx_rebuild_env_array(tctx);
+      return 0;
+    }
+  }
+  return 0;
+}
+
+char **eos_tctx_get_environ(void) {
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx) return NULL;
+  return tctx->env_array;
 }
 
 static void eos_tctx_free(eos_tctx_t *tctx) {
@@ -52,6 +165,17 @@ static void eos_tctx_free(eos_tctx_t *tctx) {
   kv_destroy(tctx->fds);
   kv_destroy(tctx->dirs);
   kv_destroy(tctx->memblocks);
+  for (size_t i = 0; i < kv_size(tctx->env); i++) {
+    if (kv_A(tctx->env, i)) {
+      extern void __real_heap_caps_free(void *ptr);
+      __real_heap_caps_free(kv_A(tctx->env, i));
+    }
+  }
+  kv_destroy(tctx->env);
+  if (tctx->env_array) {
+    extern void __real_heap_caps_free(void *ptr);
+    __real_heap_caps_free(tctx->env_array);
+  }
 
   extern void __real_heap_caps_free(void *ptr);
   __real_heap_caps_free(tctx);

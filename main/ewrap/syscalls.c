@@ -57,9 +57,66 @@ static void resolve_path(const char *name, char *out, size_t len) {
   }
 }
 
-// Reads the next shell token from *cursor, handling single/double quotes
-// and operator tokens (|, <, >, >>, 2>, 2>>, 2>&1, 1>&2, &>, &>>).
-// Sets *is_op = true when an unquoted operator token is returned.
+static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) {
+  char *p = (char *)*src_ptr;
+  char *w = *arena_ptr;
+
+  if (*p == '?') {
+    p++;
+    eos_tctx_t *tctx = eos_tctx_get();
+    int status = tctx ? tctx->last_exit_status : 0;
+    int len = snprintf(w, 32, "%d", status);
+    w += len;
+    *src_ptr = p;
+    *arena_ptr = w;
+    return;
+  }
+
+  if (*p == '{') {
+    p++;
+    char *name_start = p;
+    while (*p && *p != '}') p++;
+    size_t name_len = p - name_start;
+    if (*p == '}') p++;
+
+    char name_buf[64];
+    if (name_len < sizeof(name_buf)) {
+      memcpy(name_buf, name_start, name_len);
+      name_buf[name_len] = '\0';
+      char *val = eos_tctx_getenv(name_buf);
+      if (val) {
+        size_t vlen = strlen(val);
+        memcpy(w, val, vlen);
+        w += vlen;
+      }
+    }
+    *src_ptr = p;
+    *arena_ptr = w;
+    return;
+  }
+
+  char name_buf[64];
+  int i = 0;
+  while (*p && (isalnum((unsigned char)*p) || *p == '_') && i < (int)sizeof(name_buf) - 1) {
+    name_buf[i++] = *p++;
+  }
+  name_buf[i] = '\0';
+  if (i > 0) {
+    char *val = eos_tctx_getenv(name_buf);
+    if (val) {
+      size_t vlen = strlen(val);
+      memcpy(w, val, vlen);
+      w += vlen;
+    }
+  } else {
+    *w++ = '$';
+  }
+  *src_ptr = p;
+  *arena_ptr = w;
+}
+
+// Reads the next shell token from *cursor, handling single/double quotes,
+// environment variable expansion, and operator tokens (&&, ||, ;, &, |, <, >, etc.).
 static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
   char *p = *cursor;
   while (*p && isspace((unsigned char)*p))
@@ -72,7 +129,27 @@ static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
 
   *is_op = false;
 
-  // Check multi-char and single-char redirection / pipeline operators
+  // Check operators: &&, ||, ;, &, |, etc.
+  if (strncmp(p, "&&", 2) == 0) {
+    *is_op = true;
+    *cursor = p + 2;
+    return "&&";
+  }
+  if (strncmp(p, "||", 2) == 0) {
+    *is_op = true;
+    *cursor = p + 2;
+    return "||";
+  }
+  if (*p == ';') {
+    *is_op = true;
+    *cursor = p + 1;
+    return ";";
+  }
+  if (*p == '&' && p[1] != '>' && p[1] != '>') {
+    *is_op = true;
+    *cursor = p + 1;
+    return "&";
+  }
   if (*p == '|') {
     *is_op = true;
     *cursor = p + 1;
@@ -139,12 +216,14 @@ static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
     return "<";
   }
 
-  // Regular argument (supports single and double quotes and backslash escapes)
+  // Regular argument (supports quotes, escapes, and env expansion)
   char *out = *arena;
   char *w = out;
 
   while (*p && !isspace((unsigned char)*p)) {
-    if (*p == '|' || *p == '<' || *p == '>')
+    if (*p == '|' || *p == '<' || *p == '>' || *p == ';' || *p == '&')
+      break;
+    if (strncmp(p, "&&", 2) == 0 || strncmp(p, "||", 2) == 0)
       break;
     if ((p[0] == '1' || p[0] == '2') && p[1] == '>')
       break;
@@ -154,12 +233,20 @@ static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
     if (*p == '\'' || *p == '"') {
       char quote = *p++;
       while (*p && *p != quote) {
+        if (quote == '"' && *p == '$' && p[1]) {
+          p++;
+          expand_env_vars((const char **)&p, &w, '"');
+          continue;
+        }
         if (quote == '"' && *p == '\\' && p[1])
           p++;
         *w++ = *p++;
       }
       if (*p == quote)
         p++;
+    } else if (*p == '$' && p[1]) {
+      p++;
+      expand_env_vars((const char **)&p, &w, '\0');
     } else if (*p == '\\' && p[1]) {
       p++;
       *w++ = *p++;
@@ -174,101 +261,178 @@ static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
   return out;
 }
 
-static int parse_cmdline(const char *cmdline, char *arena_buf,
-                         eos_cmd_stage_t *stages, int *stage_count_out) {
+typedef struct {
+  char *text;
+  bool is_op;
+} eos_token_t;
+
+typedef enum {
+  EOS_NODE_COMMAND,
+  EOS_NODE_SEQ,
+  EOS_NODE_AND,
+  EOS_NODE_OR,
+  EOS_NODE_BG
+} eos_node_type_t;
+
+typedef struct eos_ast_node_t {
+  eos_node_type_t type;
+  struct eos_ast_node_t *left;
+  struct eos_ast_node_t *right;
+  int stage_count;
+  eos_cmd_stage_t stages[EOS_SYSTEM_MAX_STAGES];
+} eos_ast_node_t;
+
+static bool get_op_bp(const char *op, int *bp) {
+  if (strcmp(op, ";") == 0 || strcmp(op, "&") == 0) {
+    *bp = 10;
+    return true;
+  }
+  if (strcmp(op, "&&") == 0 || strcmp(op, "||") == 0) {
+    *bp = 20;
+    return true;
+  }
+  return false;
+}
+
+static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *idx) {
+  eos_ast_node_t *node = calloc(1, sizeof(eos_ast_node_t));
+  if (!node) return NULL;
+  node->type = EOS_NODE_COMMAND;
+
   int stage_idx = 0;
-  memset(stages, 0, sizeof(eos_cmd_stage_t) * EOS_SYSTEM_MAX_STAGES);
+  memset(node->stages, 0, sizeof(eos_cmd_stage_t) * EOS_SYSTEM_MAX_STAGES);
 
-  char *cursor = (char *)cmdline;
-  char *arena = arena_buf;
-  bool is_op = false;
-  char *tok = NULL;
-
-  while ((tok = next_shell_token(&cursor, &arena, &is_op)) != NULL) {
-    eos_cmd_stage_t *st = &stages[stage_idx];
-
-    if (is_op) {
-      if (strcmp(tok, "|") == 0) {
-        if (st->argc == 0) {
+  while (*idx < num_tokens) {
+    eos_token_t *tok = &tokens[*idx];
+    if (tok->is_op) {
+      if (strcmp(tok->text, "|") == 0) {
+        (*idx)++;
+        if (node->stages[stage_idx].argc == 0) {
           EOS_LOGE("eos_system() syntax error: empty pipe stage");
-          errno = EINVAL;
-          return -1;
+          free(node);
+          return NULL;
         }
         if (stage_idx + 1 >= EOS_SYSTEM_MAX_STAGES) {
           EOS_LOGE("eos_system() too many pipeline stages");
-          errno = E2BIG;
-          return -1;
+          free(node);
+          return NULL;
         }
-        st->argv[st->argc] = NULL;
+        node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
         stage_idx++;
         continue;
-      }
+      } else if (strcmp(tok->text, "<") == 0 || strcmp(tok->text, ">") == 0 ||
+                 strcmp(tok->text, ">>") == 0 || strcmp(tok->text, "2>") == 0 ||
+                 strcmp(tok->text, "2>>") == 0 || strcmp(tok->text, "&>") == 0 ||
+                 strcmp(tok->text, "&>>") == 0) {
+        eos_cmd_stage_t *st = &node->stages[stage_idx];
+        char *op = tok->text;
+        (*idx)++;
+        if (*idx >= num_tokens || tokens[*idx].is_op) {
+          EOS_LOGE("eos_system() syntax error: missing target for '%s'", op);
+          free(node);
+          return NULL;
+        }
+        char *target = tokens[*idx].text;
+        (*idx)++;
 
-      if (strcmp(tok, "2>&1") == 0) {
-        st->err_to_out = true;
-        st->out_to_err = false;
+        if (strcmp(op, "<") == 0) {
+          st->in_file = target;
+        } else if (strcmp(op, ">") == 0) {
+          st->out_file = target;
+          st->out_append = false;
+        } else if (strcmp(op, ">>") == 0) {
+          st->out_file = target;
+          st->out_append = true;
+        } else if (strcmp(op, "2>") == 0) {
+          st->err_file = target;
+          st->err_append = false;
+        } else if (strcmp(op, "2>>") == 0) {
+          st->err_file = target;
+          st->err_append = true;
+        } else if (strcmp(op, "&>") == 0) {
+          st->out_file = target;
+          st->out_append = false;
+          st->err_to_out = true;
+        } else if (strcmp(op, "&>>") == 0) {
+          st->out_file = target;
+          st->out_append = true;
+          st->err_to_out = true;
+        }
         continue;
-      }
-
-      if (strcmp(tok, "1>&2") == 0) {
-        st->out_to_err = true;
-        st->err_to_out = false;
+      } else if (strcmp(tok->text, "2>&1") == 0) {
+        node->stages[stage_idx].err_to_out = true;
+        node->stages[stage_idx].out_to_err = false;
+        (*idx)++;
         continue;
+      } else if (strcmp(tok->text, "1>&2") == 0) {
+        node->stages[stage_idx].out_to_err = true;
+        node->stages[stage_idx].err_to_out = false;
+        (*idx)++;
+        continue;
+      } else {
+        break;
       }
-
-      // Redirection operator requiring a target filename token
-      bool target_is_op = false;
-      char *target = next_shell_token(&cursor, &arena, &target_is_op);
-      if (!target || target_is_op || target[0] == '\0') {
-        EOS_LOGE("eos_system() syntax error: missing target for '%s'", tok);
-        errno = EINVAL;
-        return -1;
+    } else {
+      eos_cmd_stage_t *st = &node->stages[stage_idx];
+      if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
+        EOS_LOGE("eos_system() too many arguments");
+        free(node);
+        return NULL;
       }
-
-      if (strcmp(tok, "<") == 0) {
-        st->in_file = target;
-      } else if (strcmp(tok, ">") == 0) {
-        st->out_file = target;
-        st->out_append = false;
-      } else if (strcmp(tok, ">>") == 0) {
-        st->out_file = target;
-        st->out_append = true;
-      } else if (strcmp(tok, "2>") == 0) {
-        st->err_file = target;
-        st->err_append = false;
-      } else if (strcmp(tok, "2>>") == 0) {
-        st->err_file = target;
-        st->err_append = true;
-      } else if (strcmp(tok, "&>") == 0) {
-        st->out_file = target;
-        st->out_append = false;
-        st->err_to_out = true;
-      } else if (strcmp(tok, "&>>") == 0) {
-        st->out_file = target;
-        st->out_append = true;
-        st->err_to_out = true;
-      }
-      continue;
+      st->argv[st->argc++] = tok->text;
+      (*idx)++;
     }
-
-    if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
-      EOS_LOGE("eos_system() too many arguments");
-      errno = E2BIG;
-      return -1;
-    }
-    st->argv[st->argc++] = tok;
   }
 
-  stages[stage_idx].argv[stages[stage_idx].argc] = NULL;
-
-  if (stage_idx > 0 && stages[stage_idx].argc == 0) {
+  node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
+  if (stage_idx > 0 && node->stages[stage_idx].argc == 0) {
     EOS_LOGE("eos_system() syntax error: trailing pipe '|'");
-    errno = EINVAL;
-    return -1;
+    free(node);
+    return NULL;
   }
 
-  *stage_count_out = (stages[0].argc == 0) ? 0 : (stage_idx + 1);
-  return 0;
+  node->stage_count = (node->stages[0].argc == 0) ? 0 : (stage_idx + 1);
+  return node;
+}
+
+static eos_ast_node_t *parse_expr(eos_token_t *tokens, int num_tokens, int *idx, int min_bp) {
+  eos_ast_node_t *left = parse_command(tokens, num_tokens, idx);
+  if (!left) return NULL;
+
+  while (*idx < num_tokens) {
+    eos_token_t *tok = &tokens[*idx];
+    if (!tok->is_op) break;
+
+    int bp = 0;
+    if (!get_op_bp(tok->text, &bp) || bp < min_bp) break;
+
+    char *op = tok->text;
+    (*idx)++;
+
+    eos_ast_node_t *right = parse_expr(tokens, num_tokens, idx, bp);
+    if (!right) {
+      return left;
+    }
+
+    eos_ast_node_t *node = calloc(1, sizeof(eos_ast_node_t));
+    if (!node) return left;
+
+    if (strcmp(op, ";") == 0) {
+      node->type = EOS_NODE_SEQ;
+    } else if (strcmp(op, "&&") == 0) {
+      node->type = EOS_NODE_AND;
+    } else if (strcmp(op, "||") == 0) {
+      node->type = EOS_NODE_OR;
+    } else if (strcmp(op, "&") == 0) {
+      node->type = EOS_NODE_BG;
+    }
+
+    node->left = left;
+    node->right = right;
+    left = node;
+  }
+
+  return left;
 }
 
 static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
@@ -454,72 +618,44 @@ static void *pipeline_stage_thread(void *arg) {
   return (void *)(intptr_t)ret;
 }
 
-// TODO: make it's behaviour as close as possible to system() from <stdlib.h>
-int __wrap_system(const char *cmdline) {
-  if (!cmdline) {
-    EOS_LOGE("eos_system() called with null cmdline");
-    return -1;
-  }
+static int eval_ast(eos_ast_node_t *node);
 
-  // Allocate arena large enough to hold all unquoted/extracted tokens
-  size_t cmd_len = strlen(cmdline);
-  char *arena_buf = malloc(cmd_len + EOS_SYSTEM_MAX_ARGS + 16);
-  if (!arena_buf) {
-    EOS_LOGE("eos_system() %d: %s", errno, strerror(errno));
-    return -1;
-  }
+typedef struct {
+  eos_ast_node_t *node;
+} bg_wrapper_t;
 
-  eos_cmd_stage_t *stages =
-      calloc(EOS_SYSTEM_MAX_STAGES, sizeof(eos_cmd_stage_t));
-  if (!stages) {
-    free(arena_buf);
-    return -1;
-  }
+static void *bg_thread_entry(void *arg) {
+  bg_wrapper_t *bg = (bg_wrapper_t *)arg;
+  eval_ast(bg->node);
+  free(bg);
+  return NULL;
+}
 
-  int stage_count = 0;
-  if (parse_cmdline(cmdline, arena_buf, stages, &stage_count) < 0) {
-    free(stages);
-    free(arena_buf);
-    return -1;
-  }
+static int eval_command_node(eos_ast_node_t *node) {
+  int stage_count = node->stage_count;
+  if (stage_count == 0) return 0;
 
-  if (stage_count == 0) {
-    free(stages);
-    free(arena_buf);
-    return 0;
-  }
-
-  // Validate and load manifests for all stages upfront
-  eos_stage_exec_t *exec_stages =
-      calloc(stage_count, sizeof(eos_stage_exec_t));
-  if (!exec_stages) {
-    free(stages);
-    free(arena_buf);
-    return -1;
-  }
+  eos_stage_exec_t *exec_stages = calloc(stage_count, sizeof(eos_stage_exec_t));
+  if (!exec_stages) return -1;
 
   for (int i = 0; i < stage_count; i++) {
-    if (load_bin_manifest(stages[i].argv[0], &exec_stages[i].manifest) < 0) {
+    if (load_bin_manifest(node->stages[i].argv[0], &exec_stages[i].manifest) < 0) {
       free(exec_stages);
-      free(stages);
-      free(arena_buf);
       return -1;
     }
-    exec_stages[i].argc = stages[i].argc;
-    exec_stages[i].argv = stages[i].argv;
+    exec_stages[i].argc = node->stages[i].argc;
+    exec_stages[i].argv = node->stages[i].argv;
     exec_stages[i].pipe_in_fd = -1;
     exec_stages[i].pipe_out_fd = -1;
-    exec_stages[i].in_file = stages[i].in_file;
-    exec_stages[i].out_file = stages[i].out_file;
-    exec_stages[i].err_file = stages[i].err_file;
-    exec_stages[i].out_append = stages[i].out_append;
-    exec_stages[i].err_append = stages[i].err_append;
-    exec_stages[i].err_to_out = stages[i].err_to_out;
-    exec_stages[i].out_to_err = stages[i].out_to_err;
+    exec_stages[i].in_file = node->stages[i].in_file;
+    exec_stages[i].out_file = node->stages[i].out_file;
+    exec_stages[i].err_file = node->stages[i].err_file;
+    exec_stages[i].out_append = node->stages[i].out_append;
+    exec_stages[i].err_append = node->stages[i].err_append;
+    exec_stages[i].err_to_out = node->stages[i].err_to_out;
+    exec_stages[i].out_to_err = node->stages[i].out_to_err;
   }
 
-  // Fast path: single command without pipeline runs in the caller's thread
-  // (preserving in-process state mutations for built-ins like `cd`)
   if (stage_count == 1) {
     eos_tctx_t *tctx = eos_tctx_get();
     int saved_map[3] = {-1, -1, -1};
@@ -561,12 +697,9 @@ int __wrap_system(const char *cmdline) {
 
     close_stage_fds(opened_fds, -1, -1);
     free(exec_stages);
-    free(stages);
-    free(arena_buf);
     return ret;
   }
 
-  // Multi-stage pipeline: create pipes via pipefs between adjacent stages
   eos_tctx_t *parent_tctx = eos_tctx_get();
   for (int i = 0; i < stage_count - 1; i++) {
     int pfd[2] = {-1, -1};
@@ -574,22 +707,17 @@ int __wrap_system(const char *cmdline) {
       EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
       for (int j = 0; j < stage_count; j++) {
         if (exec_stages[j].pipe_in_fd >= 0) {
-          if (parent_tctx)
-            eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
+          if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
           close(exec_stages[j].pipe_in_fd);
         }
         if (exec_stages[j].pipe_out_fd >= 0) {
-          if (parent_tctx)
-            eos_tctx_reg_fd(exec_stages[j].pipe_out_fd, parent_tctx);
+          if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_out_fd, parent_tctx);
           close(exec_stages[j].pipe_out_fd);
         }
       }
       free(exec_stages);
-      free(stages);
-      free(arena_buf);
       return -1;
     }
-    // Detach pipe fds from parent thread context so child stage threads own them
     if (parent_tctx) {
       eos_tctx_unreg_fd(pfd[0], parent_tctx);
       eos_tctx_unreg_fd(pfd[1], parent_tctx);
@@ -609,22 +737,11 @@ int __wrap_system(const char *cmdline) {
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread,
-                            &exec_stages[i]);
+    int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
     pthread_attr_destroy(&attr);
 
     if (rc != 0) {
       EOS_LOGE("eos_system() failed to spawn thread for stage %d", i);
-      if (exec_stages[i].pipe_in_fd >= 0) {
-        if (parent_tctx)
-          eos_tctx_reg_fd(exec_stages[i].pipe_in_fd, parent_tctx);
-        close(exec_stages[i].pipe_in_fd);
-      }
-      if (exec_stages[i].pipe_out_fd >= 0) {
-        if (parent_tctx)
-          eos_tctx_reg_fd(exec_stages[i].pipe_out_fd, parent_tctx);
-        close(exec_stages[i].pipe_out_fd);
-      }
     } else {
       spawned[i] = true;
     }
@@ -641,9 +758,119 @@ int __wrap_system(const char *cmdline) {
   }
 
   free(exec_stages);
-  free(stages);
-  free(arena_buf);
   return last_status;
+}
+
+static int eval_ast(eos_ast_node_t *node) {
+  if (!node) return 0;
+
+  int status = 0;
+  eos_tctx_t *tctx = eos_tctx_get();
+
+  switch (node->type) {
+    case EOS_NODE_COMMAND:
+      status = eval_command_node(node);
+      break;
+    case EOS_NODE_SEQ:
+      eval_ast(node->left);
+      status = eval_ast(node->right);
+      break;
+    case EOS_NODE_AND:
+      status = eval_ast(node->left);
+      if (status == 0) {
+        status = eval_ast(node->right);
+      }
+      break;
+    case EOS_NODE_OR:
+      status = eval_ast(node->left);
+      if (status != 0) {
+        status = eval_ast(node->right);
+      }
+      break;
+    case EOS_NODE_BG: {
+      bg_wrapper_t *bg = malloc(sizeof(bg_wrapper_t));
+      if (bg) {
+        bg->node = node->left;
+        pthread_t t;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
+          free(bg);
+        }
+        pthread_attr_destroy(&attr);
+      }
+      status = 0;
+      break;
+    }
+  }
+
+  if (tctx) {
+    tctx->last_exit_status = status;
+  }
+  return status;
+}
+
+static void free_ast(eos_ast_node_t *node) {
+  if (!node) return;
+  free_ast(node->left);
+  free_ast(node->right);
+  free(node);
+}
+
+int __wrap_system(const char *cmdline) {
+  if (!cmdline) {
+    EOS_LOGE("eos_system() called with null cmdline");
+    return -1;
+  }
+
+  size_t cmd_len = strlen(cmdline);
+  char *arena_buf = malloc(cmd_len * 2 + 64);
+  if (!arena_buf) {
+    return -1;
+  }
+
+  int max_tokens = 128;
+  eos_token_t *tokens = calloc(max_tokens, sizeof(eos_token_t));
+  if (!tokens) {
+    free(arena_buf);
+    return -1;
+  }
+
+  char *cursor = (char *)cmdline;
+  char *arena = arena_buf;
+  bool is_op = false;
+  char *tok = NULL;
+  int num_tokens = 0;
+
+  while ((tok = next_shell_token(&cursor, &arena, &is_op)) != NULL) {
+    if (num_tokens >= max_tokens - 1) {
+      break;
+    }
+    tokens[num_tokens].text = tok;
+    tokens[num_tokens].is_op = is_op;
+    num_tokens++;
+  }
+
+  if (num_tokens == 0) {
+    free(tokens);
+    free(arena_buf);
+    return 0;
+  }
+
+  int idx = 0;
+  eos_ast_node_t *root = parse_expr(tokens, num_tokens, &idx, 0);
+  int ret = 0;
+  if (root) {
+    ret = eval_ast(root);
+    free_ast(root);
+  } else {
+    ret = -1;
+  }
+
+  free(tokens);
+  free(arena_buf);
+  return ret;
 }
 
 int eos_system(const char *cmdline) {
