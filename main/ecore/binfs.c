@@ -1,4 +1,5 @@
 #include "binfs.h"
+#include "asset.h"
 #include "emisc/fancymacro.h"
 #include <dirent.h>
 #include <errno.h>
@@ -9,14 +10,13 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-// TODO: use tmpfs instead
-
 // File descriptor entry for binfs
 
 typedef struct {
-  const eos_bin_t *bin; // Pointer to bin manifest
-  off_t offset;         // Current read position in manifest
-  bool in_use;          // Whether this FD is open
+  const eos_bin_t *bin;       // Pointer to bin manifest
+  const eos_asset_t *asset;   // Pointer to asset
+  off_t offset;               // Current read position
+  bool in_use;                // Whether this FD is open
 } binfs_fd_t;
 
 // ── Static FD Table ────────────────────────────────────────────
@@ -26,6 +26,11 @@ static binfs_fd_t binfs_fds[EOS_BINFS_MAX_FDS] = {0};
 // Get number of registered native bins
 static inline uint32_t binfs_bin_count(void) {
   return (uint32_t)(_eos_bins_end - _eos_bins_start);
+}
+
+// Get number of registered assets
+static inline uint32_t binfs_asset_count(void) {
+  return 1;
 }
 
 // Find bin by name (filename field)
@@ -47,18 +52,50 @@ static const eos_bin_t *binfs_get_bin(uint32_t idx) {
   return &_eos_bins_start[idx];
 }
 
+// Find asset by name (filename field)
+static const eos_asset_t *binfs_find_asset(const char *name) {
+  if (!name)
+    return NULL;
+
+  const eos_asset_t *asset = eos_get_init_asset();
+  if (strcmp(asset->filename, name) == 0)
+    return asset;
+  return NULL;
+}
+
+// Find asset by index
+static const eos_asset_t *binfs_get_asset(uint32_t idx) {
+  if (idx == 0)
+    return eos_get_init_asset();
+  return NULL;
+}
+
 // ── FD Management ──────────────────────────────────────────────
 
-static int binfs_fd_alloc(const eos_bin_t *bin) {
+static int binfs_fd_alloc_bin(const eos_bin_t *bin) {
   for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
     if (!binfs_fds[i].in_use) {
       binfs_fds[i].bin = bin;
+      binfs_fds[i].asset = NULL;
       binfs_fds[i].offset = 0;
       binfs_fds[i].in_use = true;
       return i;
     }
   }
-  return -1; // No free FDs
+  return -1;
+}
+
+static int binfs_fd_alloc_asset(const eos_asset_t *asset) {
+  for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
+    if (!binfs_fds[i].in_use) {
+      binfs_fds[i].bin = NULL;
+      binfs_fds[i].asset = asset;
+      binfs_fds[i].offset = 0;
+      binfs_fds[i].in_use = true;
+      return i;
+    }
+  }
+  return -1;
 }
 
 static binfs_fd_t *binfs_fd_get(int fd) {
@@ -73,6 +110,7 @@ static void binfs_fd_free(int fd) {
   if (fd >= 0 && fd < EOS_BINFS_MAX_FDS) {
     binfs_fds[fd].in_use = false;
     binfs_fds[fd].bin = NULL;
+    binfs_fds[fd].asset = NULL;
     binfs_fds[fd].offset = 0;
   }
 }
@@ -91,26 +129,40 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
     return -1;
   }
 
-  // Strip leading slash
+  // Strip leading slashes and optional bin/ or /bin/ prefix
   const char *name = path;
-  if (*name == '/')
+  while (*name == '/')
+    name++;
+  if (strncmp(name, "bin/", 4) == 0) {
+    name += 4;
+  }
+  while (*name == '/')
     name++;
 
   // Find the bin
   const eos_bin_t *bin = binfs_find_bin(name);
-  if (!bin) {
-    errno = ENOENT;
-    return -1;
+  if (bin) {
+    int fd = binfs_fd_alloc_bin(bin);
+    if (fd < 0) {
+      errno = ENFILE;
+      return -1;
+    }
+    return fd;
   }
 
-  // Allocate FD
-  int fd = binfs_fd_alloc(bin);
-  if (fd < 0) {
-    errno = ENFILE;
-    return -1;
+  // Find the asset
+  const eos_asset_t *asset = binfs_find_asset(name);
+  if (asset) {
+    int fd = binfs_fd_alloc_asset(asset);
+    if (fd < 0) {
+      errno = ENFILE;
+      return -1;
+    }
+    return fd;
   }
 
-  return fd;
+  errno = ENOENT;
+  return -1;
 }
 
 static int binfs_close(void *ctx, int fd) {
@@ -134,26 +186,30 @@ static ssize_t binfs_read(void *ctx, int fd, void *buf, size_t len) {
   if (!buf || len == 0)
     return 0;
 
-  const eos_bin_t *bin = binfs_fd->bin;
-  if (!bin)
-    return 0;
+  if (binfs_fd->bin) {
+    const eos_bin_t *bin = binfs_fd->bin;
+    off_t manifest_size = sizeof(eos_bin_t);
+    off_t remaining = manifest_size - binfs_fd->offset;
+    if (remaining <= 0)
+      return 0;
+    size_t to_read = (len < (size_t)remaining) ? len : (size_t)remaining;
+    uint8_t *src = (uint8_t *)bin + binfs_fd->offset;
+    memcpy(buf, src, to_read);
+    binfs_fd->offset += to_read;
+    return (ssize_t)to_read;
+  } else if (binfs_fd->asset) {
+    const eos_asset_t *asset = binfs_fd->asset;
+    off_t remaining = (off_t)asset->size - binfs_fd->offset;
+    if (remaining <= 0)
+      return 0;
+    size_t to_read = (len < (size_t)remaining) ? len : (size_t)remaining;
+    const uint8_t *src = asset->data + binfs_fd->offset;
+    memcpy(buf, src, to_read);
+    binfs_fd->offset += to_read;
+    return (ssize_t)to_read;
+  }
 
-  // Calculate how much we can read from the manifest
-  off_t manifest_size = sizeof(eos_bin_t);
-  off_t remaining = manifest_size - binfs_fd->offset;
-
-  if (remaining <= 0)
-    return 0; // EOF
-
-  // Clamp read to available data
-  size_t to_read = (len < remaining) ? len : remaining;
-
-  // Copy from manifest
-  uint8_t *src = (uint8_t *)bin + binfs_fd->offset;
-  memcpy(buf, src, to_read);
-
-  binfs_fd->offset += to_read;
-  return to_read;
+  return 0;
 }
 
 static ssize_t binfs_write(void *ctx, int fd, const void *buf, size_t len) {
@@ -169,7 +225,13 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     return -1;
   }
 
-  off_t manifest_size = sizeof(eos_bin_t);
+  off_t max_size = 0;
+  if (binfs_fd->bin) {
+    max_size = sizeof(eos_bin_t);
+  } else if (binfs_fd->asset) {
+    max_size = (off_t)binfs_fd->asset->size;
+  }
+
   off_t new_offset = 0;
 
   switch (whence) {
@@ -180,7 +242,7 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     new_offset = binfs_fd->offset + offset;
     break;
   case SEEK_END:
-    new_offset = manifest_size + offset;
+    new_offset = max_size + offset;
     break;
   default:
     errno = EINVAL;
@@ -190,8 +252,8 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
   // Clamp to valid range
   if (new_offset < 0)
     new_offset = 0;
-  if (new_offset > manifest_size)
-    new_offset = manifest_size;
+  if (new_offset > max_size)
+    new_offset = max_size;
 
   binfs_fd->offset = new_offset;
   return new_offset;
@@ -229,16 +291,29 @@ static struct dirent *binfs_readdir(void *ctx, DIR *pdir) {
     return NULL;
   }
 
-  const eos_bin_t *bin = binfs_get_bin(dir->bin_idx);
-  if (!bin)
-    return NULL; // End of directory
+  uint32_t bin_count = binfs_bin_count();
+  if (dir->bin_idx < bin_count) {
+    const eos_bin_t *bin = binfs_get_bin(dir->bin_idx);
+    if (bin) {
+      dir->entry.d_ino = dir->bin_idx;
+      dir->entry.d_type = DT_REG;
+      strlcpy(dir->entry.d_name, bin->filename, sizeof(dir->entry.d_name));
+      dir->bin_idx++;
+      return &dir->entry;
+    }
+  }
 
-  dir->entry.d_ino = dir->bin_idx;
-  dir->entry.d_type = DT_REG;
-  strlcpy(dir->entry.d_name, bin->filename, sizeof(dir->entry.d_name));
+  uint32_t asset_idx = dir->bin_idx - bin_count;
+  const eos_asset_t *asset = binfs_get_asset(asset_idx);
+  if (asset) {
+    dir->entry.d_ino = dir->bin_idx;
+    dir->entry.d_type = DT_REG;
+    strlcpy(dir->entry.d_name, asset->filename, sizeof(dir->entry.d_name));
+    dir->bin_idx++;
+    return &dir->entry;
+  }
 
-  dir->bin_idx++;
-  return &dir->entry;
+  return NULL; // End of directory
 }
 
 static long binfs_telldir(void *ctx, DIR *pdir) {
@@ -268,6 +343,7 @@ void eos_binfs_init(void) {
   for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
     binfs_fds[i].in_use = false;
     binfs_fds[i].bin = NULL;
+    binfs_fds[i].asset = NULL;
     binfs_fds[i].offset = 0;
   }
 
@@ -287,6 +363,6 @@ void eos_binfs_init(void) {
   };
   mkdir(EOS_BINFS_ROOT, 0755);
   esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
-  EOS_LOGI("binfs mounted at %s with %d registered bins", EOS_BINFS_ROOT,
-           binfs_bin_count());
+  EOS_LOGI("binfs mounted at %s with %d registered bins and %d registered assets", EOS_BINFS_ROOT,
+           binfs_bin_count(), binfs_asset_count());
 }

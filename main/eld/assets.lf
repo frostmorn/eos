@@ -1,0 +1,14 @@
+[sections:eos_assets]
+entries:
+    .eos_assets+
+
+[scheme:eos_assets_flash]
+entries:
+    eos_assets -> flash_rodata
+
+[mapping:eos_assets]
+archive: libmain.a
+
+entries:
+    * (eos_assets_flash);
+        eos_assets -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_assets)

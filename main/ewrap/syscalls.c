@@ -50,10 +50,51 @@ typedef struct {
 } eos_stage_exec_t;
 
 static void resolve_path(const char *name, char *out, size_t len) {
-  if (name[0] == '/') {
+  if (!name) {
+    strlcpy(out, "", len);
+    return;
+  }
+
+  // If absolute path or contains '/', use directly
+  if (name[0] == '/' || strchr(name, '/')) {
     strlcpy(out, name, len);
+    return;
+  }
+
+  // Get PATH environment variable (handled by system)
+  char *path_env = getenv("PATH");
+  if (!path_env || !path_env[0]) {
+    path_env = "/bin";
+  }
+
+  // Iterate through colon-separated PATH directories
+  char path_buf[EOS_MID_STR_LEN];
+  strlcpy(path_buf, path_env, sizeof(path_buf));
+
+  char *saveptr = NULL;
+  char *dir = strtok_r(path_buf, ":", &saveptr);
+  while (dir) {
+    char candidate[EOS_MID_STR_LEN];
+    snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
+
+    // Test if file exists / can be opened
+    FILE *f = fopen(candidate, "r");
+    if (f) {
+      fclose(f);
+      strlcpy(out, candidate, len);
+      return;
+    }
+
+    dir = strtok_r(NULL, ":", &saveptr);
+  }
+
+  // Default to first PATH directory combined with name if not found in PATH
+  strlcpy(path_buf, path_env, sizeof(path_buf));
+  dir = strtok_r(path_buf, ":", &saveptr);
+  if (dir) {
+    snprintf(out, len, "%s/%s", dir, name);
   } else {
-    snprintf(out, len, EOS_BINFS_ROOT "/%s", name);
+    strlcpy(out, name, len);
   }
 }
 
@@ -631,6 +672,53 @@ static void *bg_thread_entry(void *arg) {
   return NULL;
 }
 
+static bool check_shebang_script(const char *cmd, char *interp_out, size_t interp_out_len, char *interp_arg_out, size_t interp_arg_out_len) {
+  char path[EOS_MID_STR_LEN];
+  resolve_path(cmd, path, sizeof(path));
+
+  FILE *f = fopen(path, "r");
+  if (!f) return false;
+
+  char line[256];
+  if (!fgets(line, sizeof(line), f)) {
+    fclose(f);
+    return false;
+  }
+  fclose(f);
+
+  if (line[0] != '#' || line[1] != '!') {
+    return false;
+  }
+
+  char *nl = strchr(line, '\n');
+  if (nl) *nl = '\0';
+  char *cr = strchr(line, '\r');
+  if (cr) *cr = '\0';
+
+  char *interp = line + 2;
+  while (*interp == ' ' || *interp == '\t') interp++;
+
+  char *arg = interp;
+  while (*arg && *arg != ' ' && *arg != '\t') arg++;
+  if (*arg) {
+    *arg = '\0';
+    arg++;
+    while (*arg == ' ' || *arg == '\t') arg++;
+  } else {
+    arg = NULL;
+  }
+
+  snprintf(interp_out, interp_out_len, "%s", interp);
+  if (interp_arg_out) {
+    if (arg && *arg) {
+      snprintf(interp_arg_out, interp_arg_out_len, "%s", arg);
+    } else {
+      interp_arg_out[0] = '\0';
+    }
+  }
+  return true;
+}
+
 static int eval_command_node(eos_ast_node_t *node) {
   int stage_count = node->stage_count;
   if (stage_count == 0) return 0;
@@ -638,13 +726,52 @@ static int eval_command_node(eos_ast_node_t *node) {
   eos_stage_exec_t *exec_stages = calloc(stage_count, sizeof(eos_stage_exec_t));
   if (!exec_stages) return -1;
 
+  bool shebang[EOS_SYSTEM_MAX_STAGES] = {false};
+
   for (int i = 0; i < stage_count; i++) {
-    if (load_bin_manifest(node->stages[i].argv[0], &exec_stages[i].manifest) < 0) {
+    char interp[EOS_SMALL_STR_LEN];
+    char interp_arg[EOS_SMALL_STR_LEN];
+    int stage_argc = node->stages[i].argc;
+    char **stage_argv = node->stages[i].argv;
+    bool shebang_allocated = false;
+
+    if (check_shebang_script(stage_argv[0], interp, sizeof(interp), interp_arg, sizeof(interp_arg))) {
+      int extra = (interp_arg[0] != '\0') ? 2 : 1;
+      char **new_argv = calloc(stage_argc + extra + 1, sizeof(char *));
+      if (new_argv) {
+        int idx = 0;
+        new_argv[idx++] = strdup(interp);
+        if (interp_arg[0] != '\0') {
+          new_argv[idx++] = strdup(interp_arg);
+        }
+        new_argv[idx++] = strdup(stage_argv[0]);
+        for (int j = 1; j < stage_argc; j++) {
+          new_argv[idx++] = strdup(stage_argv[j]);
+        }
+        new_argv[idx] = NULL;
+        stage_argv = new_argv;
+        stage_argc = stage_argc + extra;
+        shebang_allocated = true;
+        shebang[i] = true;
+      }
+    }
+
+    if (load_bin_manifest(stage_argv[0], &exec_stages[i].manifest) < 0) {
+      if (shebang_allocated) {
+        for (int j = 0; j < stage_argc; j++) free(stage_argv[j]);
+        free(stage_argv);
+      }
+      for (int j = 0; j < i; j++) {
+        if (shebang[j]) {
+          for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
+          free(exec_stages[j].argv);
+        }
+      }
       free(exec_stages);
       return -1;
     }
-    exec_stages[i].argc = node->stages[i].argc;
-    exec_stages[i].argv = node->stages[i].argv;
+    exec_stages[i].argc = stage_argc;
+    exec_stages[i].argv = stage_argv;
     exec_stages[i].pipe_in_fd = -1;
     exec_stages[i].pipe_out_fd = -1;
     exec_stages[i].in_file = node->stages[i].in_file;
@@ -655,6 +782,8 @@ static int eval_command_node(eos_ast_node_t *node) {
     exec_stages[i].err_to_out = node->stages[i].err_to_out;
     exec_stages[i].out_to_err = node->stages[i].out_to_err;
   }
+
+  int ret = 0;
 
   if (stage_count == 1) {
     eos_tctx_t *tctx = eos_tctx_get();
@@ -671,7 +800,6 @@ static int eval_command_node(eos_ast_node_t *node) {
     fflush(stderr);
 
     int opened_fds[3] = {-1, -1, -1};
-    int ret = -1;
     if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
       ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
                                                 exec_stages[0].argv);
@@ -696,69 +824,82 @@ static int eval_command_node(eos_ast_node_t *node) {
     }
 
     close_stage_fds(opened_fds, -1, -1);
-    free(exec_stages);
-    return ret;
-  }
-
-  eos_tctx_t *parent_tctx = eos_tctx_get();
-  for (int i = 0; i < stage_count - 1; i++) {
-    int pfd[2] = {-1, -1};
-    if (pipe(pfd) < 0) {
-      EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
-      for (int j = 0; j < stage_count; j++) {
-        if (exec_stages[j].pipe_in_fd >= 0) {
-          if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
-          close(exec_stages[j].pipe_in_fd);
+  } else {
+    eos_tctx_t *parent_tctx = eos_tctx_get();
+    for (int i = 0; i < stage_count - 1; i++) {
+      int pfd[2] = {-1, -1};
+      if (pipe(pfd) < 0) {
+        EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
+        for (int j = 0; j < stage_count; j++) {
+          if (exec_stages[j].pipe_in_fd >= 0) {
+            if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
+            close(exec_stages[j].pipe_in_fd);
+          }
+          if (exec_stages[j].pipe_out_fd >= 0) {
+            if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_out_fd, parent_tctx);
+            close(exec_stages[j].pipe_out_fd);
+          }
         }
-        if (exec_stages[j].pipe_out_fd >= 0) {
-          if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_out_fd, parent_tctx);
-          close(exec_stages[j].pipe_out_fd);
+        for (int j = 0; j < stage_count; j++) {
+          if (shebang[j]) {
+            for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
+            free(exec_stages[j].argv);
+          }
         }
+        free(exec_stages);
+        return -1;
       }
-      free(exec_stages);
-      return -1;
+      if (parent_tctx) {
+        eos_tctx_unreg_fd(pfd[0], parent_tctx);
+        eos_tctx_unreg_fd(pfd[1], parent_tctx);
+      }
+      exec_stages[i].pipe_out_fd = pfd[1];
+      exec_stages[i + 1].pipe_in_fd = pfd[0];
     }
-    if (parent_tctx) {
-      eos_tctx_unreg_fd(pfd[0], parent_tctx);
-      eos_tctx_unreg_fd(pfd[1], parent_tctx);
-    }
-    exec_stages[i].pipe_out_fd = pfd[1];
-    exec_stages[i + 1].pipe_in_fd = pfd[0];
-  }
 
-  fflush(stdout);
-  fflush(stderr);
+    fflush(stdout);
+    fflush(stderr);
 
-  pthread_t threads[EOS_SYSTEM_MAX_STAGES] = {0};
-  bool spawned[EOS_SYSTEM_MAX_STAGES] = {false};
+    pthread_t threads[EOS_SYSTEM_MAX_STAGES] = {0};
+    bool spawned[EOS_SYSTEM_MAX_STAGES] = {false};
 
-  for (int i = 0; i < stage_count; i++) {
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+    for (int i = 0; i < stage_count; i++) {
+      pthread_attr_t attr;
+      pthread_attr_init(&attr);
+      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
 
-    int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
-    pthread_attr_destroy(&attr);
+      int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
+      pthread_attr_destroy(&attr);
 
-    if (rc != 0) {
-      EOS_LOGE("eos_system() failed to spawn thread for stage %d", i);
-    } else {
-      spawned[i] = true;
-    }
-  }
-
-  int last_status = -1;
-  for (int i = 0; i < stage_count; i++) {
-    if (spawned[i]) {
-      void *retval = NULL;
-      if (pthread_join(threads[i], &retval) == 0) {
-        last_status = (int)(intptr_t)retval;
+      if (rc != 0) {
+        EOS_LOGE("eos_system() failed to spawn thread for stage %d", i);
+      } else {
+        spawned[i] = true;
       }
     }
+
+    int last_status = -1;
+    for (int i = 0; i < stage_count; i++) {
+      if (spawned[i]) {
+        void *retval = NULL;
+        if (pthread_join(threads[i], &retval) == 0) {
+          last_status = (int)(intptr_t)retval;
+        }
+      }
+    }
+    ret = last_status;
   }
 
+  for (int i = 0; i < stage_count; i++) {
+    if (shebang[i]) {
+      for (int j = 0; j < exec_stages[i].argc; j++) {
+        free(exec_stages[i].argv[j]);
+      }
+      free(exec_stages[i].argv);
+    }
+  }
   free(exec_stages);
-  return last_status;
+  return ret;
 }
 
 static int eval_ast(eos_ast_node_t *node) {

@@ -24,8 +24,10 @@ void *eos_main(void *data) {
   eos_binfs_init();
 
   while (1) {
-    // Run shell
-    system("ush");
+    // Run init script (falls back to ush if init fails)
+    if (system("init.sh") < 0) {
+      system("ush");
+    }
     usleep(1000000);
   }
 }

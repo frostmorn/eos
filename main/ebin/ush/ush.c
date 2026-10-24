@@ -67,43 +67,57 @@ static int ush_readline(char *buf, size_t size) {
   }
 }
 
-static bool has_redirection_or_pipe(const char *line) {
-  bool in_squote = false;
-  bool in_dquote = false;
-  for (const char *p = line; *p; p++) {
-    if (*p == '\\' && p[1]) {
-      p++;
-      continue;
-    }
-    if (*p == '\'' && !in_dquote) {
-      in_squote = !in_squote;
-      continue;
-    }
-    if (*p == '"' && !in_squote) {
-      in_dquote = !in_dquote;
-      continue;
-    }
-    if (!in_squote && !in_dquote) {
-      if (*p == '|' || *p == '<' || *p == '>')
-        return true;
-    }
+static FILE *fopen_path(const char *name) {
+  if (!name) return NULL;
+  if (name[0] == '/' || strchr(name, '/')) {
+    return fopen(name, "r");
   }
-  return false;
-}
 
-static char *skip_ws(char *p) {
-  while (*p && isspace((unsigned char)*p))
-    p++;
-  return *p ? p : NULL;
-}
+  char *path_env = getenv("PATH");
+  if (!path_env || !path_env[0]) {
+    path_env = "/bin";
+  }
 
-static char *token_end(char *p) {
-  while (*p && !isspace((unsigned char)*p))
-    p++;
-  return p;
+  char path_buf[PATH_MAX];
+  strlcpy(path_buf, path_env, sizeof(path_buf));
+
+  char *saveptr = NULL;
+  char *dir = strtok_r(path_buf, ":", &saveptr);
+  while (dir) {
+    char candidate[PATH_MAX];
+    snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
+    FILE *f = fopen(candidate, "r");
+    if (f) return f;
+    dir = strtok_r(NULL, ":", &saveptr);
+  }
+
+  return fopen(name, "r");
 }
 
 int ush_main(int argc, char **argv) {
+  if (argc > 1) {
+    // Non-interactive script execution mode: read lines and pass to system()
+    FILE *f = fopen_path(argv[1]);
+    if (!f) {
+      perror("fopen script");
+      return -1;
+    }
+    char line[USH_LINE_MAX];
+    int ret = 0;
+    while (fgets(line, sizeof(line), f) != NULL) {
+      size_t len = strlen(line);
+      while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
+        line[--len] = '\0';
+      }
+      if (!line[0] || line[0] == '#')
+        continue;
+
+      ret = system(line);
+    }
+    fclose(f);
+    return ret;
+  }
+
   printf("\neos shell — type 'help' for available commands\n\n");
 
   char line[USH_LINE_MAX];
@@ -113,7 +127,6 @@ int ush_main(int argc, char **argv) {
     getcwd(path, PATH_MAX);
 
     printf(USH_WELCOME "%s > ", path);
-    // Why it's not flushed? 
     fflush(stdout);
 
     if (ush_readline(line, sizeof(line)) < 0)
@@ -126,72 +139,15 @@ int ush_main(int argc, char **argv) {
       break;
 
     if (!strcmp(line, "help")) {
-      // Execute tree via execv
-      char *help_argv[] = {"tree", "/bin", NULL};
-      if (execv("tree", help_argv) == 0) {
-        int status = 0;
-        eos_wait(&status);
-      }
-      continue;
-    }
-
-    fflush(stdout);
-
-    if (has_redirection_or_pipe(line)) {
-      int ret = system(line);
+      int ret = system("tree /bin");
       if (ret)
         printf("exit code: %d\n", ret);
       continue;
     }
 
-    char *buf = strdup(line);
-    int ret = 0;
-    if (buf) {
-      int c_argc = 0;
-      char *p = skip_ws(buf);
-      while (p) {
-        c_argc++;
-        char *end = token_end(p);
-        p = *end ? skip_ws(end) : NULL;
-      }
+    fflush(stdout);
 
-      if (c_argc > 0) {
-        char **c_argv = calloc(c_argc + 1, sizeof(*c_argv));
-        if (c_argv) {
-          c_argc = 0;
-          p = skip_ws(buf);
-          while (p) {
-            char *end = token_end(p);
-            c_argv[c_argc++] = p;
-            if (*end) {
-              *end = '\0';
-              p = skip_ws(end + 1);
-            } else
-              p = NULL;
-          }
-          c_argv[c_argc] = NULL;
-
-          if (execv(c_argv[0], c_argv) == 0) {
-            int status = 0;
-            if (eos_wait(&status) == 0) {
-              ret = status;
-            } else {
-              ret = -1;
-            }
-          } else {
-            perror("execv");
-            ret = -1;
-          }
-          free(c_argv);
-        } else {
-          ret = -1;
-        }
-      }
-      free(buf);
-    } else {
-      ret = -1;
-    }
-
+    int ret = system(line);
     if (ret)
       printf("exit code: %d\n", ret);
   }

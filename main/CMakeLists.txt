@@ -4,8 +4,7 @@ idf_component_register(
     SRCS ${EOS_SRCS}
     INCLUDE_DIRS "include_override" "."
     WHOLE_ARCHIVE 
-    LDFRAGMENTS "eld/driver.lf"
-    LDFRAGMENTS "eld/bin.lf"
+    LDFRAGMENTS "eld/driver.lf" "eld/bin.lf" "eld/assets.lf"
 )
 idf_build_set_property(
     COMPILE_OPTIONS "-DFD_SETSIZE=128" APPEND
