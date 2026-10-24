@@ -1,7 +1,7 @@
 TARGET=esp32s3
 FIRMWARE_ELF=build/eos.elf
 
-.PHONY: clean reconfigure build flash monitor symbols debug killdebug qemu
+.PHONY: clean reconfigure build flash monitor symbols debug killdebug qemu refine-docs
 
 help:
 	@echo "===================================================="
@@ -38,6 +38,7 @@ help:
 	@echo "===================================================="
 	@echo "  todo        - Make TODO list for EOS"
 	@echo "  research    - Make RESEARCH list for EOS"
+	@echo "  refine-docs - Refine documentation using Gemini (loads @DEVELOPMENT.md)"
 	@echo "===================================================="
 
 clean:
@@ -106,4 +107,8 @@ killdebug:
 qemu: build
 	@echo "Running QEMU..."
 	idf.py qemu
+
+refine-docs:
+	gemini --model gemini-3.1-flash-lite --approval-mode auto_edit -p "Load @DEVELOPMENT.md and refine documentation under docs/** specifically."
+
 
