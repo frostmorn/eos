@@ -9,12 +9,14 @@
 #include <unistd.h>
 #include "ecore/tmpfs.h"
 #include "ecore/devfs.h"
+#include "ecore/pipefs.h"
 
 #define EOS_MAIN_TASK_STACK_SIZE 8192
 
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {
   eos_tmpfs_init();
+  eos_pipefs_init();
   eos_capsmgr_init();
   eos_devtree_init();
   eos_devfs_init();

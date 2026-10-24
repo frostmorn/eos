@@ -67,6 +67,30 @@ static int ush_readline(char *buf, size_t size) {
   }
 }
 
+static bool has_redirection_or_pipe(const char *line) {
+  bool in_squote = false;
+  bool in_dquote = false;
+  for (const char *p = line; *p; p++) {
+    if (*p == '\\' && p[1]) {
+      p++;
+      continue;
+    }
+    if (*p == '\'' && !in_dquote) {
+      in_squote = !in_squote;
+      continue;
+    }
+    if (*p == '"' && !in_squote) {
+      in_dquote = !in_dquote;
+      continue;
+    }
+    if (!in_squote && !in_dquote) {
+      if (*p == '|' || *p == '<' || *p == '>')
+        return true;
+    }
+  }
+  return false;
+}
+
 static char *skip_ws(char *p) {
   while (*p && isspace((unsigned char)*p))
     p++;
@@ -112,6 +136,13 @@ int ush_main(int argc, char **argv) {
     }
 
     fflush(stdout);
+
+    if (has_redirection_or_pipe(line)) {
+      int ret = system(line);
+      if (ret)
+        printf("exit code: %d\n", ret);
+      continue;
+    }
 
     char *buf = strdup(line);
     int ret = 0;

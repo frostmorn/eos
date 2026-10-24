@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 // Simple utility designed to open file and write it's contents to stdout
 #define CAT_BUFFER_SIZE 512 // Standard size of sdcard sector
@@ -11,6 +12,15 @@
 int cat_main(int argc, char **argv){
 
   char buffer[CAT_BUFFER_SIZE];
+  if (argc < 2){
+    ssize_t count_read = 0;
+    while ((count_read = read(STDIN_FILENO, buffer, CAT_BUFFER_SIZE)) > 0){
+      fwrite(buffer, 1, (size_t)count_read, stdout);
+      vTaskDelay((pdMS_TO_TICKS(10)));
+    }
+    fflush(stdout);
+    return (count_read < 0) ? -1 : 0;
+  }
 
   if (argc < 2){
     printf("cat: Usage cat <filename>\n");
@@ -37,6 +47,7 @@ int cat_main(int argc, char **argv){
   }
 
   fclose(fp);
+  fflush(stdout);
 
   return 0;
 }

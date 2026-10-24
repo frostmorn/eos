@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <pthread.h>
+#include <sys/select.h>
 
 typedef struct eos_tctx_t eos_tctx_t;
 struct eos_tctx_t {
@@ -22,6 +23,8 @@ struct eos_tctx_t {
   kvec_t(DIR *) dirs;
   // Allocated memory blocks
   kvec_t(void *) memblocks;
+  // Per-thread virtual descriptor mapping (index = virtual fd, value = real VFS fd or -1)
+  int fd_map[FD_SETSIZE];
 };
 
 // Retrieves current thread context
@@ -30,6 +33,9 @@ eos_tctx_t *eos_tctx_get();
 // FD management
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx);
 void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx);
+
+// FD redirection / mapping
+int eos_tctx_resolve_fd(int fd);
 
 // DIR management
 void eos_tctx_reg_dir(DIR *dir, eos_tctx_t *tctx);
@@ -45,6 +51,7 @@ typedef struct {
   void *(*thread_start)(void *);
   void *thread_arg;
   char cwd[PATH_MAX];
+  int stdio_fds[3];
 } eos_twrap_t;
 
 // Preapare data for thread wrap

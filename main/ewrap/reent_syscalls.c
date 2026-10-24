@@ -3,14 +3,18 @@
 #include <dirent.h>
 #include <reent.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include "ecore/fapi.h"
 #include "pregen.h"
 #include <errno.h>
+#include <stdbool.h>
 // (^_^)==\~ WRAPPERS
 
 // most of magic is hidden in flags passed to linker inside CMakeLists.txt
 // allowing us to wrap around almost everything we want. Here we do use it
-// for solving path traversal problem
+// for solving path traversal problem and per-thread file descriptor redirection
 
 // Call definitions provided in components/vfs/vfs_calls.c
 
@@ -18,6 +22,10 @@
 
 extern int __real__open_r(struct _reent *r, char *path, int flags, int mode);
 extern int __real__close_r(struct _reent *r, int fd);
+extern ssize_t __real__read_r(struct _reent *r, int fd, void *dst, size_t size);
+extern ssize_t __real__write_r(struct _reent *r, int fd, const void *data, size_t size);
+extern off_t __real__lseek_r(struct _reent *r, int fd, off_t size, int mode);
+extern int __real__fstat_r(struct _reent *r, int fd, struct stat *st);
 extern int __real__stat_r(struct _reent *r, char *path, struct stat *st);
 extern int __real__link_r(struct _reent *r, char *n1, char *n2);
 extern int __real__unlink_r(struct _reent *r, char *path);
@@ -35,20 +43,114 @@ int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
   _path = eos_fapi_path_resolve(path, _path);
   int fd = __real__open_r(r, _path, flags, mode);
 
-  if (fd >= 0)
-    eos_tctx_reg_fd(fd, eos_tctx_get());
+  if (fd >= 0) {
+    eos_tctx_t *tctx = eos_tctx_get();
+    if (tctx && fd < FD_SETSIZE) {
+      tctx->fd_map[fd] = -1;
+    }
+    eos_tctx_reg_fd(fd, tctx);
+  }
 
   return fd;
 }
 
-int __wrap__close_r(struct _reent *r, int fd){
+int __wrap__close_r(struct _reent *r, int fd) {
+  eos_tctx_t *tctx = eos_tctx_get();
+
+  // If closing a virtual redirected descriptor (e.g. dup2 target),
+  // clear its mapping without closing the underlying target unless owned.
+  if (tctx && fd >= 0 && fd < FD_SETSIZE && tctx->fd_map[fd] >= 0) {
+    tctx->fd_map[fd] = -1;
+    return 0;
+  }
 
   int ret = __real__close_r(r, fd);
-  
-  if (ret == 0)
-    eos_tctx_unreg_fd(fd, eos_tctx_get());
+
+  if (ret == 0 && tctx) {
+    for (int i = 0; i < FD_SETSIZE; i++) {
+      if (tctx->fd_map[i] == fd) {
+        tctx->fd_map[i] = -1;
+      }
+    }
+    eos_tctx_unreg_fd(fd, tctx);
+  }
 
   return ret;
+}
+
+ssize_t __wrap__read_r(struct _reent *r, int fd, void *dst, size_t size) {
+  return __real__read_r(r, eos_tctx_resolve_fd(fd), dst, size);
+}
+
+ssize_t __wrap__write_r(struct _reent *r, int fd, const void *data, size_t size) {
+  return __real__write_r(r, eos_tctx_resolve_fd(fd), data, size);
+}
+
+off_t __wrap__lseek_r(struct _reent *r, int fd, off_t size, int mode) {
+  return __real__lseek_r(r, eos_tctx_resolve_fd(fd), size, mode);
+}
+
+int __wrap__fstat_r(struct _reent *r, int fd, struct stat *st) {
+  return __real__fstat_r(r, eos_tctx_resolve_fd(fd), st);
+}
+
+int dup2(int oldfd, int newfd) {
+  if (oldfd < 0 || oldfd >= FD_SETSIZE || newfd < 0 || newfd >= FD_SETSIZE) {
+    errno = EBADF;
+    return -1;
+  }
+
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx) {
+    errno = EBADF;
+    return -1;
+  }
+
+  int real_old = eos_tctx_resolve_fd(oldfd);
+  if (newfd == real_old) {
+    tctx->fd_map[newfd] = -1;
+  } else {
+    tctx->fd_map[newfd] = real_old;
+  }
+
+  return newfd;
+}
+
+int dup(int oldfd) {
+  if (oldfd < 0 || oldfd >= FD_SETSIZE) {
+    errno = EBADF;
+    return -1;
+  }
+
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx) {
+    errno = EBADF;
+    return -1;
+  }
+
+  int real_old = eos_tctx_resolve_fd(oldfd);
+
+  // Allocate a virtual descriptor slot from the top down to avoid
+  // colliding with ESP-IDF VFS descriptor numbers.
+  for (int vfd = FD_SETSIZE - 1; vfd >= 3; vfd--) {
+    if (tctx->fd_map[vfd] >= 0)
+      continue;
+
+    bool in_use = false;
+    for (size_t i = 0; i < kv_size(tctx->fds); i++) {
+      if (kv_A(tctx->fds, i) == vfd) {
+        in_use = true;
+        break;
+      }
+    }
+    if (!in_use) {
+      tctx->fd_map[vfd] = real_old;
+      return vfd;
+    }
+  }
+
+  errno = EMFILE;
+  return -1;
 }
 
 int __wrap__stat_r(struct _reent *r, char *path, struct stat *st) {

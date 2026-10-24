@@ -5,6 +5,8 @@
 #include "freertos/task.h"
 #include <esp_heap_caps.h>
 #include <string.h>
+#include <stdbool.h>
+#include <unistd.h>
 
 // This requires system wide TLS INDEX register
 #define EOS_TCTX_TLS_INDEX 1 // 0 is reserved
@@ -30,6 +32,10 @@ static eos_tctx_t *eos_tctx_alloc() {
   kv_init(tctx->fds);
   kv_init(tctx->dirs);
   kv_init(tctx->memblocks);
+
+  for (int i = 0; i < FD_SETSIZE; i++) {
+    tctx->fd_map[i] = -1;
+  }
 
   return tctx;
 }
@@ -71,17 +77,27 @@ eos_tctx_t *eos_tctx_get(void) {
   // can be not initialized yet
   if (!tctx) {
     tctx = eos_tctx_alloc();
+    if (!tctx) {
+      EOS_LOGE("Can't initialize thread context\n");
+      abort();
+    }
     strcpy(tctx->cwd, "/");
+    eos_tctx_set(tctx);
   }
-
-  if (!tctx) {
-    EOS_LOGE("Can't initialize thread context\n");
-    abort();
-  }
-
-  eos_tctx_set(tctx);
 
   return tctx;
+}
+
+int eos_tctx_resolve_fd(int fd) {
+  if (fd < 0 || fd >= FD_SETSIZE)
+    return fd;
+
+  eos_tctx_t *tctx = eos_tctx_get();
+  if (!tctx)
+    return fd;
+
+  int mapped = tctx->fd_map[fd];
+  return (mapped >= 0) ? mapped : fd;
 }
 
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx) {
@@ -216,8 +232,14 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
 
   if (cur_tctx) {
     strcpy(twrap->cwd, cur_tctx->cwd);
+    for (int i = 0; i < 3; i++) {
+      twrap->stdio_fds[i] = cur_tctx->fd_map[i];
+    }
   } else {
     strcpy(twrap->cwd, "/");
+    for (int i = 0; i < 3; i++) {
+      twrap->stdio_fds[i] = -1;
+    }
   }
 
   return twrap;
@@ -243,6 +265,9 @@ void *eos_twrap_pthread(void *data) {
   }
   // Copy inherit data
   strcpy(tctx->cwd, twrap->cwd);
+  for (int i = 0; i < 3; i++) {
+    tctx->fd_map[i] = twrap->stdio_fds[i];
+  }
   eos_tctx_set(tctx);
 
   // Cleanup twrap

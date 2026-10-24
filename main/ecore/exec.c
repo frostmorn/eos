@@ -1,7 +1,9 @@
 #include "ecore/bin.h"
 #include "emisc/fancymacro.h"
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdarg.h>
 #include <errno.h>
@@ -40,6 +42,9 @@ static void *exec_thread_entry(void *arg) {
   if (ex && ex->bin && ex->bin->entry_point) {
     ret = ex->bin->entry_point(ex->argc, ex->argv);
   }
+
+  fflush(stdout);
+  fflush(stderr);
 
   if (ex) {
     for (int i = 0; i < ex->argc; i++) {

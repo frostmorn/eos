@@ -15,6 +15,14 @@ int execvp(const char *file, char *const argv[]);
 // POSIX wait for child thread execution
 int eos_wait(int *status);
 
+// POSIX pipe and file descriptor duplication
+int pipe(int pipefd[2]);
+int dup(int oldfd);
+int dup2(int oldfd, int newfd);
+
+// Explicit alias for EOS system() implementation
+int eos_system(const char *cmdline);
+
 #ifdef __cplusplus
 }
 #endif
