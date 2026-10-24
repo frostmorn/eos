@@ -7,6 +7,7 @@ EOS features an in-memory execution environment (`binfs` and `ecore/exec.c`) for
 ## 1. Statically Linked Binaries (`bin.h`, `.eos_bins`)
 
 Applications residing in `main/ebin/` are compiled and registered at compile time into a dedicated ELF linker section (`.eos_bins`) using manifest structures (`eos_bin_t`):
+*(Tip: New binary applications can be quickly scaffolded using `make bin`, which invokes `tools/codegen.py` to generate templates under `main/ebin/`).*
 
 ```c
 typedef struct {

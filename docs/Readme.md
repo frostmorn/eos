@@ -1,22 +1,22 @@
-# EOS Documentation Index
+# EOS Documentation Center
 
-Welcome to the EOS (ESP Operating System) documentation center. Below is the comprehensive index of all architectural guides, scope definitions, and subsystem specifications.
+Welcome to the **EOS (ESP Operating System)** documentation center. Below is the comprehensive index of all architectural guides, subsystem specifications, and driver scopes for the ESP32-S3 lightweight operating system and Unified Device Model.
 
 ---
 
-## Topic Index
+## Architecture & Subsystem Guides
 
-*   [Kernel Core Subsystems & Unified Device Model](./kernel-core-scope.md) — Device tree hierarchy, driver abstraction layer, capability manager, thread contexts, and path resolution.
-*   [Bus Drivers & Attachment Policies](./bus-driver-scope.md) — Topological roles, parent-child permissions, locking mechanisms, and reserved ioctl ranges.
-*   [Display Drivers & Framebuffer Architecture](./display-scope.md) — Frame formats, display hot-swapping, and scan-out buffer rendering.
-*   [Input Drivers & Event Architecture](./input-driver-scope.md) — Input event data models, keyboard/keypad drivers, and polling IOCTLs.
-*   [Sound & Audio Codec Drivers](./sound-driver-scope.md) — PCM audio streaming, I2S/SPI/I2C peripheral integration, and device control.
-*   [Storage & Block Device Drivers](./storage-driver-scope.md) — SD/SDIO cards, sector-level access, MBR/GPT disk partitioning, and `off_t` handling.
-*   [Virtual Filesystem (VFS) & Subsystems](./filesystem-driver-scope.md) — `devfs` hierarchical node mapping and `binfs` statically linked native application execution.
-*   [BinFS, Native Binaries & Execution](./binfs-and-binaries-scope.md) — Statically linked ELF linker sections (`.eos_bins`), process execution (`exec.c`), and microshell (`ush`).
-*   [POSIX, FreeRTOS & ESP-IDF Wrappers](./wrappers-architecture.md) — System call interception, memory leak tracking (`heap_caps.c`), path remapping, and SDL 1.2/2.0 compatibility layers.
-*   [Board Porting & Hardware Targets](./board-porting-scope.md) — Target board configurations (`eboard/`), hardware initialization routines, and pin allocation rules.
-*   [Development & Build Guide](../DEVELOPMENT.md) — Environment prerequisites, board configuration tools (`setboard.py`), and QEMU execution workflows.
+*   [Kernel Core Subsystems & Unified Device Model](./kernel-core-scope.md) — Device tree hierarchy (`dev.c`), driver abstraction (`driver.c`), capability manager (`capsmgr.c`), thread context tracking (`threadctx.c`), and path resolution (`fapi.c`).
+*   [Bus Drivers & Attachment Policies](./bus-driver-scope.md) — Topological bus roles (`root`, `spi`, `i2c`, `sdio`, `usb`, `gpio`, `onewire`), parent-child attachment permissions, synchronization locking protocols, and reserved ioctl ranges.
+*   [Display Drivers & Framebuffer Architecture](./display-scope.md) — Frame formats (`st7789`), scan-out buffer rendering, display window ioctl controls, and VFS integration.
+*   [Input Drivers & Event Architecture](./input-driver-scope.md) — Standardized input event data models (`eos_input_event_t`), keyboard/keypad active-low polling, and non-blocking IOCTLs.
+*   [Sound & Audio Codec Drivers](./sound-driver-scope.md) — PCM audio streaming (`max98357`), I2S/SPI/I2C peripheral integration, and hardware configuration ioctls.
+*   [Storage & Block Device Drivers](./storage-driver-scope.md) — SD/SDIO block-level access, flash storage, disk partitioning (`diskpart.c`), `off_t` limitations, and mandatory capability ioctls.
+*   [Virtual Filesystem (VFS) & Subsystems](./filesystem-driver-scope.md) — Root `tmpfs`, hierarchical `devfs` node mapping, and executable `binfs` integration.
+*   [BinFS, Native Binaries & Execution](./binfs-and-binaries-scope.md) — Statically linked ELF linker sections (`.eos_bins`), process execution (`exec.c`), microshell (`ush.c`), system call interception, and code generation (`make bin`).
+*   [POSIX, FreeRTOS & ESP-IDF Wrappers](./wrappers-architecture.md) — Linker-wrapped syscalls (`-Wl,--wrap`), heap allocation leak tracking (`heap_caps.c`), path remapping, and SDL 1.2/2.0 compatibility layers.
+*   [Board Porting & Hardware Targets](./board-porting-scope.md) — Target board configurations (`lilka_v23`, `esp32s3_qemu`, `jc4880p443c_i_w_y`), board initialization (`eos_board_init`), and setup scripts (`tools/setboard.py`, `tools/codegen.py`).
+*   [Development & Build Guide](../DEVELOPMENT.md) — Environment prerequisites, ESP-IDF export, compilation commands (`make build`, `make flash`, `make qemu`), analysis tools, and workspace memory & skill guidelines.
 
 ---
 [Back to Project Root](../Readme.md)

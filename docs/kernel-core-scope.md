@@ -8,7 +8,7 @@ The EOS kernel core (`main/ecore/`) implements a lightweight, POSIX-compliant op
 
 EOS organizes all hardware and virtual devices into a hierarchical **Device Tree** modeled as an n-ary tree using `emisc/fancytree.h`. 
 *   **Root Anchor (`root`):** The root node (`eos_devtree_root()`) represents the logical top of the device tree, managed by the root bus driver (`edriver/bus/root/root.c`).
-*   **Parent-Child Attachment:** Devices attach hierarchically via `eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent)`. Before attachment, EOS verifies that the parent driver has `is_bus == true` (or validates via `attach_req`) and queries the parent bus using ioctl attachment protocols.
+*   **Parent-Child Attachment:** Devices attach hierarchically via `eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent)`. Before attachment, EOS verifies that the parent driver has `is_bus == true` (or validates via `attach_req`) and queries the parent bus using ioctl attachment protocols (`EOS_BUS_IOCTL_KID_ATTACH`).
 *   **Dynamic Indexing & Naming:** Upon successful attachment, EOS automatically assigns a per-scope stable device ID (`eos_dev_assign_id`) and constructs a canonical device name (`eos_dev_assign_name`, e.g., `fb0`, `gpio`, `sd0`) used by `devfs`.
 *   **Recursive Detachment:** Detaching a device (`eos_dev_detach`) recursively detaches all child nodes, shuts down drivers, reporphans orphaned child nodes if permitted, and zeroes device slots for reuse.
 
@@ -20,6 +20,7 @@ Every driver in EOS (`eos_drv_t`) is statically registered at compile-time into 
 *   **Unified VFS Mapping:** Each driver exposes standard POSIX file operations (`open`, `close`, `read`, `write`, `lseek`, `ioctl`, `fstat`, `stat`, `opendir`, `readdir`, etc.).
 *   **Dispatch Wrappers:** `ecore/driver.c` provides safe dispatcher wrappers (`eos_drv_read`, `eos_drv_write`, `eos_drv_ioctl`, etc.) that handle null checks, error logging (`EOS_LOGW`), and errno setting (`ENOSYS`).
 *   **Cross-Driver Communication (`ioctl`):** Drivers interact with parent buses or sibling subsystems via `eos_dev_ioctl_call` and framework-reserved ioctl commands (e.g., `EOS_IOCTL_GET_DEV`, `EOS_STORAGE_IOCTL_GET_SECTOR_SIZE`).
+*   **Scaffolding & Analysis:** New drivers can be generated interactively via `make driver` (see `tools/codegen.py` and [Development Guide](../DEVELOPMENT.md)).
 
 ---
 
@@ -49,4 +50,4 @@ The File API helper module (`fapi`) provides robust path normalization and resol
 *   **Core-Safe Scratch Buffers:** Multi-core safe static buffer pools (`eos_fapi_buffer`) prevent race conditions during nested path transformations across CPU cores.
 
 ---
-[Back to Documentation Index](./Readme.md)
+[Back to Documentation Index](./Readme.md) | [Development Guide](../DEVELOPMENT.md)

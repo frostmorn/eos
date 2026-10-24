@@ -30,12 +30,13 @@ Every board defines a `void eos_board_init()` function called during early OS bo
 
 ---
 
-## 4. Adding a New Board Port
+## 4. Adding a New Board Port & Drivers
 
 1.  **Directory Structure:** Create a new folder under `main/eboard/<board_name>/`.
 2.  **Configuration:** Provide a tailored `sdkconfig` file optimized for the target chip and peripherals.
 3.  **Initialization Routine:** Implement `void eos_board_init()` in `<board_name>.c`, guarded by `#ifdef EOS_TARGET_<BOARD_NAME>`.
 4.  **Register Target:** Update `tools/setboard.py` and CMake rules to recognize the new board option.
+5.  **Driver Scaffolding:** Use `make driver` (`tools/codegen.py`) to interactively generate new hardware driver templates under `main/edriver/`.
 
 ---
 [Back to Documentation Index](./Readme.md)

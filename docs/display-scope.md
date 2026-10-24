@@ -20,9 +20,11 @@ write(fd, frame_buffer, width * height * 2);
 
 ---
 
+## Lifecycle Operations
+
 *   **`init(eos_dev_t *dev)`:** Initializes the TFT controller via SPI/parallel register configuration, allocating panel state and DMA buffers.
 *   **`shutdown(eos_dev_t *dev)`:** Powers off the display panel, de-initializes hardware interfaces, and releases allocated GPIO capability pins.
-*   **Hot-swapping:** Drivers should support seamless transition of display targets and window sizing.
+*   **Hot-swapping:** Drivers support seamless transition of display targets and window sizing across panel switches.
 
 ---
 
@@ -30,7 +32,7 @@ write(fd, frame_buffer, width * height * 2);
 
 1.  **Placement:** Create your driver implementation under `main/edriver/display/<panel>/<panel>.c`.
 2.  **Guarding:** Guard the driver with an appropriate configuration macro (e.g., `EOS_DRIVER_DISPLAY_<NAME>_ENABLED`).
-3.  **Registration:** Register the driver using the standard macro (e.g., `EOS_DRIVER_REG(display, <name>, priority)`).
+3.  **Registration:** Register the driver using the standard macro (`EOS_DRIVER_REG(display, <name>, priority)`).
 
 ---
-[Back to EOS Project Index](../Readme.md) | [See Sound Drivers](./sound-driver-scope.md)
+[Back to Documentation Index](./Readme.md) | [See Sound Drivers](./sound-driver-scope.md)
