@@ -48,6 +48,18 @@ void eos_board_init() {
       {"clock_speed_hz", EOS_CFG_INT, .val.i = SPI_MASTER_FREQ_20M}, {NULL}};
   eos_dev_attach(sd, spi);
 
+#ifdef EOS_DRV_BUS_I2C_ENABLED
+  // ===================== I2C bus =====================
+  // Lilka v2.3 12-pin expansion header (SDA=GPIO13, SCL=GPIO14)
+  eos_dev_t *i2c = eos_dev_alloc();
+  i2c->driver = eos_drv_find("bus", "i2c");
+  i2c->pins = (eos_pin_t[]){{"sda", 13}, {"scl", 14}, {NULL, 0}};
+  i2c->cfg = (eos_cfg_t[]){{"port", EOS_CFG_INT, .val.i = 0},
+                           {"clk_speed", EOS_CFG_INT, .val.i = 400000},
+                           {NULL}};
+  eos_dev_attach(i2c, eos_devtree_root());
+#endif
+
   // ================== GPIO bus =======================
   eos_dev_t *gpio = eos_dev_alloc();
   gpio->driver = eos_drv_find("bus", "gpio");

@@ -20,11 +20,8 @@
 #include "ecore/log.h"
 
 typedef struct {
-  i2c_master_bus_handle_t i2c_bus;
   esp_lcd_panel_io_handle_t tp_io;
   esp_lcd_touch_handle_t tp;
-  int sda_pin;
-  int scl_pin;
   int rst_pin;
   int int_pin;
   uint16_t width;
@@ -39,21 +36,12 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   if (!st) return false;
   dev->state = st;
 
-  int sda_pin = eos_pin_get_no(dev->pins, "sda");
-  if (sda_pin < 0) sda_pin = eos_pin_get_no(dev->pins, "sda_io_num");
-  if (sda_pin < 0) sda_pin = 7;
-
-  int scl_pin = eos_pin_get_no(dev->pins, "scl");
-  if (scl_pin < 0) scl_pin = eos_pin_get_no(dev->pins, "scl_io_num");
-  if (scl_pin < 0) scl_pin = 8;
-
   int rst_pin = eos_pin_get_no(dev->pins, "rst");
   if (rst_pin < 0) rst_pin = eos_pin_get_no(dev->pins, "rst_io_num");
 
   int int_pin = eos_pin_get_no(dev->pins, "int");
   if (int_pin < 0) int_pin = eos_pin_get_no(dev->pins, "int_io_num");
 
-  int i2c_port = eos_cfg_get_i(dev->cfg, "port", I2C_NUM_0);
   int clk_speed = eos_cfg_get_i(dev->cfg, "clk_speed", 400000);
   uint16_t width = (uint16_t)eos_cfg_get_i(dev->cfg, "width", 480);
   uint16_t height = (uint16_t)eos_cfg_get_i(dev->cfg, "height", 800);
@@ -62,73 +50,60 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   bool mirror_x = (bool)eos_cfg_get_i(dev->cfg, "mirror_x", 0);
   bool mirror_y = (bool)eos_cfg_get_i(dev->cfg, "mirror_y", 0);
 
-  st->sda_pin = sda_pin;
-  st->scl_pin = scl_pin;
   st->rst_pin = rst_pin;
   st->int_pin = int_pin;
   st->width = width;
   st->height = height;
 
-  // Claim GPIOs
-  if (sda_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, sda_pin, dev)) {
+  // Obtain I2C master bus handle from parent I2C bus driver
+  if (!dev->parent) {
+    EOS_LOGE("gt911: no parent I2C bus device attached");
     free(st);
     dev->state = NULL;
     return false;
   }
-  if (scl_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, scl_pin, dev)) {
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
+
+  i2c_master_bus_handle_t bus_handle = NULL;
+  if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_GET_BUS_HANDLE,
+                         &bus_handle) != 0 ||
+      !bus_handle) {
+    EOS_LOGE("gt911: failed to query I2C bus handle from parent");
     free(st);
     dev->state = NULL;
     return false;
   }
+
+  // Probe touch controller on the I2C bus
+  if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_PROBE, addr,
+                         50) == 0) {
+    EOS_LOGI("gt911: detected device at I2C address 0x%02X", (unsigned)addr);
+  } else {
+    EOS_LOGW("gt911: probe at I2C address 0x%02X returned NACK (proceeding with init)",
+             (unsigned)addr);
+  }
+
+  // Claim reset and interrupt GPIOs if configured
   if (rst_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev)) {
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
-    if (scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, scl_pin, dev);
     free(st);
     dev->state = NULL;
     return false;
   }
   if (int_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, int_pin, dev)) {
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
-    if (scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, scl_pin, dev);
     if (rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
     free(st);
     dev->state = NULL;
     return false;
   }
 
-  // Create I2C master bus
-  i2c_master_bus_config_t bus_cfg = {
-      .clk_source = I2C_CLK_SRC_DEFAULT,
-      .sda_io_num = sda_pin,
-      .scl_io_num = scl_pin,
-      .i2c_port = i2c_port,
-      .glitch_ignore_cnt = 7,
-  };
-  esp_err_t err = i2c_new_master_bus(&bus_cfg, &st->i2c_bus);
-  if (err != ESP_OK) {
-    EOS_LOGE("gt911: i2c_new_master_bus failed: %s", esp_err_to_name(err));
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
-    if (scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, scl_pin, dev);
-    if (rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
-    if (int_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, int_pin, dev);
-    free(st);
-    dev->state = NULL;
-    return false;
-  }
-
-  // Create panel IO for GT911
+  // Create panel IO for GT911 on the shared I2C bus
   esp_lcd_panel_io_i2c_config_t tp_io_cfg = ESP_LCD_TOUCH_IO_I2C_GT911_CONFIG();
   tp_io_cfg.scl_speed_hz = clk_speed;
   if (addr != 0) {
     tp_io_cfg.dev_addr = addr;
   }
-  err = esp_lcd_new_panel_io_i2c(st->i2c_bus, &tp_io_cfg, &st->tp_io);
+  esp_err_t err = esp_lcd_new_panel_io_i2c(bus_handle, &tp_io_cfg, &st->tp_io);
   if (err != ESP_OK) {
     EOS_LOGE("gt911: esp_lcd_new_panel_io_i2c failed: %s", esp_err_to_name(err));
-    i2c_del_master_bus(st->i2c_bus);
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
-    if (scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, scl_pin, dev);
     if (rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
     if (int_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, int_pin, dev);
     free(st);
@@ -156,9 +131,6 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   if (err != ESP_OK) {
     EOS_LOGE("gt911: esp_lcd_touch_new_i2c_gt911 failed: %s", esp_err_to_name(err));
     esp_lcd_panel_io_del(st->tp_io);
-    i2c_del_master_bus(st->i2c_bus);
-    if (sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, sda_pin, dev);
-    if (scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, scl_pin, dev);
     if (rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
     if (int_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, int_pin, dev);
     free(st);
@@ -166,8 +138,8 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
     return false;
   }
 
-  EOS_LOGI("gt911: touch controller initialized (%ux%u, SDA=%d, SCL=%d)",
-           (unsigned)width, (unsigned)height, sda_pin, scl_pin);
+  EOS_LOGI("gt911: touch controller initialized via I2C bus (%ux%u, addr=0x%02X)",
+           (unsigned)width, (unsigned)height, (unsigned)addr);
   return true;
 }
 
@@ -181,12 +153,7 @@ void driver_input_gt911_shutdown(eos_dev_t *dev) {
   if (st->tp_io) {
     esp_lcd_panel_io_del(st->tp_io);
   }
-  if (st->i2c_bus) {
-    i2c_del_master_bus(st->i2c_bus);
-  }
 
-  if (st->sda_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->sda_pin, dev);
-  if (st->scl_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->scl_pin, dev);
   if (st->rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->rst_pin, dev);
   if (st->int_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->int_pin, dev);
 
@@ -297,6 +264,20 @@ ssize_t driver_input_gt911_read(eos_dev_t *dev, int fd, void *dst, size_t size) 
   }
 }
 
+int driver_input_gt911_open(eos_dev_t *dev, const char *path, int flags, int mode) {
+  (void)dev;
+  (void)path;
+  (void)flags;
+  (void)mode;
+  return 0;
+}
+
+int driver_input_gt911_close(eos_dev_t *dev, int fd) {
+  (void)dev;
+  (void)fd;
+  return 0;
+}
+
 EOS_DRV_ATTR eos_drv_t driver_input_gt911 = {
     EOS_DRV_INIT,
     .scope = "input",
@@ -304,6 +285,8 @@ EOS_DRV_ATTR eos_drv_t driver_input_gt911 = {
     .devname = "touch",
     .init = driver_input_gt911_init,
     .shutdown = driver_input_gt911_shutdown,
+    .open = driver_input_gt911_open,
+    .close = driver_input_gt911_close,
     .read = driver_input_gt911_read,
     .ioctl = driver_input_gt911_ioctl,
 };

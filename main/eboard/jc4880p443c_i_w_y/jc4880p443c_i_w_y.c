@@ -22,19 +22,30 @@ void eos_board_init() {
                                {NULL}};
   eos_dev_attach(display, eos_devtree_root());
 
+#ifdef EOS_DRV_BUS_I2C_ENABLED
+  // ===================== I2C bus =====================
+  // Shared between touch controller (GT911) and audio codec (ES8311)
+  eos_dev_t *i2c = eos_dev_alloc();
+  i2c->driver = eos_drv_find("bus", "i2c");
+  i2c->pins = (eos_pin_t[]){{"sda", 7}, {"scl", 8}, {NULL, 0}};
+  i2c->cfg = (eos_cfg_t[]){{"port", EOS_CFG_INT, .val.i = 0},
+                           {"clk_speed", EOS_CFG_INT, .val.i = 400000},
+                           {NULL}};
+  eos_dev_attach(i2c, eos_devtree_root());
+
 #ifdef EOS_DRV_INPUT_GT911_ENABLED
   // ===================== Touch controller =====================
-  // GT911 capacitive touch screen
+  // GT911 capacitive touch screen attached to generic I2C bus
   eos_dev_t *touch = eos_dev_alloc();
   touch->driver = eos_drv_find("input", "gt911");
-  touch->pins = (eos_pin_t[]){{"sda", 7}, {"scl", 8}, {NULL, 0}};
-  touch->cfg = (eos_cfg_t[]){{"port", EOS_CFG_INT, .val.i = 0},
-                             {"clk_speed", EOS_CFG_INT, .val.i = 400000},
+  touch->pins = (eos_pin_t[]){{"rst", -1}, {"int", -1}, {NULL, 0}};
+  touch->cfg = (eos_cfg_t[]){{"clk_speed", EOS_CFG_INT, .val.i = 400000},
                              {"width", EOS_CFG_INT, .val.i = 480},
                              {"height", EOS_CFG_INT, .val.i = 800},
                              {"addr", EOS_CFG_INT, .val.i = 0x5D},
                              {NULL}};
-  eos_dev_attach(touch, eos_devtree_root());
+  eos_dev_attach(touch, i2c);
+#endif
 #endif
 
 #ifdef EOS_DRV_BUS_GPIO_ENABLED

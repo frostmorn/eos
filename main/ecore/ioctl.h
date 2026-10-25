@@ -3,12 +3,31 @@
 // EOS Project header file
 ///////////////////////////////////////////////////////
 
+#include <stddef.h>
+#include <stdint.h>
+
 typedef struct {
   uint32_t x;
   uint32_t y;
   uint32_t w;
   uint32_t h;
 } eos_display_rect_t;
+
+typedef struct {
+  uint16_t addr;          // 7-bit slave address
+  const void *tx_buf;     // Buffer of bytes to write (NULL if receive only)
+  size_t tx_len;          // Number of bytes to write
+  void *rx_buf;           // Buffer for received bytes (NULL if transmit only)
+  size_t rx_len;          // Number of bytes to read
+  uint32_t clk_speed_hz;  // Optional clock frequency override (0 = default)
+  int timeout_ms;         // Timeout in milliseconds (-1 for default)
+} eos_i2c_msg_t;
+
+typedef struct {
+  uint8_t addrs[128];     // Discovered 7-bit slave addresses
+  size_t count;           // Number of discovered devices
+  int timeout_ms;         // Timeout per address probe in milliseconds
+} eos_i2c_scan_t;
 
 //=====================================================
 // ioctl call table
@@ -81,6 +100,19 @@ typedef enum {
   EOS_SPI_IOCTL_SET_CS_POSTTRANS_US, // uint32_t us - delay between clock end
                                      // and CS deassert
   //=====================================================
+  //=====================================================
+  // edriver/bus/i2c
+  //=====================================================
+  EOS_I2C_IOCTL_TRANSFER,         // eos_i2c_msg_t *msg
+  EOS_I2C_IOCTL_TRANSMIT,         // uint16_t addr, const void *buf, size_t len, int timeout_ms
+  EOS_I2C_IOCTL_RECEIVE,          // uint16_t addr, void *buf, size_t len, int timeout_ms
+  EOS_I2C_IOCTL_WRITE_READ,       // uint16_t addr, const void *tx, size_t tx_len, void *rx, size_t rx_len, int timeout_ms
+  EOS_I2C_IOCTL_PROBE,            // uint16_t addr, int timeout_ms -> 0 if ACK, -1 if NACK/err
+  EOS_I2C_IOCTL_SCAN,             // eos_i2c_scan_t *scan
+  EOS_I2C_IOCTL_SET_FREQ,         // uint32_t clk_speed_hz
+  EOS_I2C_IOCTL_GET_BUS_HANDLE,   // void **out_handle (i2c_master_bus_handle_t)
+  EOS_I2C_IOCTL_SET_SLAVE_ADDR,   // uint16_t addr (sets target slave addr for fd read/write)
+
   //=====================================================
   // edriver/dispay
   //=====================================================
