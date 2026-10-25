@@ -186,6 +186,10 @@ eos_dev_t *eos_dev_find_by_name(const char *name){
   for (int i = 0; i < EOS_MAX_DEVICES; i++){
     if (strcmp(eos_devices[i].name, name) == 0)
       return &(eos_devices[i]);
+    if (strcmp(name, "i2c0") == 0 && strcmp(eos_devices[i].name, "i2c") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "gpio0") == 0 && strcmp(eos_devices[i].name, "gpio") == 0)
+      return &(eos_devices[i]);
   }
   return NULL;
 }

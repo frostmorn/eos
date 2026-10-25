@@ -112,6 +112,10 @@ typedef enum {
   EOS_I2C_IOCTL_SET_FREQ,         // uint32_t clk_speed_hz
   EOS_I2C_IOCTL_GET_BUS_HANDLE,   // void **out_handle (i2c_master_bus_handle_t)
   EOS_I2C_IOCTL_SET_SLAVE_ADDR,   // uint16_t addr (sets target slave addr for fd read/write)
+  EOS_I2C_IOCTL_SET_SDA,          // int pinNo (-1 to release)
+  EOS_I2C_IOCTL_SET_SCL,          // int pinNo (-1 to release)
+  EOS_I2C_IOCTL_SET_PINS,         // int sda_pin, int scl_pin (-1 to release)
+  EOS_I2C_IOCTL_GET_PINS,         // int *out_sda, int *out_scl
 
   //=====================================================
   // edriver/dispay
