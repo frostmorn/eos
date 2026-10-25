@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stddef.h>
 #include <sys/select.h>
 
 typedef struct eos_tctx_t eos_tctx_t;
@@ -65,6 +66,8 @@ typedef struct {
   void *thread_arg;
   char cwd[PATH_MAX];
   int stdio_fds[3];
+  char **env_copy;
+  size_t env_count;
 } eos_twrap_t;
 
 // Preapare data for thread wrap

@@ -19,9 +19,8 @@
 // components/esp_lib/src/syscalls.c
 extern int __real_system(const char *str);
 
-#define EOS_SYSTEM_MAX_STAGES        8
-#define EOS_SYSTEM_MAX_ARGS          32
-#define EOS_SYSTEM_THREAD_STACK_SIZE 24576
+#define EOS_SYSTEM_MAX_STAGES 8
+#define EOS_SYSTEM_MAX_ARGS   32
 
 typedef struct {
   int argc;
@@ -37,6 +36,7 @@ typedef struct {
 
 typedef struct {
   eos_bin_t manifest;
+  bool is_builtin;
   int argc;
   char **argv;
   int pipe_in_fd;
@@ -99,7 +99,8 @@ static void resolve_path(const char *name, char *out, size_t len) {
   }
 }
 
-static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) {
+static void expand_env_vars(const char **src_ptr, char **arena_ptr,
+                            const char *arena_end, char quote) {
   (void)quote;
   char *p = (char *)*src_ptr;
   char *w = *arena_ptr;
@@ -108,8 +109,13 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
     p++;
     eos_tctx_t *tctx = eos_tctx_get();
     int status = tctx ? tctx->last_exit_status : 0;
-    int len = snprintf(w, 32, "%d", status);
-    w += len;
+    size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
+    if (avail > 1) {
+      int len = snprintf(w, avail, "%d", status);
+      if (len > 0) {
+        w += ((size_t)len < avail) ? (size_t)len : (avail - 1);
+      }
+    }
     *src_ptr = p;
     *arena_ptr = w;
     return;
@@ -118,9 +124,11 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
   if (*p == '{') {
     p++;
     char *name_start = p;
-    while (*p && *p != '}') p++;
-    size_t name_len = p - name_start;
-    if (*p == '}') p++;
+    while (*p && *p != '}')
+      p++;
+    size_t name_len = (size_t)(p - name_start);
+    if (*p == '}')
+      p++;
 
     char name_buf[64];
     if (name_len < sizeof(name_buf)) {
@@ -129,8 +137,13 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
       char *val = eos_tctx_getenv(name_buf);
       if (val) {
         size_t vlen = strlen(val);
-        memcpy(w, val, vlen);
-        w += vlen;
+        size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
+        if (vlen > avail)
+          vlen = avail;
+        if (vlen > 0) {
+          memcpy(w, val, vlen);
+          w += vlen;
+        }
       }
     }
     *src_ptr = p;
@@ -140,7 +153,8 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
 
   char name_buf[64];
   int i = 0;
-  while (*p && (isalnum((unsigned char)*p) || *p == '_') && i < (int)sizeof(name_buf) - 1) {
+  while (*p && (isalnum((unsigned char)*p) || *p == '_') &&
+         i < (int)sizeof(name_buf) - 1) {
     name_buf[i++] = *p++;
   }
   name_buf[i] = '\0';
@@ -148,10 +162,15 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
     char *val = eos_tctx_getenv(name_buf);
     if (val) {
       size_t vlen = strlen(val);
-      memcpy(w, val, vlen);
-      w += vlen;
+      size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
+      if (vlen > avail)
+        vlen = avail;
+      if (vlen > 0) {
+        memcpy(w, val, vlen);
+        w += vlen;
+      }
     }
-  } else {
+  } else if (w < arena_end) {
     *w++ = '$';
   }
   *src_ptr = p;
@@ -160,12 +179,13 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) 
 
 // Reads the next shell token from *cursor, handling single/double quotes,
 // environment variable expansion, and operator tokens (&&, ||, ;, &, |, <, >, etc.).
-static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
+static char *next_shell_token(char **cursor, char **arena,
+                              const char *arena_end, bool *is_op) {
   char *p = *cursor;
   while (*p && isspace((unsigned char)*p))
     p++;
 
-  if (!*p) {
+  if (!*p || *arena >= arena_end) {
     *cursor = p;
     return NULL;
   }
@@ -278,23 +298,32 @@ static char *next_shell_token(char **cursor, char **arena, bool *is_op) {
       while (*p && *p != quote) {
         if (quote == '"' && *p == '$' && p[1]) {
           p++;
-          expand_env_vars((const char **)&p, &w, '"');
+          expand_env_vars((const char **)&p, &w, arena_end, '"');
           continue;
         }
         if (quote == '"' && *p == '\\' && p[1])
           p++;
-        *w++ = *p++;
+        if (w < arena_end) {
+          *w++ = *p;
+        }
+        p++;
       }
       if (*p == quote)
         p++;
     } else if (*p == '$' && p[1]) {
       p++;
-      expand_env_vars((const char **)&p, &w, '\0');
+      expand_env_vars((const char **)&p, &w, arena_end, '\0');
     } else if (*p == '\\' && p[1]) {
       p++;
-      *w++ = *p++;
+      if (w < arena_end) {
+        *w++ = *p;
+      }
+      p++;
     } else {
-      *w++ = *p++;
+      if (w < arena_end) {
+        *w++ = *p;
+      }
+      p++;
     }
   }
 
@@ -507,6 +536,97 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
   return 0;
 }
 
+// Built-in shell environment commands (VAR=VALUE, export, setenv, unset, env)
+static bool is_env_assignment_tok(const char *s) {
+  if (!s || (!isalpha((unsigned char)s[0]) && s[0] != '_'))
+    return false;
+  const char *p = s + 1;
+  while (*p && (isalnum((unsigned char)*p) || *p == '_'))
+    p++;
+  return (*p == '=');
+}
+
+static int builtin_env_entry(int argc, char **argv) {
+  if (argc <= 0 || !argv || !argv[0])
+    return 0;
+
+  if (strcmp(argv[0], "env") == 0 || strcmp(argv[0], "printenv") == 0 ||
+      (strcmp(argv[0], "export") == 0 && argc == 1)) {
+    char **envp = eos_tctx_get_environ();
+    if (envp) {
+      for (int i = 0; envp[i] != NULL; i++) {
+        printf("%s\n", envp[i]);
+      }
+      fflush(stdout);
+    }
+    return 0;
+  }
+
+  if (strcmp(argv[0], "export") == 0) {
+    for (int i = 1; i < argc; i++) {
+      char *eq = strchr(argv[i], '=');
+      if (eq) {
+        size_t klen = (size_t)(eq - argv[i]);
+        char key[64];
+        if (klen > 0 && klen < sizeof(key)) {
+          memcpy(key, argv[i], klen);
+          key[klen] = '\0';
+          eos_tctx_setenv(key, eq + 1, 1);
+        }
+      } else if (i + 1 < argc) {
+        eos_tctx_setenv(argv[i], argv[i + 1], 1);
+        i++;
+      }
+    }
+    return 0;
+  }
+
+  if (strcmp(argv[0], "setenv") == 0) {
+    if (argc < 3) {
+      printf("Usage: setenv <NAME> <VALUE>\n");
+      return -1;
+    }
+    return eos_tctx_setenv(argv[1], argv[2], 1);
+  }
+
+  if (strcmp(argv[0], "unset") == 0 || strcmp(argv[0], "unsetenv") == 0) {
+    for (int i = 1; i < argc; i++) {
+      eos_tctx_unsetenv(argv[i]);
+    }
+    return 0;
+  }
+
+  // Direct assignment tokens: VAR=VALUE [VAR2=VALUE2 ...]
+  for (int i = 0; i < argc; i++) {
+    char *eq = strchr(argv[i], '=');
+    if (eq) {
+      size_t klen = (size_t)(eq - argv[i]);
+      char key[64];
+      if (klen > 0 && klen < sizeof(key)) {
+        memcpy(key, argv[i], klen);
+        key[klen] = '\0';
+        eos_tctx_setenv(key, eq + 1, 1);
+      }
+    }
+  }
+  return 0;
+}
+
+static bool is_shell_builtin(int argc, char **argv) {
+  if (argc <= 0 || !argv || !argv[0])
+    return false;
+  if (strcmp(argv[0], "export") == 0 || strcmp(argv[0], "setenv") == 0 ||
+      strcmp(argv[0], "unset") == 0 || strcmp(argv[0], "unsetenv") == 0 ||
+      strcmp(argv[0], "env") == 0 || strcmp(argv[0], "printenv") == 0) {
+    return true;
+  }
+  for (int i = 0; i < argc; i++) {
+    if (!is_env_assignment_tok(argv[i]))
+      return false;
+  }
+  return true;
+}
+
 static bool has_stage_redirections(const eos_stage_exec_t *st) {
   if (!st) return false;
   return (st->pipe_in_fd >= 0 || st->pipe_out_fd >= 0 ||
@@ -582,13 +702,9 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     dup2(STDERR_FILENO, STDOUT_FILENO);
   }
 
-  // Ensure stdio streams pass through immediately to __wrap__read_r / __wrap__write_r
-  // without leaking FILE objects via fdopen() or clobbering _GLOBAL_REENT across threads.
   clearerr(stdin);
   clearerr(stdout);
   clearerr(stderr);
-  setvbuf(stdout, NULL, _IONBF, 0);
-  setvbuf(stderr, NULL, _IONBF, 0);
 
   return 0;
 }
@@ -767,6 +883,47 @@ static bool check_shebang_script(const char *cmd, char *interp_out, size_t inter
   return true;
 }
 
+// Compute maximum required stack size across an AST subtree from ebin manifests
+static uint32_t ast_required_stack_size(const eos_ast_node_t *node) {
+  if (!node)
+    return EOS_BIN_DEFAULT_STACK_SIZE;
+
+  uint32_t max_stack = EOS_BIN_DEFAULT_STACK_SIZE;
+  if (node->type == EOS_NODE_COMMAND) {
+    for (int i = 0; i < node->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
+      const eos_cmd_stage_t *st = &node->stages[i];
+      if (st->argc <= 0 || !st->argv[0])
+        continue;
+      if (is_shell_builtin(st->argc, (char **)st->argv))
+        continue;
+
+      char interp[EOS_SMALL_STR_LEN];
+      char interp_arg[EOS_SMALL_STR_LEN];
+      const char *bin_name = st->argv[0];
+      if (check_shebang_script(bin_name, interp, sizeof(interp), interp_arg,
+                               sizeof(interp_arg))) {
+        bin_name = interp;
+      }
+
+      eos_bin_t manifest;
+      if (load_bin_manifest(bin_name, &manifest) == 0) {
+        uint32_t req = eos_bin_effective_stack_size(&manifest);
+        if (req > max_stack) {
+          max_stack = req;
+        }
+      }
+    }
+  } else {
+    uint32_t l_stack = ast_required_stack_size(node->left);
+    uint32_t r_stack = ast_required_stack_size(node->right);
+    if (l_stack > max_stack)
+      max_stack = l_stack;
+    if (r_stack > max_stack)
+      max_stack = r_stack;
+  }
+  return max_stack;
+}
+
 static int eval_command_node(eos_ast_node_t *node) {
   int stage_count = node->stage_count;
   if (stage_count == 0) return 0;
@@ -783,41 +940,50 @@ static int eval_command_node(eos_ast_node_t *node) {
     char **stage_argv = node->stages[i].argv;
     bool shebang_allocated = false;
 
-    if (check_shebang_script(stage_argv[0], interp, sizeof(interp), interp_arg, sizeof(interp_arg))) {
-      int extra = (interp_arg[0] != '\0') ? 2 : 1;
-      char **new_argv = calloc(stage_argc + extra + 1, sizeof(char *));
-      if (new_argv) {
-        int idx = 0;
-        new_argv[idx++] = strdup(interp);
-        if (interp_arg[0] != '\0') {
-          new_argv[idx++] = strdup(interp_arg);
+    if (is_shell_builtin(stage_argc, stage_argv)) {
+      exec_stages[i].is_builtin = true;
+      exec_stages[i].manifest.magic = EOS_BIN_MAGIC;
+      exec_stages[i].manifest.flags = EOS_BIN_FLAG_HIDDEN;
+      exec_stages[i].manifest.stack_size = EOS_BIN_DEFAULT_STACK_SIZE;
+      exec_stages[i].manifest.entry_point = builtin_env_entry;
+    } else {
+      if (check_shebang_script(stage_argv[0], interp, sizeof(interp), interp_arg, sizeof(interp_arg))) {
+        int extra = (interp_arg[0] != '\0') ? 2 : 1;
+        char **new_argv = calloc(stage_argc + extra + 1, sizeof(char *));
+        if (new_argv) {
+          int idx = 0;
+          new_argv[idx++] = strdup(interp);
+          if (interp_arg[0] != '\0') {
+            new_argv[idx++] = strdup(interp_arg);
+          }
+          new_argv[idx++] = strdup(stage_argv[0]);
+          for (int j = 1; j < stage_argc; j++) {
+            new_argv[idx++] = strdup(stage_argv[j]);
+          }
+          new_argv[idx] = NULL;
+          stage_argv = new_argv;
+          stage_argc = stage_argc + extra;
+          shebang_allocated = true;
+          shebang[i] = true;
         }
-        new_argv[idx++] = strdup(stage_argv[0]);
-        for (int j = 1; j < stage_argc; j++) {
-          new_argv[idx++] = strdup(stage_argv[j]);
+      }
+
+      if (load_bin_manifest(stage_argv[0], &exec_stages[i].manifest) < 0) {
+        if (shebang_allocated) {
+          for (int j = 0; j < stage_argc; j++) free(stage_argv[j]);
+          free(stage_argv);
         }
-        new_argv[idx] = NULL;
-        stage_argv = new_argv;
-        stage_argc = stage_argc + extra;
-        shebang_allocated = true;
-        shebang[i] = true;
+        for (int j = 0; j < i; j++) {
+          if (shebang[j]) {
+            for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
+            free(exec_stages[j].argv);
+          }
+        }
+        free(exec_stages);
+        return -1;
       }
     }
 
-    if (load_bin_manifest(stage_argv[0], &exec_stages[i].manifest) < 0) {
-      if (shebang_allocated) {
-        for (int j = 0; j < stage_argc; j++) free(stage_argv[j]);
-        free(stage_argv);
-      }
-      for (int j = 0; j < i; j++) {
-        if (shebang[j]) {
-          for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
-          free(exec_stages[j].argv);
-        }
-      }
-      free(exec_stages);
-      return -1;
-    }
     exec_stages[i].argc = stage_argc;
     exec_stages[i].argv = stage_argv;
     exec_stages[i].pipe_in_fd = -1;
@@ -908,7 +1074,8 @@ static int eval_command_node(eos_ast_node_t *node) {
       pthread_attr_t attr;
       pthread_attr_init(&attr);
       pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-      pthread_attr_setstacksize(&attr, EOS_SYSTEM_THREAD_STACK_SIZE);
+      pthread_attr_setstacksize(
+          &attr, eos_bin_effective_stack_size(&exec_stages[i].manifest));
 
       int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
       pthread_attr_destroy(&attr);
@@ -973,6 +1140,7 @@ static int eval_ast(eos_ast_node_t *node) {
     case EOS_NODE_BG: {
       if (node->left &&
           (node->left->type != EOS_NODE_COMMAND || node->left->stage_count > 0)) {
+        uint32_t bg_stack = ast_required_stack_size(node->left);
         bg_wrapper_t *bg = malloc(sizeof(bg_wrapper_t));
         if (bg) {
           if (tctx) {
@@ -984,7 +1152,7 @@ static int eval_ast(eos_ast_node_t *node) {
             pthread_attr_t attr;
             pthread_attr_init(&attr);
             pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-            pthread_attr_setstacksize(&attr, EOS_SYSTEM_THREAD_STACK_SIZE);
+            pthread_attr_setstacksize(&attr, bg_stack);
             if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
               free_cloned_ast_node(bg->node);
               free(bg);
@@ -1025,10 +1193,12 @@ int __wrap_system(const char *cmdline) {
   }
 
   size_t cmd_len = strlen(cmdline);
-  char *arena_buf = malloc(cmd_len * 2 + 64);
+  size_t arena_size = cmd_len * 2 + EOS_LARGE_STR_LEN;
+  char *arena_buf = malloc(arena_size);
   if (!arena_buf) {
     return -1;
   }
+  const char *arena_end = arena_buf + arena_size - 1;
 
   int max_tokens = 128;
   eos_token_t *tokens = calloc(max_tokens, sizeof(eos_token_t));
@@ -1043,7 +1213,7 @@ int __wrap_system(const char *cmdline) {
   char *tok = NULL;
   int num_tokens = 0;
 
-  while ((tok = next_shell_token(&cursor, &arena, &is_op)) != NULL) {
+  while ((tok = next_shell_token(&cursor, &arena, arena_end, &is_op)) != NULL) {
     if (num_tokens >= max_tokens - 1) {
       break;
     }

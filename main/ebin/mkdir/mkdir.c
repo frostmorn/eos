@@ -23,5 +23,5 @@ int mkdir_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t mkdir_app = {
-    EOS_BIN_INITIALIZER, .filename = "mkdir", .name = "mkdir",
+    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "mkdir", .name = "mkdir",
     .entry_point = mkdir_main};

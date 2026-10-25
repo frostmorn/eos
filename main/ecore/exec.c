@@ -1,12 +1,12 @@
 #include "ecore/bin.h"
 #include "emisc/fancymacro.h"
+#include <errno.h>
 #include <pthread.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <string.h>
-#include <stdarg.h>
-#include <errno.h>
 
 typedef struct {
   const eos_bin_t *bin;
@@ -107,8 +107,14 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   ex->argv = dup_argv;
 
   pthread_t thread;
-  // Create joinable thread to support wait semantics
-  int rc = pthread_create(&thread, NULL, exec_thread_entry, ex);
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+  pthread_attr_setstacksize(&attr, eos_bin_effective_stack_size(bin));
+
+  // Create joinable thread using stack_size from the ebin manifest
+  int rc = pthread_create(&thread, &attr, exec_thread_entry, ex);
+  pthread_attr_destroy(&attr);
   if (rc != 0) {
     for (int i = 0; i < argc; i++)
       free(dup_argv[i]);

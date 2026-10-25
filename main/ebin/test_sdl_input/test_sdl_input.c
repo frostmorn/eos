@@ -55,5 +55,10 @@ int test_sdl_input_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_sdl_input = {
-    EOS_BIN_INITIALIZER, .filename = "test_sdl_input", .name = "test_sdl_input",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = 12288U,
+    .filename = "test_sdl_input",
+    .name = "test_sdl_input",
+    .group = "Tests",
     .entry_point = test_sdl_input_main};

@@ -1,4 +1,6 @@
 #include "ecore/threadctx.h"
+#include "ecore/bin.h"
+#include "ecore/log.h"
 #include "emisc/fancymacro.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/idf_additions.h"
@@ -107,6 +109,8 @@ void eos_tctx_init_env(eos_tctx_t *tctx) {
   eos_tctx_setenv_internal(tctx, "HOME", "/", 1);
   eos_tctx_setenv_internal(tctx, "USER", "root", 1);
   eos_tctx_setenv_internal(tctx, "SHELL", "/bin/ush", 1);
+  eos_tctx_setenv_internal(tctx, "EOS_LOG", "0", 0);
+  eos_tctx_setenv_internal(tctx, "EOS_LOG_FILE", EOS_DEFAULT_LOG_FILE, 0);
 }
 
 char *eos_tctx_getenv(const char *name) {
@@ -125,7 +129,11 @@ char *eos_tctx_getenv(const char *name) {
 
 int eos_tctx_setenv(const char *name, const char *value, int overwrite) {
   eos_tctx_t *tctx = eos_tctx_get();
-  return eos_tctx_setenv_internal(tctx, name, value, overwrite);
+  int rc = eos_tctx_setenv_internal(tctx, name, value, overwrite);
+  if (rc == 0 && overwrite) {
+    eos_log_sync_env(name, value);
+  }
+  return rc;
 }
 
 int eos_tctx_unsetenv(const char *name) {
@@ -142,9 +150,11 @@ int eos_tctx_unsetenv(const char *name) {
       kv_drop_fast(char *, tctx->env, i);
       kv_opt(char *, tctx->env);
       eos_tctx_rebuild_env_array(tctx);
+      eos_log_sync_env(name, NULL);
       return 0;
     }
   }
+  eos_log_sync_env(name, NULL);
   return 0;
 }
 
@@ -197,18 +207,35 @@ eos_tctx_t *eos_tctx_get(void) {
   }
 
   eos_tctx_t *tctx =
-      pvTaskGetThreadLocalStoragePointer(NULL, EOS_TCTX_TLS_INDEX);
-
-  // can be not initialized yet
-  if (!tctx) {
-    tctx = eos_tctx_alloc();
-    if (!tctx) {
-      EOS_LOGE("Can't initialize thread context\n");
-      abort();
-    }
-    strcpy(tctx->cwd, "/");
-    eos_tctx_set(tctx);
+      (eos_tctx_t *)pvTaskGetThreadLocalStoragePointer(NULL, EOS_TCTX_TLS_INDEX);
+  if (tctx) {
+    return tctx;
   }
+
+  // Internal ESP-IDF system tasks must not have thread context auto-allocated
+  const char *name = pcTaskGetName(NULL);
+  if (name && (strncmp(name, "ipc", 3) == 0 ||
+               strncmp(name, "esp_", 4) == 0 ||
+               strncmp(name, "IDLE", 4) == 0 ||
+               strcmp(name, "tiT") == 0 ||
+               strcmp(name, "sys_evt") == 0 ||
+               strcmp(name, "wifi") == 0)) {
+    return NULL;
+  }
+
+  // Guard against tasks with small stack headroom to prevent stack overflow
+  UBaseType_t stack_hwm = uxTaskGetStackHighWaterMark(NULL);
+  if (stack_hwm * sizeof(StackType_t) < EOS_BIN_MIN_STACK_SIZE) {
+    return NULL;
+  }
+
+  tctx = eos_tctx_alloc();
+  if (!tctx) {
+    EOS_LOGE("Can't initialize thread context\n");
+    return NULL;
+  }
+  strcpy(tctx->cwd, "/");
+  eos_tctx_set(tctx);
 
   return tctx;
 }
@@ -351,6 +378,8 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
     return NULL;
   }
 
+  memset(twrap, 0, sizeof(eos_twrap_t));
+
   // twrap is freed by the child thread in eos_twrap_pthread; unregister from parent tctx
   if (cur_tctx) {
     eos_tctx_unreg_memblock(twrap, cur_tctx);
@@ -364,6 +393,24 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
     strcpy(twrap->cwd, cur_tctx->cwd);
     for (int i = 0; i < 3; i++) {
       twrap->stdio_fds[i] = cur_tctx->fd_map[i];
+    }
+
+    size_t env_n = kv_size(cur_tctx->env);
+    if (env_n > 0) {
+      twrap->env_copy = calloc(env_n, sizeof(char *));
+      if (twrap->env_copy) {
+        eos_tctx_unreg_memblock(twrap->env_copy, cur_tctx);
+        for (size_t i = 0; i < env_n; i++) {
+          const char *e = kv_A(cur_tctx->env, i);
+          if (e) {
+            char *dup_e = strdup(e);
+            if (dup_e) {
+              eos_tctx_unreg_memblock(dup_e, cur_tctx);
+              twrap->env_copy[twrap->env_count++] = dup_e;
+            }
+          }
+        }
+      }
     }
   } else {
     strcpy(twrap->cwd, "/");
@@ -391,12 +438,34 @@ void *eos_twrap_pthread(void *data) {
   eos_tctx_t *tctx = eos_tctx_alloc();
   if (!tctx) {
     EOS_LOGE("Failed to allocate thread context\n");
+    if (twrap->env_copy) {
+      for (size_t i = 0; i < twrap->env_count; i++) {
+        free(twrap->env_copy[i]);
+      }
+      free(twrap->env_copy);
+    }
+    free(twrap);
     return NULL;
   }
   // Copy inherit data
   strcpy(tctx->cwd, twrap->cwd);
   for (int i = 0; i < 3; i++) {
     tctx->fd_map[i] = twrap->stdio_fds[i];
+  }
+  if (twrap->env_copy) {
+    for (size_t i = 0; i < twrap->env_count; i++) {
+      char *entry = twrap->env_copy[i];
+      if (entry) {
+        char *eq = strchr(entry, '=');
+        if (eq) {
+          *eq = '\0';
+          eos_tctx_setenv_internal(tctx, entry, eq + 1, 1);
+        }
+        free(entry);
+      }
+    }
+    free(twrap->env_copy);
+    twrap->env_copy = NULL;
   }
   eos_tctx_set(tctx);
 
@@ -432,6 +501,8 @@ void *eos_twrap_pthread(void *data) {
     __real_heap_caps_free(ptr);
   }
 
+  // Clear TLS pointer before freeing context to prevent dangling access
+  eos_tctx_set(NULL);
   // Cleanup context
   eos_tctx_free(tctx);
 
@@ -439,6 +510,6 @@ void *eos_twrap_pthread(void *data) {
 }
 
 void eos_twrap_freertos(void *data) {
-  // here we can just call a pthread version, since it's identical
   eos_twrap_pthread(data);
+  vTaskDelete(NULL);
 }

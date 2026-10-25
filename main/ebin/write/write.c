@@ -29,5 +29,5 @@ int write_main(int argc, char **argv) {
   return 0;
 }
 
-EOS_BIN_ATTR eos_bin_t write_app = {EOS_BIN_INITIALIZER, .filename = "write",
+EOS_BIN_ATTR eos_bin_t write_app = {EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "write",
                                     .name = "write", .entry_point = write_main};

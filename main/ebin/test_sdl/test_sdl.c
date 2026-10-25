@@ -35,5 +35,10 @@ static int test_sdl_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_sdl = {
-    EOS_BIN_INITIALIZER, .filename = "test_sdl", .name = "test_sdl",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = 12288U,
+    .filename = "test_sdl",
+    .name = "test_sdl",
+    .group = "Tests",
     .entry_point = test_sdl_main};

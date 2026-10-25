@@ -1,3 +1,4 @@
+#include "ecore/bin.h"
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
 #include <pthread.h>
@@ -5,7 +6,7 @@
 #include <string.h>
 
 #ifndef EOS_PTHREAD_MIN_STACK_SIZE
-#define EOS_PTHREAD_MIN_STACK_SIZE 24576
+#define EOS_PTHREAD_MIN_STACK_SIZE EOS_BIN_MIN_STACK_SIZE
 #endif
 
 extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
@@ -26,7 +27,7 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
   if (!attr) {
     if (pthread_attr_init(&local_attr) == 0) {
-      pthread_attr_setstacksize(&local_attr, EOS_PTHREAD_MIN_STACK_SIZE);
+      pthread_attr_setstacksize(&local_attr, EOS_BIN_DEFAULT_STACK_SIZE);
       use_attr = &local_attr;
       destroy_local = true;
     }
@@ -49,6 +50,12 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   }
 
   if (rc != 0) {
+    if (twrap->env_copy) {
+      for (size_t i = 0; i < twrap->env_count; i++) {
+        free(twrap->env_copy[i]);
+      }
+      free(twrap->env_copy);
+    }
     free(twrap);
   }
 

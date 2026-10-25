@@ -29,6 +29,7 @@ int echo_main(int argc, char **argv) {
 
 EOS_BIN_ATTR eos_bin_t echo_app = {
     EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
     .filename = "echo",
     .name = "echo",
     .entry_point = echo_main

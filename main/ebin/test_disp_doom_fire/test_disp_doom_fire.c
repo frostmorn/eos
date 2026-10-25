@@ -108,5 +108,10 @@ static int test_disp_doom_fire_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_disp_doom_fire = {
-    EOS_BIN_INITIALIZER, .filename = "test_disp_doom_fire",
-    .name = "test_disp_doom_fire", .entry_point = test_disp_doom_fire_main};
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = EOS_BIN_DEFAULT_STACK_SIZE,
+    .filename = "test_disp_doom_fire",
+    .name = "test_disp_doom_fire",
+    .group = "Tests",
+    .entry_point = test_disp_doom_fire_main};

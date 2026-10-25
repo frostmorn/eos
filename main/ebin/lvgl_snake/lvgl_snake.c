@@ -303,6 +303,8 @@ int lvgl_snake_main(int argc, char **argv) {
 
 EOS_BIN_ATTR const eos_bin_t lvgl_snake_app = {
     EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "lvgl_snake",
     .name = "LVGL Snake",
     .group = "Games",

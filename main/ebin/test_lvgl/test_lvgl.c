@@ -185,6 +185,8 @@ static int test_lvgl_main(int argc, char **argv) {
 
 EOS_BIN_ATTR const eos_bin_t lvgl_test_app = {
     EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "test_lvgl",
     .name = "LVGL Test",
     .group = "Tools",

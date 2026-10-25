@@ -82,5 +82,5 @@ int tree_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t tree_app = {
-    EOS_BIN_INITIALIZER, .filename = "tree", .name = "Tree",
+    EOS_BIN_INITIALIZER, .stack_size = 12288U, .filename = "tree", .name = "Tree",
     .entry_point = tree_main};

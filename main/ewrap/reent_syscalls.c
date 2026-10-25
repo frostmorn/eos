@@ -1,15 +1,16 @@
+#include "ecore/fapi.h"
+#include "ecore/log.h"
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
+#include "pregen.h"
 #include <dirent.h>
+#include <errno.h>
 #include <reent.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include "ecore/fapi.h"
-#include "pregen.h"
-#include <errno.h>
-#include <stdbool.h>
 // (^_^)==\~ WRAPPERS
 
 // most of magic is hidden in flags passed to linker inside CMakeLists.txt
@@ -79,11 +80,21 @@ int __wrap__close_r(struct _reent *r, int fd) {
 }
 
 ssize_t __wrap__read_r(struct _reent *r, int fd, void *dst, size_t size) {
-  return __real__read_r(r, eos_tctx_resolve_fd(fd), dst, size);
+  int real_fd = eos_tctx_resolve_fd(fd);
+  if (real_fd == STDIN_FILENO && !eos_console_is_connected()) {
+    errno = EAGAIN;
+    return -1;
+  }
+  return __real__read_r(r, real_fd, dst, size);
 }
 
 ssize_t __wrap__write_r(struct _reent *r, int fd, const void *data, size_t size) {
-  return __real__write_r(r, eos_tctx_resolve_fd(fd), data, size);
+  int real_fd = eos_tctx_resolve_fd(fd);
+  if ((real_fd == STDOUT_FILENO || real_fd == STDERR_FILENO) &&
+      !eos_console_is_connected()) {
+    return (ssize_t)size;
+  }
+  return __real__write_r(r, real_fd, data, size);
 }
 
 off_t __wrap__lseek_r(struct _reent *r, int fd, off_t size, int mode) {

@@ -24,7 +24,7 @@ int rmdir_main(int argc, char **argv){
 ///////////////////////////////////////////////////////////////////////
 EOS_BIN_ATTR eos_bin_t rmdir_app = {
   EOS_BIN_INITIALIZER,
-  .flags       = 0,
+  .flags       = EOS_BIN_FLAG_HIDDEN,
   .filename    = "rmdir",
   .name        = "rmdir",
   .group       = "Utils",

@@ -16,5 +16,5 @@ int cd_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t cd_app = {
-    EOS_BIN_INITIALIZER, .filename = "cd", .name = "cd",
+    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "cd", .name = "cd",
     .entry_point = cd_main};

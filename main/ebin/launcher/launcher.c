@@ -16,6 +16,8 @@
 #define LAUNCHER_TERM_OUT_FILE "/term.out"
 #define LAUNCHER_TERM_IN_FILE  "/term.in"
 
+static volatile bool s_launcher_active = false;
+
 typedef struct {
   char name[EOS_XSMALL_STR_LEN];
   int count;
@@ -76,12 +78,14 @@ static const char *bin_effective_desc(const eos_bin_t *bin) {
   return "EOS native binary application";
 }
 
-// Returns true if the binary manages /dev/fb0 directly (LVGL, SDL, or raw display)
-// or is an interactive shell; returns false for CLI/terminal tasks whose stdout/stderr
-// should be piped to LAUNCHER_TERM_OUT_FILE and displayed in lvgl_term.
+// Returns true if the binary manages /dev/fb0 directly (EOS_BIN_FLAG_GUI, LVGL, SDL,
+// or raw display) or is an interactive shell; returns false for CLI/terminal tasks
+// whose stdout/stderr should be piped to LAUNCHER_TERM_OUT_FILE and displayed in lvgl_term.
 static bool bin_is_direct_display_or_shell(const eos_bin_t *bin) {
   if (!bin || !bin->filename[0])
     return false;
+  if (bin->flags & EOS_BIN_FLAG_GUI)
+    return true;
   const char *fn = bin->filename;
   if (strncmp(fn, "lvgl_", 5) == 0)
     return true;
@@ -107,12 +111,12 @@ static int find_or_add_group(launcher_state_t *st, const char *group_name) {
   }
   int idx = st->group_count++;
   snprintf(st->groups[idx].name, sizeof(st->groups[idx].name), "%s",
-            group_name);
+           group_name);
   st->groups[idx].count = 0;
   return idx;
 }
 
-static void launcher_discover_bins(launcher_state_t *st) {
+static void launcher_discover_bins(launcher_state_t *st, bool include_hidden) {
   st->bin_count = 0;
   st->group_count = 1;
   snprintf(st->groups[0].name, sizeof(st->groups[0].name), "All");
@@ -120,6 +124,8 @@ static void launcher_discover_bins(launcher_state_t *st) {
 
   for (const eos_bin_t *b = _eos_bins_start; b < _eos_bins_end; b++) {
     if (b->magic != EOS_BIN_MAGIC || !b->entry_point || b->filename[0] == '\0')
+      continue;
+    if (!include_hidden && (b->flags & EOS_BIN_FLAG_HIDDEN))
       continue;
     if (strcmp(b->filename, "launcher") == 0)
       continue;
@@ -181,7 +187,10 @@ static void launcher_print_grouped_list(const launcher_state_t *st) {
     for (int i = 0; i < st->bin_count; i++) {
       const eos_bin_t *b = st->bins[i];
       if (strcasecmp(bin_effective_group(b), st->groups[g].name) == 0) {
-        printf("  %-18s %-20s %s\n", b->filename, bin_effective_name(b),
+        printf("  %-18s %-20s [stk=%u%s] %s\n", b->filename,
+               bin_effective_name(b),
+               (unsigned)eos_bin_effective_stack_size(b),
+               (b->flags & EOS_BIN_FLAG_HIDDEN) ? ",hidden" : "",
                bin_effective_desc(b));
       }
     }
@@ -581,20 +590,38 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 }
 
 int launcher_main(int argc, char **argv) {
+  bool list_only = false;
+  bool include_hidden = false;
+
+  if (argc > 1) {
+    if (strcmp(argv[1], "-l") == 0 || strcmp(argv[1], "--list") == 0) {
+      list_only = true;
+    } else if (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--all") == 0) {
+      list_only = true;
+      include_hidden = true;
+    }
+  }
+
+  if (!list_only && s_launcher_active) {
+    EOS_LOGW("Launcher is already running");
+    return 0;
+  }
+
   launcher_state_t *st = calloc(1, sizeof(launcher_state_t));
   if (!st) {
     perror("launcher calloc");
     return -1;
   }
 
-  launcher_discover_bins(st);
+  launcher_discover_bins(st, include_hidden);
 
-  if (argc > 1 &&
-      (strcmp(argv[1], "-l") == 0 || strcmp(argv[1], "--list") == 0)) {
+  if (list_only) {
     launcher_print_grouped_list(st);
     free(st);
     return 0;
   }
+
+  s_launcher_active = true;
 
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
@@ -612,6 +639,7 @@ int launcher_main(int argc, char **argv) {
     printf("launcher: LVGL init failed, printing ebin list instead:\n");
     launcher_print_grouped_list(st);
     free(st);
+    s_launcher_active = false;
     return -1;
   }
 
@@ -638,11 +666,14 @@ int launcher_main(int argc, char **argv) {
 
   eos_lvgl_deinit();
   free(st);
+  s_launcher_active = false;
   return 0;
 }
 
 EOS_BIN_ATTR const eos_bin_t launcher_app = {
     EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN | EOS_BIN_FLAG_GUI,
+    .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "launcher",
     .name = "App Launcher",
     .group = "System",

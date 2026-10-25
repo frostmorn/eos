@@ -67,5 +67,10 @@ int test_disp_colors_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_disp_colors = {
-    EOS_BIN_INITIALIZER, .filename = "test_disp_colors",
-    .name = "test_disp_colors", .entry_point = test_disp_colors_main};
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_GUI,
+    .stack_size = EOS_BIN_DEFAULT_STACK_SIZE,
+    .filename = "test_disp_colors",
+    .name = "test_disp_colors",
+    .group = "Tests",
+    .entry_point = test_disp_colors_main};
