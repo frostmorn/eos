@@ -1,51 +1,70 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
-#include <errno.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <string.h>
-#include <sys/ioctl.h>
 
-static void test_colors(FILE *f) {
-
-  int fd = fileno(f);
-  int w, h;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0)
-   return;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0)
-   return;
-
-  uint16_t *buf = malloc(w * h * sizeof(uint16_t));
-  if (!buf)
+static void test_colors(int fd) {
+  int w = 0, h = 0;
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0 || w <= 0)
     return;
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0 || h <= 0)
+    return;
+
+  size_t frame_bytes = (size_t)w * (size_t)h * sizeof(uint16_t);
+#ifdef MALLOC_CAP_SPIRAM
+  uint16_t *buf = heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  uint16_t *buf = NULL;
+#endif
+  if (!buf) {
+    buf = malloc(frame_bytes);
+  }
+  if (!buf) {
+    perror("test_disp_colors: malloc frame buffer");
+    return;
+  }
 
   // Red
   for (int i = 0; i < w * h; i++)
     buf[i] = 0xF800;
-
-  fwrite(buf, w * h * sizeof(uint16_t), 1, f);
+  if (write(fd, buf, frame_bytes) < 0) {
+    perror("test_disp_colors: write Red");
+  }
   vTaskDelay(pdMS_TO_TICKS(500));
 
   // Green
   for (int i = 0; i < w * h; i++)
     buf[i] = 0x07E0;
-  fwrite(buf, w * h * sizeof(uint16_t), 1, f);
+  if (write(fd, buf, frame_bytes) < 0) {
+    perror("test_disp_colors: write Green");
+  }
   vTaskDelay(pdMS_TO_TICKS(500));
 
   // Blue
   for (int i = 0; i < w * h; i++)
     buf[i] = 0x001F;
-  fwrite(buf, w * h * sizeof(uint16_t), 1, f);
+  if (write(fd, buf, frame_bytes) < 0) {
+    perror("test_disp_colors: write Blue");
+  }
   vTaskDelay(pdMS_TO_TICKS(500));
 
   // Gradient
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++)
       buf[y * w + x] = ((x * 31 / w) << 11) | ((y * 63 / h) << 5);
-  fwrite(buf, w * h * sizeof(uint16_t), 1, f);
+  if (write(fd, buf, frame_bytes) < 0) {
+    perror("test_disp_colors: write Gradient");
+  }
+  vTaskDelay(pdMS_TO_TICKS(1000));
 
   free(buf);
 }
@@ -53,16 +72,15 @@ static void test_colors(FILE *f) {
 int test_disp_colors_main(int argc, char **argv) {
   const char *path = argc > 1 ? argv[1] : "/dev/fb0";
 
-  FILE *f = fopen(path, "w");
-
-  if (!f) {
-    perror(strerror(errno));
+  int fd = open(path, O_RDWR);
+  if (fd < 0) {
+    perror("test_disp_colors: open display device");
     return -1;
   }
 
-  test_colors(f);
+  test_colors(fd);
 
-  fclose(f);
+  close(fd);
 
   return 0;
 }

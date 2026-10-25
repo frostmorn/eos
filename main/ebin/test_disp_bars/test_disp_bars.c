@@ -1,24 +1,37 @@
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#include <esp_heap_caps.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
-#include <errno.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <stdlib.h>
 
-static void draw_bars(FILE *f) {
-
-  int fd = fileno(f);
-  int w, h;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0)
-   return;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0)
-   return;
-
-  uint16_t *buf = malloc(w * h * sizeof(uint16_t));
-  if (!buf)
+static void draw_bars(int fd) {
+  int w = 0, h = 0;
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0 || w <= 0)
     return;
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0 || h <= 0)
+    return;
+
+  size_t frame_bytes = (size_t)w * (size_t)h * sizeof(uint16_t);
+#ifdef MALLOC_CAP_SPIRAM
+  uint16_t *buf = heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  uint16_t *buf = NULL;
+#endif
+  if (!buf) {
+    buf = malloc(frame_bytes);
+  }
+  if (!buf) {
+    perror("test_disp_bars: malloc frame buffer");
+    return;
+  }
 
   // RGB565 color bars
   for (int y = 0; y < h; y++) {
@@ -50,8 +63,13 @@ static void draw_bars(FILE *f) {
     }
   }
 
-  // Write one full frame
-  fwrite(buf, w * h * sizeof(uint16_t), 1, f);
+  // Write full frame directly to framebuffer device
+  if (write(fd, buf, frame_bytes) < 0) {
+    perror("test_disp_bars: write display");
+  }
+
+  // Keep frame visible briefly before exiting
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   free(buf);
 }
@@ -59,15 +77,15 @@ static void draw_bars(FILE *f) {
 int test_disp_bars_main(int argc, char **argv) {
   const char *path = argc > 1 ? argv[1] : "/dev/fb0";
 
-  FILE *f = fopen(path, "w");
-  if (!f) {
-    perror(strerror(errno));
+  int fd = open(path, O_RDWR);
+  if (fd < 0) {
+    perror("test_disp_bars: open display device");
     return -1;
   }
 
-  draw_bars(f);
+  draw_bars(fd);
 
-  fclose(f);
+  close(fd);
 
   return 0;
 }

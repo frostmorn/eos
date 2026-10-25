@@ -7,3 +7,7 @@ trace/*
 sdkconfig
 sdkconfig.old
 dependencies.lock
+managed_components/
+main/idf_component.yml
+__pycache__/
+*.pyc

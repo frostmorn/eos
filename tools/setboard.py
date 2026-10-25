@@ -3,6 +3,9 @@ import os
 import shutil
 import sys
 
+sys.path.insert(0, os.path.dirname(__file__))
+from update_dependencies import update_dependencies
+
 # Path to directory containing boards
 BOARD_PATH = "main/eboard"
 
@@ -70,6 +73,28 @@ def update_pregen(board):
         f.write("\n".join(new_lines) + "\n")
     print(f"Updated {pregen_path} with target macro {target_macro}")
 
+def check_and_clean_target_mismatch(board):
+    cache_path = os.path.join("build", "CMakeCache.txt")
+    if not os.path.exists(cache_path):
+        return
+    old_target = None
+    with open(cache_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("IDF_TARGET:STRING="):
+                old_target = line.split("=")[1].strip()
+                break
+    new_target = None
+    bpath = os.path.join(BOARD_PATH, board, "sdkconfig")
+    if os.path.exists(bpath):
+        with open(bpath, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                if line.startswith('CONFIG_IDF_TARGET="'):
+                    new_target = line.split('"')[1].strip()
+                    break
+    if old_target and new_target and old_target != new_target:
+        print(f"Target chip changed ({old_target} -> {new_target}), cleaning build directory...")
+        shutil.rmtree("build")
+
 def setboard(board):
     bpath = BOARD_PATH + "/" + board
 
@@ -81,10 +106,13 @@ def setboard(board):
 
     print(f"Setting board {board}")
 
+    check_and_clean_target_mismatch(board)
+
     rm("sdkconfig")
     rm("sdkconfig.old")
 
     shutil.copy(bpath+"/sdkconfig", ".")
+    update_dependencies(board)
 
 def selectboard():
     if len(sys.argv) > 1:

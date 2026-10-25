@@ -1,0 +1,2 @@
+dependencies:
+  espressif/esp_lcd_st7701: "^2.0.3"

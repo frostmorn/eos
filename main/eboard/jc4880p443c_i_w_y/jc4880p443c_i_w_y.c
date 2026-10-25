@@ -3,6 +3,24 @@
 #include "eboard/board.h"
 
 void eos_board_init() {
+  // ===================== DSI display =====================
+  // ST7701S via MIPI DSI
+  eos_dev_t *display = eos_dev_alloc();
+  display->driver = eos_drv_find("display", "st7701s");
+  display->pins = (eos_pin_t[]){{"rst", 5},
+                                {"backlight", 23},
+                                {NULL, 0}};
+  display->cfg = (eos_cfg_t[]){{"width", EOS_CFG_INT, .val.i = 480},
+                               {"height", EOS_CFG_INT, .val.i = 800},
+                               {"rotation", EOS_CFG_INT, .val.i = 0},
+                               {"lane_num", EOS_CFG_INT, .val.i = 2},
+                               {"bitrate_mbps", EOS_CFG_INT, .val.i = 750},
+                               {"dpi_clk_mhz", EOS_CFG_INT, .val.i = 28},
+                               {"ldo_chan", EOS_CFG_INT, .val.i = 3},
+                               {"ldo_voltage_mv", EOS_CFG_INT, .val.i = 2500},
+                               {NULL}};
+  eos_dev_attach(display, eos_devtree_root());
+
   /*
   // ===================== I2C bus =====================
   // Shared between touch controller and ES8311 codec

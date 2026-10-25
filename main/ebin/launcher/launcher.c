@@ -198,6 +198,8 @@ static void launcher_print_grouped_list(const launcher_state_t *st) {
   }
 }
 
+static void launcher_populate_list(launcher_state_t *st);
+
 static void launcher_update_details(launcher_state_t *st) {
   if (!st->hdr_mode)
     return;
@@ -244,14 +246,55 @@ static void launcher_update_details(launcher_state_t *st) {
 
   if (st->status_bar) {
     char sbuf[96];
+    bool has_kbd = (eos_lvgl_get_indev() != NULL);
     if (st->has_launched) {
-      snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | A:Run B:Exit",
-               st->last_launched, st->last_exit_code);
+      if (has_kbd) {
+        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | A:Run B:Exit",
+                 st->last_launched, st->last_exit_code);
+      } else {
+        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | Tap app to run",
+                 st->last_launched, st->last_exit_code);
+      }
     } else {
-      snprintf(sbuf, sizeof(sbuf), "U/D:App L/R:Grp A/ENT:Run C:Mode B:Quit");
+      if (has_kbd) {
+        snprintf(sbuf, sizeof(sbuf), "U/D:App L/R:Grp A/ENT:Run C:Mode B:Quit");
+      } else {
+        snprintf(sbuf, sizeof(sbuf), "Tap app to run | Tap grp bar to switch");
+      }
     }
     lv_label_set_text(st->status_bar, sbuf);
   }
+}
+
+static void launcher_item_event_cb(lv_event_t *e) {
+  launcher_state_t *st = (launcher_state_t *)lv_event_get_user_data(e);
+  if (!st) return;
+  lv_obj_t *target = lv_event_get_current_target(e);
+  for (int i = 0; i < st->filtered_count; i++) {
+    if (st->item_btns[i] == target) {
+      st->selected_item = i;
+      launcher_update_details(st);
+      st->trigger_launch = true;
+      break;
+    }
+  }
+}
+
+static void launcher_grp_event_cb(lv_event_t *e) {
+  launcher_state_t *st = (launcher_state_t *)lv_event_get_user_data(e);
+  if (!st) return;
+  if (st->group_count > 1) {
+    st->selected_group = (st->selected_group + 1) % st->group_count;
+    st->selected_item = 0;
+    launcher_populate_list(st);
+  }
+}
+
+static void launcher_mode_event_cb(lv_event_t *e) {
+  launcher_state_t *st = (launcher_state_t *)lv_event_get_user_data(e);
+  if (!st) return;
+  eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
+  launcher_update_details(st);
 }
 
 static void launcher_populate_list(launcher_state_t *st) {
@@ -301,11 +344,14 @@ static void launcher_populate_list(launcher_state_t *st) {
     lv_obj_set_style_pad_hor(row, 6, 0);
     lv_obj_set_style_pad_ver(row, 2, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(row, launcher_item_event_cb, LV_EVENT_CLICKED, st);
 
     lv_obj_t *lbl_name = lv_label_create(row);
     lv_label_set_text(lbl_name, bin_effective_name(b));
     lv_obj_set_style_text_color(lbl_name, lv_color_hex(0xF8FAFC), 0);
     lv_obj_align(lbl_name, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_clear_flag(lbl_name, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t *lbl_tag = lv_label_create(row);
     char tag_buf[32];
@@ -317,6 +363,7 @@ static void launcher_populate_list(launcher_state_t *st) {
     lv_label_set_text(lbl_tag, tag_buf);
     lv_obj_set_style_text_color(lbl_tag, lv_color_hex(0x94A3B8), 0);
     lv_obj_align(lbl_tag, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_clear_flag(lbl_tag, LV_OBJ_FLAG_CLICKABLE);
 
     st->item_btns[idx] = row;
   }
@@ -361,6 +408,8 @@ static void launcher_build_ui(launcher_state_t *st) {
   lv_label_set_text(st->hdr_mode, "PARTIAL");
   lv_obj_set_style_text_color(st->hdr_mode, lv_color_hex(0x34D399), 0);
   lv_obj_align(st->hdr_mode, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_add_flag(st->hdr_mode, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(st->hdr_mode, launcher_mode_event_cb, LV_EVENT_CLICKED, st);
 
   // 2. Group selector bar (height 24, y=24)
   st->grp_bar = lv_obj_create(scr);
@@ -371,10 +420,13 @@ static void launcher_build_ui(launcher_state_t *st) {
   lv_obj_set_style_radius(st->grp_bar, 0, 0);
   lv_obj_set_style_pad_all(st->grp_bar, 2, 0);
   lv_obj_clear_flag(st->grp_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(st->grp_bar, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(st->grp_bar, launcher_grp_event_cb, LV_EVENT_CLICKED, st);
 
   st->grp_label = lv_label_create(st->grp_bar);
   lv_obj_set_style_text_color(st->grp_label, lv_color_hex(0xFDE047), 0);
   lv_obj_center(st->grp_label);
+  lv_obj_clear_flag(st->grp_label, LV_OBJ_FLAG_CLICKABLE);
 
   // 3. App list container (y=50, height = h - 50 - 64)
   int32_t list_h = (int32_t)h - 114;
@@ -608,6 +660,9 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 int launcher_main(int argc, char **argv) {
   bool list_only = false;
   bool include_hidden = false;
+  const char *app_to_launch = NULL;
+  const char *fb_path = NULL;
+  const char *kbd_path = NULL;
 
   if (argc > 1) {
     if (strcmp(argv[1], "-l") == 0 || strcmp(argv[1], "--list") == 0) {
@@ -615,6 +670,13 @@ int launcher_main(int argc, char **argv) {
     } else if (strcmp(argv[1], "-a") == 0 || strcmp(argv[1], "--all") == 0) {
       list_only = true;
       include_hidden = true;
+    } else if (argv[1][0] == '/') {
+      fb_path = argv[1];
+      if (argc > 2 && argv[2][0] == '/') {
+        kbd_path = argv[2];
+      }
+    } else {
+      app_to_launch = argv[1];
     }
   }
 
@@ -639,9 +701,6 @@ int launcher_main(int argc, char **argv) {
 
   s_launcher_active = true;
 
-  const char *fb_path = (argc > 1) ? argv[1] : NULL;
-  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
-
   eos_lvgl_cfg_t cfg = {
       .fb_path = fb_path,
       .kbd_path = kbd_path,
@@ -659,7 +718,23 @@ int launcher_main(int argc, char **argv) {
     return -1;
   }
 
+  printf("launcher: started on %s (%ux%u, %s)\n",
+         fb_path ? fb_path : "/dev/fb0",
+         (unsigned)eos_lvgl_get_width(), (unsigned)eos_lvgl_get_height(),
+         eos_lvgl_get_indev() ? "keyboard active" : "touch/display mode (no keyboard)");
+
   launcher_build_ui(st);
+
+  if (app_to_launch) {
+    for (int i = 0; i < st->filtered_count; i++) {
+      if (strcmp(st->filtered[i]->filename, app_to_launch) == 0) {
+        st->selected_item = i;
+        launcher_update_details(st);
+        st->trigger_launch = true;
+        break;
+      }
+    }
+  }
 
   while (!st->should_exit) {
     uint16_t key = 0;
