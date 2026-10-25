@@ -143,6 +143,7 @@ typedef enum {
   //=====================================================
   EOS_TOUCH_IOCTL_POLL,              // eos_input_event_t *ev
   EOS_TOUCH_IOCTL_GET_COORDS,        // uint16_t *x, uint16_t *y, bool *pressed
+  EOS_TOUCH_IOCTL_GET_PRESSURE,      // uint16_t *pressure
 } eos_ioctl_t;
 
 // (^__^)==\~

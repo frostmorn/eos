@@ -31,10 +31,13 @@ typedef struct {
   uint8_t touch_tail;
   uint16_t last_touch_x;
   uint16_t last_touch_y;
+  uint16_t last_touch_pressure;
   bool touch_pressed;
   uint16_t touch_down_x;
   uint16_t touch_down_y;
   uint32_t touch_down_ms;
+  uint16_t touch_max_pressure;
+  uint32_t touch_total_travel;
   bool touch_moved;
   bool touch_gestures_enabled;
   eos_lvgl_touch_cb_t touch_cb;
@@ -230,6 +233,13 @@ static void touch_queue_push(const eos_lvgl_touch_event_t *ev) {
   s_lvgl.touch_head = next;
 }
 
+#define EOS_TOUCH_NOISE_PRESSURE_THRESHOLD 5   // Ignore sensor noise / hover below this pressure
+#define EOS_TOUCH_CLICK_MIN_PRESSURE      20  // Intentional click requires >= 20 peak pressure (if supported)
+#define EOS_TOUCH_CLICK_MAX_TRAVEL_PX     30  // Max cumulative movement allowed for click/tap
+#define EOS_TOUCH_CLICK_MIN_DUR_MS        30  // Min contact duration for click/tap (reject noise glitches)
+#define EOS_TOUCH_CLICK_MAX_DUR_MS        550 // Max contact duration for click/tap (longer is a hold)
+#define EOS_TOUCH_DRAG_DISPLACEMENT_PX    20  // Displacement from origin to flag dragging
+
 static void poll_hardware_touch(void) {
   if (s_lvgl.pub.touch_fd < 0)
     return;
@@ -239,39 +249,63 @@ static void poll_hardware_touch(void) {
   int ret = ioctl(s_lvgl.pub.touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
   if (ret > 0 && ev.type == EOS_INPUT_EVENT_TOUCH) {
     bool was_pressed = s_lvgl.touch_pressed;
+    uint32_t now = eos_lvgl_tick_cb();
+
+    // Reject sensor noise blips when touch reports negligible pressure
+    if (ev.state != 0 && ev.pressure > 0 &&
+        ev.pressure < EOS_TOUCH_NOISE_PRESSURE_THRESHOLD) {
+      return;
+    }
+
+    uint16_t prev_x = s_lvgl.last_touch_x;
+    uint16_t prev_y = s_lvgl.last_touch_y;
+
     s_lvgl.last_touch_x = ev.x;
     s_lvgl.last_touch_y = ev.y;
+    s_lvgl.last_touch_pressure = (ev.state != 0) ? ev.pressure : 0;
     s_lvgl.touch_pressed = (ev.state != 0);
 
     eos_lvgl_touch_event_t tev = {
         .x = ev.x,
         .y = ev.y,
         .pressed = s_lvgl.touch_pressed,
+        .pressure = s_lvgl.last_touch_pressure,
         .gesture = EOS_LVGL_GESTURE_NONE,
     };
-
-    uint32_t now = eos_lvgl_tick_cb();
 
     if (s_lvgl.touch_pressed && !was_pressed) {
       // Touch began
       s_lvgl.touch_down_x = ev.x;
       s_lvgl.touch_down_y = ev.y;
       s_lvgl.touch_down_ms = now;
+      s_lvgl.touch_max_pressure = ev.pressure;
+      s_lvgl.touch_total_travel = 0;
       s_lvgl.touch_moved = false;
     } else if (s_lvgl.touch_pressed && was_pressed) {
-      // Touch dragging
+      // Touch dragging / continuing contact
+      int step_dx = (int)ev.x - (int)prev_x;
+      int step_dy = (int)ev.y - (int)prev_y;
+      s_lvgl.touch_total_travel += (uint32_t)(abs(step_dx) + abs(step_dy));
+
+      if (ev.pressure > s_lvgl.touch_max_pressure) {
+        s_lvgl.touch_max_pressure = ev.pressure;
+      }
+
       int dx = (int)ev.x - (int)s_lvgl.touch_down_x;
       int dy = (int)ev.y - (int)s_lvgl.touch_down_y;
-      if (abs(dx) > 20 || abs(dy) > 20) {
+      if (abs(dx) > EOS_TOUCH_DRAG_DISPLACEMENT_PX ||
+          abs(dy) > EOS_TOUCH_DRAG_DISPLACEMENT_PX ||
+          s_lvgl.touch_total_travel > EOS_TOUCH_CLICK_MAX_TRAVEL_PX) {
         s_lvgl.touch_moved = true;
       }
     } else if (!s_lvgl.touch_pressed && was_pressed) {
-      // Touch released -> compute gesture
+      // Touch released -> distinguish deliberate click/tap from drag/swipe
       int dx = (int)s_lvgl.last_touch_x - (int)s_lvgl.touch_down_x;
       int dy = (int)s_lvgl.last_touch_y - (int)s_lvgl.touch_down_y;
       uint32_t dur = now - s_lvgl.touch_down_ms;
 
       if (s_lvgl.touch_moved) {
+        // Definite drag / swipe gesture
         if (abs(dx) >= abs(dy)) {
           tev.gesture = (dx > 0) ? EOS_LVGL_GESTURE_SWIPE_RIGHT
                                  : EOS_LVGL_GESTURE_SWIPE_LEFT;
@@ -279,8 +313,19 @@ static void poll_hardware_touch(void) {
           tev.gesture = (dy > 0) ? EOS_LVGL_GESTURE_SWIPE_DOWN
                                  : EOS_LVGL_GESTURE_SWIPE_UP;
         }
-      } else if (dur < 600) {
-        tev.gesture = EOS_LVGL_GESTURE_TAP;
+      } else {
+        // Evaluate click / tap using spatial travel, duration, and pressure profile
+        bool valid_dur = (dur >= EOS_TOUCH_CLICK_MIN_DUR_MS &&
+                          dur <= EOS_TOUCH_CLICK_MAX_DUR_MS);
+        // If controller reports pressure (>0), require peak pressure to exceed click threshold
+        // (filters out feather brushes, glance touches, and lift-off noise)
+        bool valid_pressure = (s_lvgl.touch_max_pressure == 0 ||
+                               s_lvgl.touch_max_pressure >= EOS_TOUCH_CLICK_MIN_PRESSURE);
+        bool valid_travel = (s_lvgl.touch_total_travel <= EOS_TOUCH_CLICK_MAX_TRAVEL_PX);
+
+        if (valid_dur && valid_pressure && valid_travel) {
+          tev.gesture = EOS_LVGL_GESTURE_TAP;
+        }
       }
 
       if (s_lvgl.touch_gestures_enabled) {
@@ -321,7 +366,11 @@ static void eos_lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   data->point.x = s_lvgl.last_touch_x;
   data->point.y = s_lvgl.last_touch_y;
   data->state =
-      s_lvgl.touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+      (s_lvgl.touch_pressed &&
+       (s_lvgl.last_touch_pressure == 0 ||
+        s_lvgl.last_touch_pressure >= EOS_TOUCH_NOISE_PRESSURE_THRESHOLD))
+          ? LV_INDEV_STATE_PRESSED
+          : LV_INDEV_STATE_RELEASED;
 }
 
 // ── Framebuffer Partial & Full-Frame Flushing ──────────────────
@@ -920,6 +969,29 @@ bool eos_lvgl_get_touch_point(uint16_t *x, uint16_t *y, bool *pressed) {
   if (pressed)
     *pressed = s_lvgl.touch_pressed;
   return s_lvgl.pub.touch_fd >= 0;
+}
+
+bool eos_lvgl_get_touch_point_ex(uint16_t *x, uint16_t *y, uint16_t *pressure,
+                                 bool *pressed) {
+  if (!s_lvgl.pub.initialized)
+    return false;
+  poll_hardware_touch();
+  if (x)
+    *x = s_lvgl.last_touch_x;
+  if (y)
+    *y = s_lvgl.last_touch_y;
+  if (pressure)
+    *pressure = s_lvgl.touch_pressed ? s_lvgl.last_touch_pressure : 0;
+  if (pressed)
+    *pressed = s_lvgl.touch_pressed;
+  return s_lvgl.pub.touch_fd >= 0;
+}
+
+uint16_t eos_lvgl_get_touch_pressure(void) {
+  if (!s_lvgl.pub.initialized)
+    return 0;
+  poll_hardware_touch();
+  return s_lvgl.touch_pressed ? s_lvgl.last_touch_pressure : 0;
 }
 
 bool eos_lvgl_has_touch(void) {

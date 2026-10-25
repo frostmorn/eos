@@ -72,7 +72,8 @@ int test_input_main(int argc, char **argv) {
         break;
       }
     } else if (ev.type == EOS_INPUT_EVENT_TOUCH) {
-      printf("[%d] Event: TOUCH, x=%u, y=%u\n", count, ev.x, ev.y);
+      printf("[%d] Event: TOUCH, x=%u, y=%u, pressure=%u, state=%u\n", count,
+             ev.x, ev.y, ev.pressure, ev.state);
     } else {
       printf("[%d] Event: UNKNOWN type=%u, code=%u\n", count, ev.type, ev.code);
     }

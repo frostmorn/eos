@@ -112,6 +112,7 @@ typedef struct {
   uint16_t x;
   uint16_t y;
   bool pressed;
+  uint16_t pressure; // Touch strength / pressure (0 if unsupported or released)
   eos_lvgl_gesture_t gesture;
 } eos_lvgl_touch_event_t;
 
@@ -124,6 +125,9 @@ void eos_lvgl_set_touch_cb(eos_lvgl_touch_cb_t cb, void *user_data);
 bool eos_lvgl_poll_touch(eos_lvgl_touch_event_t *touch_out);
 void eos_lvgl_clear_touch(void);
 bool eos_lvgl_get_touch_point(uint16_t *x, uint16_t *y, bool *pressed);
+bool eos_lvgl_get_touch_point_ex(uint16_t *x, uint16_t *y, uint16_t *pressure,
+                                 bool *pressed);
+uint16_t eos_lvgl_get_touch_pressure(void);
 bool eos_lvgl_has_touch(void);
 bool eos_lvgl_has_keyboard(void);
 

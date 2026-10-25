@@ -16,6 +16,7 @@ typedef struct {
       uint16_t y;
       uint8_t state; // 1 = pressed, 0 = released
       uint8_t count; // touch point count
+      uint16_t pressure; // touch strength / pressure (0 if released or unsupported)
     };
   };
 } eos_input_event_t;

@@ -28,6 +28,7 @@ typedef struct {
   uint16_t height;
   uint16_t last_x;
   uint16_t last_y;
+  uint16_t last_pressure;
   bool was_pressed;
 } gt911_state_t;
 
@@ -179,20 +180,24 @@ int driver_input_gt911_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (pressed) {
         st->last_x = x[0];
         st->last_y = y[0];
+        st->last_pressure = strength[0];
         st->was_pressed = true;
         ev->type = EOS_INPUT_EVENT_TOUCH;
         ev->x = x[0];
         ev->y = y[0];
         ev->state = 1;
         ev->count = count;
+        ev->pressure = strength[0];
         return 1;
       } else if (st->was_pressed) {
         st->was_pressed = false;
+        st->last_pressure = 0;
         ev->type = EOS_INPUT_EVENT_TOUCH;
         ev->x = st->last_x;
         ev->y = st->last_y;
         ev->state = 0;
         ev->count = 0;
+        ev->pressure = 0;
         return 1;
       }
       return 0;
@@ -210,10 +215,20 @@ int driver_input_gt911_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (pressed) {
         st->last_x = x[0];
         st->last_y = y[0];
+        st->last_pressure = strength[0];
+      } else {
+        st->last_pressure = 0;
       }
       if (out_x) *out_x = pressed ? x[0] : st->last_x;
       if (out_y) *out_y = pressed ? y[0] : st->last_y;
       if (out_pressed) *out_pressed = pressed;
+      return 0;
+    }
+    case EOS_TOUCH_IOCTL_GET_PRESSURE: {
+      uint16_t *out_pressure = va_arg(args, uint16_t *);
+      if (out_pressure) {
+        *out_pressure = st->was_pressed ? st->last_pressure : 0;
+      }
       return 0;
     }
     default:
@@ -244,20 +259,24 @@ ssize_t driver_input_gt911_read(eos_dev_t *dev, int fd, void *dst, size_t size) 
     if (pressed) {
       st->last_x = x[0];
       st->last_y = y[0];
+      st->last_pressure = strength[0];
       st->was_pressed = true;
       ev->type = EOS_INPUT_EVENT_TOUCH;
       ev->x = x[0];
       ev->y = y[0];
       ev->state = 1;
       ev->count = count;
+      ev->pressure = strength[0];
       return sizeof(eos_input_event_t);
     } else if (st->was_pressed) {
       st->was_pressed = false;
+      st->last_pressure = 0;
       ev->type = EOS_INPUT_EVENT_TOUCH;
       ev->x = st->last_x;
       ev->y = st->last_y;
       ev->state = 0;
       ev->count = 0;
+      ev->pressure = 0;
       return sizeof(eos_input_event_t);
     }
     vTaskDelay(pdMS_TO_TICKS(10));
