@@ -205,20 +205,20 @@ int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
     strlcpy(devname, path, sizeof(devname));
   }
 
-  EOS_LOGI("DEVFS OPEN: device='%s' driver_path='%s'\n", devname,
-           slash ? slash : "");
+  // EOS_LOGI("DEVFS OPEN: device='%s' driver_path='%s'\n", devname,
+  //          slash ? slash : "");
 
   eos_dev_t *dev = eos_dev_find_by_name(devname);
 
   if (!dev) {
-    EOS_LOGI("DEVFS OPEN: device '%s' not found\n", devname);
+    // EOS_LOGI("DEVFS OPEN: device '%s' not found\n", devname);
     errno = ENOENT;
     return -1;
   }
 
   int drvfd = eos_drv_open(dev, slash ? slash : "", flags, mode);
 
-  EOS_LOGI("DEVFS OPEN: driver fd=%d\n", drvfd);
+  // EOS_LOGI("DEVFS OPEN: driver fd=%d\n", drvfd);
 
   if (drvfd < 0)
     return -1;

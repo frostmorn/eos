@@ -2,6 +2,7 @@
 #include "ecore/driver.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
+#include "pregen.h"
 #include <driver/gpio.h>
 #include <esp_bit_defs.h>
 #include <soc/soc_caps.h>
@@ -38,15 +39,6 @@ bool eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev) {
   // Seek if cap already claimed
   for (size_t i = 0; i < kv_size(ecaps); i++) {
     if ((kv_A(ecaps, i).type == type) && (kv_A(ecaps, i).no == no)) {
-      // If already claimed by NULL (system/reserved) and new claim is by a specific device,
-      // allow overriding/transferring ownership to the device.
-      if (kv_A(ecaps, i).dev == NULL && dev != NULL) {
-        kv_A(ecaps, i).dev = dev;
-        EOS_LOGI("Claimed reserved cap %s %d by dev %s/%s",
-                 eos_cap_type_to_str(type), no, dev->driver->scope,
-                 dev->driver->name);
-        return true;
-      }
       return false;
     }
   }
@@ -55,8 +47,8 @@ bool eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev) {
   eos_cap_t newcap = {.type = type, .no = no, .dev = dev};
   kv_push(eos_cap_t, ecaps, newcap);
 
-  EOS_LOGI("Claimed cap %s %d by dev %s/%s", eos_cap_type_to_str(type), no,
-           dev ? dev->driver->scope : "NULL", dev ? dev->driver->name : "NULL");
+  // EOS_LOGI("Claimed cap %s %d by dev %s/%s", eos_cap_type_to_str(type), no,
+  //          dev ? dev->driver->scope : "NULL", dev ? dev->driver->name : "NULL");
 
   return true;
 }
@@ -78,7 +70,18 @@ void eos_capsmgr_init() {
   
   EOS_LOGI("Claiming reserved gpio pins");
 
-  // Claim reserved gpios
+  // Claim hardware reserved gpios according to EOS_GPIO_RESERVED from pregen.h
+  static const int32_t s_reserved_gpios[] = EOS_GPIO_RESERVED;
+  for (size_t i = 0; i < sizeof(s_reserved_gpios) / sizeof(s_reserved_gpios[0]); i++) {
+    int32_t pin = s_reserved_gpios[i];
+    if (pin >= 0 && pin < SOC_GPIO_PIN_COUNT) {
+      // Note: GPIO 0 is wired to input/keyboard on Lilka boards, so do not claim 0 globally here
+      if (pin == 0) continue;
+      eos_cap_claim(EOS_CAPS_GPIO, pin, NULL);
+    }
+  }
+
+  // Claim invalid and ESP-IDF reserved gpios
   for (int32_t i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
     if ((!GPIO_IS_VALID_GPIO(i)) || esp_gpio_is_reserved(BIT64(i)))
       eos_cap_claim(EOS_CAPS_GPIO, i, NULL);

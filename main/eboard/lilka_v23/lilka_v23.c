@@ -6,19 +6,10 @@
 
 void eos_board_init() {
   // ================== RESERVED PINS ==================
-  // Strapping
-
-  // For V2:
-  // GPIO19-20                     USB
-  // GPIO0, GPIO3, GPIO45, GPIO 46 Strap pins
-  // GPIO22-25                     Just do not exist[lol:D]
-  // GPIO26-32                     Reserved for PSRAM
-  // GPIO33-37                     Reserved for Octal PSRAM
-  eos_cap_claim(EOS_CAPS_GPIO, 0, NULL);
-  eos_cap_claim(EOS_CAPS_GPIO, 3, NULL);
-  eos_cap_claim(EOS_CAPS_GPIO, 45, NULL);
-  // GPIO 46 is claimed by the ST7789 display driver as its enable (en) pin
-  // (automatically managed via capsmgr reserved/override capability).
+  // Strapping & SoC system pins (USB, PSRAM, Flash, UART, Strapping 3/45)
+  // are claimed automatically during eos_capsmgr_init().
+  // GPIO 0 is wired to input/keyboard (Select).
+  // GPIO 46 is wired to display/st7789 (EN).
   // ====================== FLASH ======================
   eos_dev_t *flash = eos_dev_alloc();
   flash->driver = eos_drv_find("storage", "flash");

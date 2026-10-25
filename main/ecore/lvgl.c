@@ -208,19 +208,22 @@ static void eos_lvgl_indev_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 // Round invalidated areas horizontally to full display width so LVGL's
 // draw buffer row stride always matches ctx->width * 2 without stride-alignment
-// padding shifts. When full-frame fallback is active, round to full screen.
+// padding shifts.
 static void eos_lvgl_invalidate_area_cb(lv_event_t *e) {
   eos_lvgl_ctx_t *ctx = (eos_lvgl_ctx_t *)lv_event_get_user_data(e);
   lv_area_t *area = (lv_area_t *)lv_event_get_param(e);
   if (!ctx || !area || ctx->width == 0 || ctx->height == 0)
     return;
 
+  if (area->y1 < 0)
+    area->y1 = 0;
+  if (area->y2 >= (int32_t)ctx->height)
+    area->y2 = (int32_t)ctx->height - 1;
+  if (area->y1 > area->y2)
+    area->y2 = area->y1;
+
   area->x1 = 0;
   area->x2 = (int32_t)ctx->width - 1;
-  if (ctx->fallback_full) {
-    area->y1 = 0;
-    area->y2 = (int32_t)ctx->height - 1;
-  }
 }
 
 // Writes a full frame to /dev/fb0 using windowed row strips (matching the

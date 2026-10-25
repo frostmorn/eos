@@ -107,11 +107,6 @@ void driver_bus_gpio_shutdown(eos_dev_t *dev) {
 //=====================================================================
 int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
                          int mode) {
-  // EOS_LOGI("GPIO OPEN: path='%s' flags=%d mode=%d\n", path ? path : "(null)",
-  //          flags, mode);
-  // Duplicate
-  char *gPath = strdup(path);
-
   // Find last Path token
   char *lastToken = strrchr(path, '/');
 
@@ -126,36 +121,36 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
   // Ensure zero if zero
   if (gpioNum == 0 && (strcmp(lastToken, "0") != 0)) {
     errno = EBADF;
-    free(gPath);
     return -1;
   }
 
   // Ensure GPIO range and validity
   if (!IS_VALID_FD(gpioNum) || !GPIO_IS_VALID_GPIO(gpioNum)) {
     errno = EINVAL;
-    free(gPath);
+    return -1;
+  }
+
+  // Ensure this pin was initialized as a valid GPIO on this bus
+  gpio_bus_state_t *state = dev ? dev->state : NULL;
+  if (!state || state->pins[gpioNum].cfg.pin_bit_mask == 0) {
+    errno = EBUSY;
     return -1;
   }
 
   // Claiming pin
   if (!eos_cap_claim(EOS_CAPS_GPIO, gpioNum, dev)) {
     errno = EBUSY;
-    free(gPath);
     return -1;
   }
 
   // Trying to open GPIO
-  gpio_bus_state_t *state = dev->state;
   if (state->pins[gpioNum].task_owner == NULL) {
     state->pins[gpioNum].task_owner = xTaskGetCurrentTaskHandle();
   } else {
     errno = EBUSY;
     eos_cap_release(EOS_CAPS_GPIO, gpioNum, dev);
-    gpioNum = -1; // already opened
+    return -1;
   }
-
-  // Cleanup
-  free(gPath);
 
   return gpioNum;
 }
@@ -189,7 +184,7 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   }
   gpio_pin_t *pin = &((gpio_bus_state_t *)dev->state)->pins[fd];
 
-  if (pin->cfg.mode != GPIO_MODE_INPUT) {
+  if ((pin->cfg.mode & GPIO_MODE_DEF_INPUT) == 0) {
     pin->cfg.mode = GPIO_MODE_INPUT;
 
     if (gpio_config(&pin->cfg) != ESP_OK) {
@@ -247,8 +242,8 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
   gpio_pin_t *pin = &((gpio_bus_state_t *)dev->state)->pins[fd];
   const uint8_t *p = data;
 
-  if (pin->cfg.mode != GPIO_MODE_OUTPUT) {
-    pin->cfg.mode = GPIO_MODE_OUTPUT;
+  if (pin->cfg.mode != GPIO_MODE_INPUT_OUTPUT) {
+    pin->cfg.mode = GPIO_MODE_INPUT_OUTPUT;
 
     if (gpio_config(&pin->cfg) != ESP_OK) {
       errno = EIO;
@@ -310,21 +305,25 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   switch (cmd) {
 
   case EOS_GPIO_IOCTL_SET_FLOATING:
+    pin->cfg.mode = GPIO_MODE_INPUT;
     pin->cfg.pull_up_en = GPIO_PULLUP_DISABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
     break;
 
   case EOS_GPIO_IOCTL_SET_PULLUP:
+    pin->cfg.mode = GPIO_MODE_INPUT;
     pin->cfg.pull_up_en = GPIO_PULLUP_ENABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_DISABLE;
     break;
 
   case EOS_GPIO_IOCTL_SET_PULLDOWN:
+    pin->cfg.mode = GPIO_MODE_INPUT;
     pin->cfg.pull_up_en = GPIO_PULLUP_DISABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
     break;
 
   case EOS_GPIO_IOCTL_SET_PULLUPDOWN:
+    pin->cfg.mode = GPIO_MODE_INPUT;
     pin->cfg.pull_up_en = GPIO_PULLUP_ENABLE;
     pin->cfg.pull_down_en = GPIO_PULLDOWN_ENABLE;
     break;
@@ -378,8 +377,9 @@ DIR *driver_bus_gpio_opendir(eos_dev_t *dev, const char *name) {
 //=====================================================================
 struct dirent *driver_bus_gpio_readdir(eos_dev_t *dev, DIR *pdir) {
   gpio_dir_t *gpdir = (gpio_dir_t *)pdir;
+  gpio_bus_state_t *state = dev ? dev->state : NULL;
 
-  if (!gpdir) {
+  if (!gpdir || !state) {
     errno = EBADF;
     return NULL;
   }
@@ -388,17 +388,20 @@ struct dirent *driver_bus_gpio_readdir(eos_dev_t *dev, DIR *pdir) {
     if (!IS_VALID_FD(gpdir->idx))
       return NULL;
 
-    if (GPIO_IS_VALID_GPIO(gpdir->idx)) {
-      memset(&gpdir->entry, 0, sizeof(gpdir->entry));
-      gpdir->entry.d_type = DT_CHR;
-      gpdir->entry.d_ino = (ino_t)gpdir->idx;
-      snprintf(gpdir->entry.d_name, sizeof(gpdir->entry.d_name), "%d", gpdir->idx);
+    int pin = gpdir->idx;
+    gpdir->idx++; // advance AFTER selecting entry
 
-      gpdir->idx++; // advance AFTER selecting entry
-      return &gpdir->entry;
+    // Only expose pins that are valid, managed by bus/gpio, and not claimed by another device
+    if (GPIO_IS_VALID_GPIO(pin) && state->pins[pin].cfg.pin_bit_mask != 0) {
+      if (eos_cap_is_free(EOS_CAPS_GPIO, pin) ||
+          state->pins[pin].task_owner != NULL) {
+        memset(&gpdir->entry, 0, sizeof(gpdir->entry));
+        gpdir->entry.d_type = DT_CHR;
+        gpdir->entry.d_ino = (ino_t)pin;
+        snprintf(gpdir->entry.d_name, sizeof(gpdir->entry.d_name), "%d", pin);
+        return &gpdir->entry;
+      }
     }
-
-    gpdir->idx++;
   }
 }
 //=====================================================================
