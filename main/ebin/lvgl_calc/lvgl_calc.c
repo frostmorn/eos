@@ -158,6 +158,24 @@ static void calc_update_ui(calc_state_t *st) {
   }
 }
 
+static void calc_btn_click_cb(lv_event_t *e) {
+  calc_state_t *st = (calc_state_t *)lv_event_get_user_data(e);
+  if (!st)
+    return;
+  lv_obj_t *btn = lv_event_get_current_target(e);
+  for (int r = 0; r < CALC_ROWS; r++) {
+    for (int c = 0; c < CALC_COLS; c++) {
+      if (st->btns[r][c] == btn) {
+        st->sel_r = r;
+        st->sel_c = c;
+        calc_press_token(st, s_calc_keys[r][c]);
+        calc_update_ui(st);
+        return;
+      }
+    }
+  }
+}
+
 int lvgl_calc_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
@@ -222,16 +240,28 @@ int lvgl_calc_main(int argc, char **argv) {
       lv_obj_set_pos(btn, 6 + c * (btn_w + 6), start_y + r * (btn_h + 5));
       lv_obj_set_style_radius(btn, 5, 0);
       lv_obj_set_style_pad_all(btn, 0, 0);
+      lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
 
       lv_obj_t *lbl = lv_label_create(btn);
       lv_label_set_text(lbl, s_calc_keys[r][c]);
       lv_obj_set_style_text_color(lbl, lv_color_hex(0xF8FAFC), 0);
+      lv_obj_clear_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_center(lbl);
 
       st.btns[r][c] = btn;
     }
   }
+
+  // Touch & click support: attach click handler to all calculator buttons
+  for (int r = 0; r < CALC_ROWS; r++) {
+    for (int c = 0; c < CALC_COLS; c++) {
+      lv_obj_add_event_cb(st.btns[r][c], calc_btn_click_cb, LV_EVENT_CLICKED, &st);
+    }
+  }
+
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, NULL, NULL);
 
   lv_obj_t *hint = lv_label_create(scr);
   lv_label_set_text(hint, "Arrows:Move A/ENT:Press C:Clear D:Del B:Exit");

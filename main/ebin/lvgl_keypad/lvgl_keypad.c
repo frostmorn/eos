@@ -57,9 +57,12 @@ int lvgl_keypad_main(int argc, char **argv) {
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *hdr = lv_label_create(scr);
-  lv_label_set_text(hdr, "LVGL Keypad Tester (ESC or 3x B to exit)");
+  lv_label_set_text(hdr, "LVGL Keypad Tester (ESC, B, or X to exit)");
   lv_obj_set_style_text_color(hdr, lv_color_hex(0x38BDF8), 0);
   lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 6);
+
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, NULL, NULL);
 
   lv_obj_t *cap_objs[KEY_CAP_COUNT] = {0};
   for (size_t i = 0; i < KEY_CAP_COUNT; i++) {

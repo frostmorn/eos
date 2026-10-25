@@ -1,6 +1,7 @@
 #include "pregen.h"
 #ifdef EOS_TARGET_JC4880P443C_I_W_Y
 #include "eboard/board.h"
+#include <driver/gpio.h>
 
 void eos_board_init() {
   // ===================== DSI display =====================
@@ -34,6 +35,26 @@ void eos_board_init() {
                              {"addr", EOS_CFG_INT, .val.i = 0x5D},
                              {NULL}};
   eos_dev_attach(touch, eos_devtree_root());
+#endif
+
+#ifdef EOS_DRV_BUS_GPIO_ENABLED
+  // ===================== GPIO bus =====================
+  eos_dev_t *gpio = eos_dev_alloc();
+  gpio->driver = eos_drv_find("bus", "gpio");
+  eos_dev_attach(gpio, eos_devtree_root());
+
+#ifdef EOS_DRV_INPUT_KEYBOARD_ENABLED
+  // ===================== GPIO keyboard =====================
+  // JC4880 board has a BOOT button on GPIO 35 (active-low with pullup).
+  // Map it to button B (standard back/cancel/exit button in EOS).
+  eos_dev_t *kbd = eos_dev_alloc();
+  kbd->driver = eos_drv_find("input", "keyboard");
+  kbd->pins = (eos_pin_t[]){{"b", 35}, {NULL, 0}};
+  kbd->cfg = (eos_cfg_t[]){{"mode", EOS_CFG_INT, .val.i = GPIO_MODE_INPUT},
+                           {"pull", EOS_CFG_INT, .val.i = GPIO_PULLUP_ONLY},
+                           {NULL}};
+  eos_dev_attach(kbd, gpio);
+#endif
 #endif
 
   /*

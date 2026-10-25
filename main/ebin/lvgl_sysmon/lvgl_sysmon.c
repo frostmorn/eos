@@ -130,9 +130,12 @@ int lvgl_sysmon_main(int argc, char **argv) {
   lv_obj_align(ui.lbl_lvgl, LV_ALIGN_TOP_LEFT, 10, 184);
 
   lv_obj_t *hint = lv_label_create(scr);
-  lv_label_set_text(hint, "A:Refresh  C:Partial/Full  D:FullFlush  B/ESC:Exit");
+  lv_label_set_text(hint, "A/Tap:Refresh  C:Mode  D:FullFlush  B/X:Exit");
   lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
+
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, NULL, NULL);
 
   uint64_t start_ms = get_ms();
   uint64_t last_upd = 0;

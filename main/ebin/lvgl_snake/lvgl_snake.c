@@ -230,6 +230,9 @@ int lvgl_snake_main(int argc, char **argv) {
   lv_obj_set_style_text_color(g->status_lbl, lv_color_hex(0x94A3B8), 0);
   lv_obj_align(g->status_lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
 
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, NULL, NULL);
+
   snake_reset(g);
   snake_sync_ui(g);
 

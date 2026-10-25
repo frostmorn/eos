@@ -139,6 +139,9 @@ static int test_lvgl_main(int argc, char **argv) {
   lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSED, &ui);
   lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSING, &ui);
 
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, NULL, NULL);
+
   update_test_ui(&ui, NULL);
 
   while (ui.running) {

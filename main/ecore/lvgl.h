@@ -97,6 +97,45 @@ void eos_lvgl_clear_keys(void);
 uint32_t eos_lvgl_map_key(uint16_t eos_key, bool dpad_group_nav);
 const char *eos_lvgl_key_name(uint16_t eos_key);
 
+// Touch gesture types
+typedef enum {
+  EOS_LVGL_GESTURE_NONE = 0,
+  EOS_LVGL_GESTURE_TAP,
+  EOS_LVGL_GESTURE_SWIPE_UP,
+  EOS_LVGL_GESTURE_SWIPE_DOWN,
+  EOS_LVGL_GESTURE_SWIPE_LEFT,
+  EOS_LVGL_GESTURE_SWIPE_RIGHT,
+} eos_lvgl_gesture_t;
+
+// Touch input event structure
+typedef struct {
+  uint16_t x;
+  uint16_t y;
+  bool pressed;
+  eos_lvgl_gesture_t gesture;
+} eos_lvgl_touch_event_t;
+
+// Touch event callback
+typedef void (*eos_lvgl_touch_cb_t)(const eos_lvgl_touch_event_t *event,
+                                    void *user_data);
+
+// Touch input helpers.
+void eos_lvgl_set_touch_cb(eos_lvgl_touch_cb_t cb, void *user_data);
+bool eos_lvgl_poll_touch(eos_lvgl_touch_event_t *touch_out);
+void eos_lvgl_clear_touch(void);
+bool eos_lvgl_get_touch_point(uint16_t *x, uint16_t *y, bool *pressed);
+bool eos_lvgl_has_touch(void);
+bool eos_lvgl_has_keyboard(void);
+
+// Bridge touch swipe/tap gestures into synthetic keyboard events (KEY_UP/DOWN/LEFT/RIGHT, ENTER).
+void eos_lvgl_set_touch_gestures(bool enable);
+bool eos_lvgl_get_touch_gestures(void);
+
+// Touch-friendly standardized 'Back' / 'Exit' button helper for LVGL screens.
+// If custom_cb is NULL, clicking the button injects KEY_B to exit the application.
+lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
+                                   void *user_data);
+
 #ifdef __cplusplus
 }
 #endif

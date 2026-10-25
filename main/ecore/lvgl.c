@@ -14,8 +14,9 @@
 #endif
 
 // Maximum DMA chunk size matching st7789 driver strip fallback (16 KB)
-#define EOS_LVGL_DMA_STRIP_BYTES 16384U
-#define EOS_LVGL_KEY_QUEUE_SIZE  32U
+#define EOS_LVGL_DMA_STRIP_BYTES  16384U
+#define EOS_LVGL_KEY_QUEUE_SIZE   32U
+#define EOS_LVGL_TOUCH_QUEUE_SIZE 16U
 
 typedef struct {
   eos_lvgl_ctx_t pub;
@@ -24,9 +25,20 @@ typedef struct {
   uint8_t key_tail;
   uint32_t pending_lv_key;
   bool send_release;
+
+  eos_lvgl_touch_event_t touch_queue[EOS_LVGL_TOUCH_QUEUE_SIZE];
+  uint8_t touch_head;
+  uint8_t touch_tail;
   uint16_t last_touch_x;
   uint16_t last_touch_y;
   bool touch_pressed;
+  uint16_t touch_down_x;
+  uint16_t touch_down_y;
+  uint32_t touch_down_ms;
+  bool touch_moved;
+  bool touch_gestures_enabled;
+  eos_lvgl_touch_cb_t touch_cb;
+  void *touch_cb_user_data;
 } eos_lvgl_internal_t;
 
 static eos_lvgl_internal_t s_lvgl = {
@@ -208,21 +220,103 @@ static void eos_lvgl_indev_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   data->state = LV_INDEV_STATE_RELEASED;
 }
 
-static void eos_lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
-  eos_lvgl_ctx_t *ctx = (eos_lvgl_ctx_t *)lv_indev_get_user_data(indev);
-  if (!ctx || ctx->touch_fd < 0) {
-    data->state = LV_INDEV_STATE_RELEASED;
-    return;
+static void touch_queue_push(const eos_lvgl_touch_event_t *ev) {
+  uint8_t next = (uint8_t)((s_lvgl.touch_head + 1U) % EOS_LVGL_TOUCH_QUEUE_SIZE);
+  if (next == s_lvgl.touch_tail) {
+    s_lvgl.touch_tail =
+        (uint8_t)((s_lvgl.touch_tail + 1U) % EOS_LVGL_TOUCH_QUEUE_SIZE);
   }
+  s_lvgl.touch_queue[s_lvgl.touch_head] = *ev;
+  s_lvgl.touch_head = next;
+}
+
+static void poll_hardware_touch(void) {
+  if (s_lvgl.pub.touch_fd < 0)
+    return;
 
   eos_input_event_t ev;
   memset(&ev, 0, sizeof(ev));
-  int ret = ioctl(ctx->touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
+  int ret = ioctl(s_lvgl.pub.touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
   if (ret > 0 && ev.type == EOS_INPUT_EVENT_TOUCH) {
+    bool was_pressed = s_lvgl.touch_pressed;
     s_lvgl.last_touch_x = ev.x;
     s_lvgl.last_touch_y = ev.y;
     s_lvgl.touch_pressed = (ev.state != 0);
+
+    eos_lvgl_touch_event_t tev = {
+        .x = ev.x,
+        .y = ev.y,
+        .pressed = s_lvgl.touch_pressed,
+        .gesture = EOS_LVGL_GESTURE_NONE,
+    };
+
+    uint32_t now = eos_lvgl_tick_cb();
+
+    if (s_lvgl.touch_pressed && !was_pressed) {
+      // Touch began
+      s_lvgl.touch_down_x = ev.x;
+      s_lvgl.touch_down_y = ev.y;
+      s_lvgl.touch_down_ms = now;
+      s_lvgl.touch_moved = false;
+    } else if (s_lvgl.touch_pressed && was_pressed) {
+      // Touch dragging
+      int dx = (int)ev.x - (int)s_lvgl.touch_down_x;
+      int dy = (int)ev.y - (int)s_lvgl.touch_down_y;
+      if (abs(dx) > 20 || abs(dy) > 20) {
+        s_lvgl.touch_moved = true;
+      }
+    } else if (!s_lvgl.touch_pressed && was_pressed) {
+      // Touch released -> compute gesture
+      int dx = (int)s_lvgl.last_touch_x - (int)s_lvgl.touch_down_x;
+      int dy = (int)s_lvgl.last_touch_y - (int)s_lvgl.touch_down_y;
+      uint32_t dur = now - s_lvgl.touch_down_ms;
+
+      if (s_lvgl.touch_moved) {
+        if (abs(dx) >= abs(dy)) {
+          tev.gesture = (dx > 0) ? EOS_LVGL_GESTURE_SWIPE_RIGHT
+                                 : EOS_LVGL_GESTURE_SWIPE_LEFT;
+        } else {
+          tev.gesture = (dy > 0) ? EOS_LVGL_GESTURE_SWIPE_DOWN
+                                 : EOS_LVGL_GESTURE_SWIPE_UP;
+        }
+      } else if (dur < 600) {
+        tev.gesture = EOS_LVGL_GESTURE_TAP;
+      }
+
+      if (s_lvgl.touch_gestures_enabled) {
+        switch (tev.gesture) {
+        case EOS_LVGL_GESTURE_SWIPE_UP:
+          key_queue_push(KEY_UP);
+          break;
+        case EOS_LVGL_GESTURE_SWIPE_DOWN:
+          key_queue_push(KEY_DOWN);
+          break;
+        case EOS_LVGL_GESTURE_SWIPE_LEFT:
+          key_queue_push(KEY_LEFT);
+          break;
+        case EOS_LVGL_GESTURE_SWIPE_RIGHT:
+          key_queue_push(KEY_RIGHT);
+          break;
+        case EOS_LVGL_GESTURE_TAP:
+          key_queue_push(KEY_ENTER);
+          break;
+        default:
+          break;
+        }
+      }
+    }
+
+    touch_queue_push(&tev);
+
+    if (s_lvgl.touch_cb) {
+      s_lvgl.touch_cb(&tev, s_lvgl.touch_cb_user_data);
+    }
   }
+}
+
+static void eos_lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+  (void)indev;
+  poll_hardware_touch();
 
   data->point.x = s_lvgl.last_touch_x;
   data->point.y = s_lvgl.last_touch_y;
@@ -426,6 +520,7 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   s_lvgl.pub.fb_fd = -1;
   s_lvgl.pub.kbd_fd = -1;
   s_lvgl.pub.touch_fd = -1;
+  s_lvgl.touch_gestures_enabled = true;
 
   const char *fb_path = (cfg && cfg->fb_path) ? cfg->fb_path : getenv("EOS_FB");
   if (!fb_path || !fb_path[0]) {
@@ -765,6 +860,9 @@ bool eos_lvgl_poll_key(uint16_t *eos_key_out) {
 
   // Poll hardware in case LVGL indev timer hasn't run yet in this iteration
   poll_hardware_keyboard();
+  if (s_lvgl.touch_gestures_enabled) {
+    poll_hardware_touch();
+  }
 
   if (s_lvgl.key_head == s_lvgl.key_tail)
     return false;
@@ -781,4 +879,93 @@ void eos_lvgl_clear_keys(void) {
   s_lvgl.key_head = 0;
   s_lvgl.key_tail = 0;
   s_lvgl.send_release = false;
+}
+
+void eos_lvgl_set_touch_cb(eos_lvgl_touch_cb_t cb, void *user_data) {
+  s_lvgl.touch_cb = cb;
+  s_lvgl.touch_cb_user_data = user_data;
+}
+
+bool eos_lvgl_poll_touch(eos_lvgl_touch_event_t *touch_out) {
+  if (!s_lvgl.pub.initialized)
+    return false;
+
+  poll_hardware_touch();
+
+  if (s_lvgl.touch_head == s_lvgl.touch_tail)
+    return false;
+
+  eos_lvgl_touch_event_t ev = s_lvgl.touch_queue[s_lvgl.touch_tail];
+  s_lvgl.touch_tail =
+      (uint8_t)((s_lvgl.touch_tail + 1U) % EOS_LVGL_TOUCH_QUEUE_SIZE);
+  if (touch_out) {
+    *touch_out = ev;
+  }
+  return true;
+}
+
+void eos_lvgl_clear_touch(void) {
+  s_lvgl.touch_head = 0;
+  s_lvgl.touch_tail = 0;
+}
+
+bool eos_lvgl_get_touch_point(uint16_t *x, uint16_t *y, bool *pressed) {
+  if (!s_lvgl.pub.initialized)
+    return false;
+  poll_hardware_touch();
+  if (x)
+    *x = s_lvgl.last_touch_x;
+  if (y)
+    *y = s_lvgl.last_touch_y;
+  if (pressed)
+    *pressed = s_lvgl.touch_pressed;
+  return s_lvgl.pub.touch_fd >= 0;
+}
+
+bool eos_lvgl_has_touch(void) {
+  return s_lvgl.pub.initialized && s_lvgl.pub.touch_fd >= 0;
+}
+
+bool eos_lvgl_has_keyboard(void) {
+  return s_lvgl.pub.initialized && s_lvgl.pub.kbd_fd >= 0;
+}
+
+void eos_lvgl_set_touch_gestures(bool enable) {
+  s_lvgl.touch_gestures_enabled = enable;
+}
+
+bool eos_lvgl_get_touch_gestures(void) {
+  return s_lvgl.touch_gestures_enabled;
+}
+
+static void eos_lvgl_default_back_btn_cb(lv_event_t *e) {
+  (void)e;
+  key_queue_push(KEY_B);
+}
+
+lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
+                                   void *user_data) {
+  if (!parent) {
+    parent = lv_screen_active();
+  }
+  if (!parent)
+    return NULL;
+
+  lv_obj_t *btn = lv_button_create(parent);
+  lv_obj_set_size(btn, 36, 26);
+  lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -4, 4);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(0xEF4444), 0);
+  lv_obj_set_style_radius(btn, 4, 0);
+  lv_obj_set_style_pad_all(btn, 0, 0);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+
+  lv_obj_t *lbl = lv_label_create(btn);
+  lv_label_set_text(lbl, LV_SYMBOL_CLOSE);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_center(lbl);
+
+  lv_event_cb_t cb = custom_cb ? custom_cb : eos_lvgl_default_back_btn_cb;
+  lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
+
+  return btn;
 }
