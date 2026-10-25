@@ -68,6 +68,37 @@ void eos_board_init() {
 #endif
 #endif
 
+#ifdef EOS_DRV_NET_WIFI_ENABLED
+  // ===================== WiFi Radio =====================
+  // Guition JC4880P443C uses an external ESP32-C6 coprocessor connected over
+  // SDIO (GPIO 14-19) with C6_CHIP_PU hardware reset control on GPIO 54.
+  eos_dev_t *wifi = eos_dev_alloc();
+  wifi->driver = eos_drv_find("net", "wifi");
+  wifi->pins = (eos_pin_t[]){{"chip_pu", 54}, {NULL, 0}};
+  eos_dev_attach(wifi, eos_devtree_root());
+
+#ifdef EOS_DRV_NET_STA_ENABLED
+  // ===================== WiFi Station ===================
+  eos_dev_t *sta = eos_dev_alloc();
+  sta->driver = eos_drv_find("net", "sta");
+  eos_dev_attach(sta, wifi);
+#endif
+
+#ifdef EOS_DRV_NET_AP_ENABLED
+  // ===================== WiFi Access Point ==============
+  eos_dev_t *ap = eos_dev_alloc();
+  ap->driver = eos_drv_find("net", "ap");
+  eos_dev_attach(ap, wifi);
+#endif
+
+#ifdef EOS_DRV_NET_BRIDGE_ENABLED
+  // ===================== Network Bridge =================
+  eos_dev_t *br = eos_dev_alloc();
+  br->driver = eos_drv_find("net", "bridge");
+  eos_dev_attach(br, eos_devtree_root());
+#endif
+#endif
+
   /*
   // ===================== I2C bus =====================
   // Shared between touch controller and ES8311 codec

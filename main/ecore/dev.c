@@ -190,6 +190,22 @@ eos_dev_t *eos_dev_find_by_name(const char *name){
       return &(eos_devices[i]);
     if (strcmp(name, "gpio0") == 0 && strcmp(eos_devices[i].name, "gpio") == 0)
       return &(eos_devices[i]);
+    if (strcmp(name, "wifi") == 0 && strcmp(eos_devices[i].name, "wifi0") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "wifi0") == 0 && strcmp(eos_devices[i].name, "wifi") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "sta") == 0 && strcmp(eos_devices[i].name, "sta0") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "sta0") == 0 && strcmp(eos_devices[i].name, "sta") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "ap") == 0 && strcmp(eos_devices[i].name, "ap0") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "ap0") == 0 && strcmp(eos_devices[i].name, "ap") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "br") == 0 && strcmp(eos_devices[i].name, "br0") == 0)
+      return &(eos_devices[i]);
+    if (strcmp(name, "br0") == 0 && strcmp(eos_devices[i].name, "br") == 0)
+      return &(eos_devices[i]);
   }
   return NULL;
 }

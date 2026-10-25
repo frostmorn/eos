@@ -5,6 +5,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "ecore/netif.h"
 
 typedef struct {
   uint32_t x;
@@ -144,6 +145,56 @@ typedef enum {
   EOS_TOUCH_IOCTL_POLL,              // eos_input_event_t *ev
   EOS_TOUCH_IOCTL_GET_COORDS,        // uint16_t *x, uint16_t *y, bool *pressed
   EOS_TOUCH_IOCTL_GET_PRESSURE,      // uint16_t *pressure
+
+  //=====================================================
+  // edriver/net
+  //=====================================================
+  // Common netif operations:
+  EOS_NETIF_IOCTL_GET_INFO = 500,    // eos_netif_info_t *info
+  EOS_NETIF_IOCTL_SET_UP,            // no args
+  EOS_NETIF_IOCTL_SET_DOWN,          // no args
+  EOS_NETIF_IOCTL_SET_IP,            // const eos_netif_ip_info_t *ip_info
+  EOS_NETIF_IOCTL_GET_IP,            // eos_netif_ip_info_t *ip_info
+  EOS_NETIF_IOCTL_START_DHCPC,       // no args
+  EOS_NETIF_IOCTL_STOP_DHCPC,        // no args
+  EOS_NETIF_IOCTL_START_DHCPS,       // no args
+  EOS_NETIF_IOCTL_STOP_DHCPS,        // no args
+  EOS_NETIF_IOCTL_SET_DNS,           // int type (0=main, 1=backup), const char *dns_ip
+  EOS_NETIF_IOCTL_GET_DNS,           // int type, char *dns_ip
+  EOS_NETIF_IOCTL_SET_HOSTNAME,      // const char *hostname
+  EOS_NETIF_IOCTL_GET_HOSTNAME,      // char *hostname (min 32 bytes)
+  EOS_NETIF_IOCTL_SET_MAC,           // const uint8_t mac[6]
+  EOS_NETIF_IOCTL_GET_MAC,           // uint8_t mac[6]
+  EOS_NETIF_IOCTL_BRIDGE_ADD_IF,     // const char *ifname
+  EOS_NETIF_IOCTL_BRIDGE_DEL_IF,     // const char *ifname
+  EOS_NETIF_IOCTL_BRIDGE_GET_INFO,   // eos_netif_bridge_info_t *info
+  EOS_NETIF_IOCTL_BRIDGE_SET_NAPT,   // bool enable
+
+  // STA-specific operations:
+  EOS_STA_IOCTL_CONNECT,             // const eos_sta_connect_t *conn
+  EOS_STA_IOCTL_DISCONNECT,          // no args
+  EOS_STA_IOCTL_GET_AP_INFO,         // eos_sta_ap_info_t *ap_info
+  EOS_STA_IOCTL_SET_AUTOCONNECT,     // bool enable
+
+  // AP-specific operations:
+  EOS_AP_IOCTL_SET_CONFIG,           // const eos_ap_config_t *cfg
+  EOS_AP_IOCTL_GET_CONFIG,           // eos_ap_config_t *cfg
+  EOS_AP_IOCTL_GET_STAS,             // eos_ap_sta_list_t *list
+
+  // Physical Radio operations:
+  EOS_RADIO_IOCTL_POWER,             // int state (1 = on, 0 = off)
+  EOS_RADIO_IOCTL_GET_POWER,         // int *state
+  EOS_RADIO_IOCTL_SET_CHANNEL,       // uint8_t channel
+  EOS_RADIO_IOCTL_GET_CHANNEL,       // uint8_t *channel
+  EOS_RADIO_IOCTL_SET_TX_POWER,      // int8_t power_dbm
+  EOS_RADIO_IOCTL_GET_TX_POWER,      // int8_t *power_dbm
+  EOS_RADIO_IOCTL_SET_COUNTRY,       // const char country[3]
+  EOS_RADIO_IOCTL_GET_COUNTRY,       // char country[3]
+  EOS_RADIO_IOCTL_SCAN_START,        // const eos_wifi_scan_config_t *scan_cfg
+  EOS_RADIO_IOCTL_SCAN_GET_COUNT,    // uint16_t *count
+  EOS_RADIO_IOCTL_SCAN_GET_RESULTS,  // eos_wifi_scan_results_t *results
+  EOS_RADIO_IOCTL_SET_PROMISC,       // const eos_wifi_promisc_cfg_t *cfg
+  EOS_RADIO_IOCTL_GET_PROMISC,       // eos_wifi_promisc_cfg_t *cfg
 } eos_ioctl_t;
 
 // (^__^)==\~

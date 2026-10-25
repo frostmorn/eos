@@ -77,6 +77,34 @@ void eos_board_init() {
                            {NULL}};
   eos_dev_attach(kbd, gpio);
 
+#ifdef EOS_DRV_NET_WIFI_ENABLED
+  // ===================== WiFi Radio =====================
+  eos_dev_t *wifi = eos_dev_alloc();
+  wifi->driver = eos_drv_find("net", "wifi");
+  eos_dev_attach(wifi, eos_devtree_root());
+
+#ifdef EOS_DRV_NET_STA_ENABLED
+  // ===================== WiFi Station ===================
+  eos_dev_t *sta = eos_dev_alloc();
+  sta->driver = eos_drv_find("net", "sta");
+  eos_dev_attach(sta, wifi);
+#endif
+
+#ifdef EOS_DRV_NET_AP_ENABLED
+  // ===================== WiFi Access Point ==============
+  eos_dev_t *ap = eos_dev_alloc();
+  ap->driver = eos_drv_find("net", "ap");
+  eos_dev_attach(ap, wifi);
+#endif
+
+#ifdef EOS_DRV_NET_BRIDGE_ENABLED
+  // ===================== Network Bridge =================
+  eos_dev_t *br = eos_dev_alloc();
+  br->driver = eos_drv_find("net", "bridge");
+  eos_dev_attach(br, eos_devtree_root());
+#endif
+#endif
+
   // ==================== Buzzer =======================
   // eos_dev_t *buzzer = eos_dev_alloc();
   // buzzer->driver = eos_drv_find("sound", "buzzer");
