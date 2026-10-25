@@ -203,13 +203,25 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   return true;
 }
 
-int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
+ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
+  (void)fd;
+  if (!dev || !dev->state || !buf || len == 0) {
+    errno = EINVAL;
+    return -1;
+  }
+
   st7789_state_t *state = dev->state;
   uint32_t x = state->has_clip ? state->clip_x : 0;
   uint32_t y = state->has_clip ? state->clip_y : 0;
-  uint32_t w = state->has_clip ? state->clip_w : state->width;
-  uint32_t h = state->has_clip ? state->clip_h : state->height;
+  uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
+  uint32_t h = state->has_clip ? state->clip_h : (uint32_t)state->height;
   state->has_clip = false;
+
+  if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
+      y + h > (uint32_t)state->height) {
+    errno = EINVAL;
+    return -1;
+  }
 
   size_t expected_len = (size_t)w * h * 2;
   if (len > expected_len) len = expected_len;
@@ -218,7 +230,7 @@ int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t 
   void *dma_buf = heap_caps_malloc(len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (dma_buf) {
     memcpy(dma_buf, buf, len);
-    int ret = esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, dma_buf) == ESP_OK ? 0 : -1;
+    ssize_t ret = esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, dma_buf) == ESP_OK ? (ssize_t)len : -1;
     free(dma_buf);
     return ret;
   }
@@ -231,11 +243,11 @@ int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t 
 
   void *strip_buf = heap_caps_malloc(strip_h * row_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   if (!strip_buf) {
-    return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK ? 0 : -1;
+    return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK ? (ssize_t)len : -1;
   }
 
   const uint8_t *src = buf;
-  int ret = 0;
+  ssize_t ret = (ssize_t)len;
   for (uint32_t sy = 0; sy < h; sy += strip_h) {
     uint32_t sh = (sy + strip_h <= h) ? strip_h : (h - sy);
     size_t chunk_len = sh * row_bytes;
@@ -251,24 +263,46 @@ int driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t 
 }
 
 int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
+  (void)fd;
   st7789_state_t *state = dev->state;
+  if (!state) {
+    errno = ENODEV;
+    return -1;
+  }
 
   int ret = 0;
 
   switch (cmd) {
   case EOS_DISPLAY_IOCTL_GET_WIDTH: {
     uint32_t *width = va_arg(args, uint32_t *);
+    if (!width) {
+      errno = EINVAL;
+      return -1;
+    }
     *width = state->width;
     break;
   }
   case EOS_DISPLAY_IOCTL_GET_HEIGHT: {
     uint32_t *height = va_arg(args, uint32_t *);
+    if (!height) {
+      errno = EINVAL;
+      return -1;
+    }
     *height = state->height;
     break;
   }
   case EOS_DISPLAY_IOCTL_SET_WINDOW: {
     const eos_display_rect_t *rect = va_arg(args, const eos_display_rect_t *);
     if (rect) {
+      if (rect->w == 0 || rect->h == 0 ||
+          rect->x >= (uint32_t)state->width ||
+          rect->y >= (uint32_t)state->height ||
+          rect->x + rect->w > (uint32_t)state->width ||
+          rect->y + rect->h > (uint32_t)state->height) {
+        state->has_clip = false;
+        errno = EINVAL;
+        return -1;
+      }
       state->clip_x = rect->x;
       state->clip_y = rect->y;
       state->clip_w = rect->w;
@@ -279,6 +313,10 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
     break;
   }
+  default:
+    errno = ENOTTY;
+    ret = -1;
+    break;
   }
 
   return ret;

@@ -11,7 +11,7 @@
 #include "ecore/devfs.h"
 #include "ecore/pipefs.h"
 
-#define EOS_MAIN_TASK_STACK_SIZE 8192
+#define EOS_MAIN_TASK_STACK_SIZE 32768
 
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {

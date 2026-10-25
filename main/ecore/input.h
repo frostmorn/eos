@@ -14,7 +14,7 @@ typedef struct {
     struct{
       uint16_t x;
       uint16_t y;
-    }
+    };
   };
 } eos_input_event_t;
 

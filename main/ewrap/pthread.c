@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef EOS_PTHREAD_MIN_STACK_SIZE
+#define EOS_PTHREAD_MIN_STACK_SIZE 24576
+#endif
+
 extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                                  void *(*start_routine)(void *), void *arg);
 
@@ -16,9 +20,33 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     return -1;
   }
 
+  pthread_attr_t local_attr;
+  const pthread_attr_t *use_attr = attr;
+  bool destroy_local = false;
+
+  if (!attr) {
+    if (pthread_attr_init(&local_attr) == 0) {
+      pthread_attr_setstacksize(&local_attr, EOS_PTHREAD_MIN_STACK_SIZE);
+      use_attr = &local_attr;
+      destroy_local = true;
+    }
+  } else {
+    size_t stack_size = 0;
+    if (pthread_attr_getstacksize(attr, &stack_size) == 0 &&
+        stack_size < EOS_PTHREAD_MIN_STACK_SIZE) {
+      local_attr = *attr;
+      pthread_attr_setstacksize(&local_attr, EOS_PTHREAD_MIN_STACK_SIZE);
+      use_attr = &local_attr;
+    }
+  }
+
   EOS_LOGI("Launching new thread\n");
   // Launch thread
-  int rc = __real_pthread_create(thread, attr, eos_twrap_pthread, twrap);
+  int rc = __real_pthread_create(thread, use_attr, eos_twrap_pthread, twrap);
+
+  if (destroy_local) {
+    pthread_attr_destroy(&local_attr);
+  }
 
   if (rc != 0) {
     free(twrap);

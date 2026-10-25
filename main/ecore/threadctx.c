@@ -350,6 +350,11 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
     return NULL;
   }
 
+  // twrap is freed by the child thread in eos_twrap_pthread; unregister from parent tctx
+  if (cur_tctx) {
+    eos_tctx_unreg_memblock(twrap, cur_tctx);
+  }
+
   // Fill twrap data
   twrap->thread_start = thread_start;
   twrap->thread_arg = thread_data;

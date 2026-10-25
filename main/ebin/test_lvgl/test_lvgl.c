@@ -1,177 +1,186 @@
 #include "ecore/bin.h"
-#include "ecore/ioctl.h"
+#include "ecore/lvgl.h"
 
-#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include <string.h>
 
-#include <lvgl.h>
+typedef struct {
+  int32_t box_x;
+  int32_t box_y;
+  int32_t progress;
+  uint32_t color_idx;
+  bool running;
+  lv_obj_t *mode_label;
+  lv_obj_t *stats_label;
+  lv_obj_t *key_label;
+  lv_obj_t *bar;
+  lv_obj_t *sprite;
+} test_lvgl_ui_t;
 
-static int fb_fd = -1;
+static const uint32_t s_test_colors[] = {
+    0x38BDF8, 0x34D399, 0xFBBF24, 0xF87171, 0xA78BFA, 0xF472B6,
+};
 
-static void lvgl_flush_cb(lv_display_t *display,
-                          const lv_area_t *area,
-                          uint8_t *px_map)
-{
-    /*
-     * The EOS ST7789 driver at a725313 currently treats every
-     * write() as a complete framebuffer:
-     *
-     *     esp_lcd_panel_draw_bitmap(panel, 0, 0,
-     *                                width, height, buf);
-     *
-     * Therefore we intentionally use LV_DISPLAY_RENDER_MODE_DIRECT
-     * with a full-screen buffer and ignore the dirty area here.
-     */
-    (void)area;
+static void update_test_ui(test_lvgl_ui_t *ui, const char *last_key_name) {
+  eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
+  if (!ctx)
+    return;
 
-    uint32_t width = lv_display_get_horizontal_resolution(display);
-    uint32_t height = lv_display_get_vertical_resolution(display);
+  char mode_buf[64];
+  snprintf(mode_buf, sizeof(mode_buf), "Mode: %s (%ux%u, strip=%u)",
+           ctx->fallback_full ? "FULL FALLBACK" : "PARTIAL DRAW",
+           (unsigned)ctx->width, (unsigned)ctx->height,
+           (unsigned)ctx->partial_lines);
+  lv_label_set_text(ui->mode_label, mode_buf);
 
-    size_t size = (size_t)width * height * 2;
+  char stats_buf[64];
+  snprintf(stats_buf, sizeof(stats_buf), "Flushes: partial=%u  full=%u",
+           (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes);
+  lv_label_set_text(ui->stats_label, stats_buf);
 
-    ssize_t written = write(fb_fd, px_map, size);
+  if (last_key_name) {
+    char kbuf[64];
+    snprintf(kbuf, sizeof(kbuf), "Last key: %s | Pos:(%d,%d)", last_key_name,
+             (int)ui->box_x, (int)ui->box_y);
+    lv_label_set_text(ui->key_label, kbuf);
+  }
 
-    if (written != (ssize_t)size) {
-        printf("LVGL: display write failed: %d/%d bytes\n",
-               (int)written,
-               (int)size);
-    }
-
-    lv_display_flush_ready(display);
+  lv_bar_set_value(ui->bar, ui->progress, LV_ANIM_OFF);
+  lv_obj_set_pos(ui->sprite, ui->box_x, ui->box_y);
+  lv_obj_set_style_bg_color(
+      ui->sprite,
+      lv_color_hex(s_test_colors[ui->color_idx %
+                                 (sizeof(s_test_colors) / sizeof(s_test_colors[0]))]),
+      0);
 }
 
-static uint32_t lvgl_tick_cb(void)
-{
-    /*
-     * EOS/ESP-IDF provides esp_timer, but keep this adapter independent
-     * of the ESP timer API for now.
-     *
-     * Replace this with the EOS time API if/when one is standardized.
-     */
-    static uint32_t tick;
+static int test_lvgl_main(int argc, char **argv) {
+  const char *fb_path = (argc > 1) ? argv[1] : NULL;
+  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
 
-    return ++tick;
-}
+  printf("Starting LVGL Framebuffer Test (partial draw + full fallback)...\n");
 
-static int test_lvgl_main(int argc, char **argv)
-{
-    const char *path = argc > 1 ? argv[1] : "/dev/fb0";
+  eos_lvgl_cfg_t cfg = {
+      .fb_path = fb_path,
+      .kbd_path = kbd_path,
+      .partial_lines = 0,
+      .force_full_frame = false,
+      .dpad_group_nav = false,
+      .enable_keyboard = true,
+  };
 
-    printf("Starting LVGL Display Test...\n");
+  if (eos_lvgl_init(&cfg) != 0) {
+    printf("Failed to initialize EOS LVGL framebuffer support\n");
+    return -1;
+  }
 
-    fb_fd = open(path, O_RDWR);
+  uint32_t width = eos_lvgl_get_width();
+  uint32_t height = eos_lvgl_get_height();
+  printf("Display resolution: %ux%u\n", (unsigned)width, (unsigned)height);
 
-    if (fb_fd < 0) {
-        perror("Failed to open display device");
-        return -1;
+  test_lvgl_ui_t ui;
+  memset(&ui, 0, sizeof(ui));
+  ui.running = true;
+  ui.progress = 50;
+  ui.box_x = ((int32_t)width - 36) / 2;
+  ui.box_y = 110;
+
+  lv_obj_t *scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0F172A), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+  lv_obj_t *title = lv_label_create(scr);
+  lv_label_set_text(title, "EOS + LVGL FB Test");
+  lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
+
+  ui.mode_label = lv_label_create(scr);
+  lv_obj_set_style_text_color(ui.mode_label, lv_color_hex(0x34D399), 0);
+  lv_obj_align(ui.mode_label, LV_ALIGN_TOP_MID, 0, 26);
+
+  ui.stats_label = lv_label_create(scr);
+  lv_obj_set_style_text_color(ui.stats_label, lv_color_hex(0x93C5FD), 0);
+  lv_obj_align(ui.stats_label, LV_ALIGN_TOP_MID, 0, 44);
+
+  ui.key_label = lv_label_create(scr);
+  lv_label_set_text(ui.key_label, "Keys: Arrows=Move A=Color C=Mode B=Exit");
+  lv_obj_set_style_text_color(ui.key_label, lv_color_hex(0xFDE047), 0);
+  lv_obj_align(ui.key_label, LV_ALIGN_TOP_MID, 0, 62);
+
+  ui.bar = lv_bar_create(scr);
+  lv_obj_set_size(ui.bar, (int32_t)width - 24, 14);
+  lv_bar_set_range(ui.bar, 0, 100);
+  lv_obj_align(ui.bar, LV_ALIGN_TOP_MID, 0, 84);
+
+  ui.sprite = lv_obj_create(scr);
+  lv_obj_set_size(ui.sprite, 36, 36);
+  lv_obj_set_style_radius(ui.sprite, 6, 0);
+  lv_obj_set_style_border_color(ui.sprite, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_border_width(ui.sprite, 2, 0);
+
+  lv_obj_t *hint = lv_label_create(scr);
+  lv_label_set_text(hint, "C: Partial/Full  D: FullRedraw  B/ESC: Quit");
+  lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+  update_test_ui(&ui, NULL);
+
+  while (ui.running) {
+    uint16_t key = 0;
+    while (eos_lvgl_poll_key(&key)) {
+      switch (key) {
+      case KEY_LEFT:
+        ui.box_x -= 10;
+        if (ui.box_x < 4)
+          ui.box_x = 4;
+        if (ui.progress >= 5)
+          ui.progress -= 5;
+        break;
+      case KEY_RIGHT:
+        ui.box_x += 10;
+        if (ui.box_x > (int32_t)width - 40)
+          ui.box_x = (int32_t)width - 40;
+        if (ui.progress <= 95)
+          ui.progress += 5;
+        break;
+      case KEY_UP:
+        ui.box_y -= 10;
+        if (ui.box_y < 104)
+          ui.box_y = 104;
+        break;
+      case KEY_DOWN:
+        ui.box_y += 10;
+        if (ui.box_y > (int32_t)height - 60)
+          ui.box_y = (int32_t)height - 60;
+        break;
+      case KEY_A:
+      case KEY_ENTER:
+      case KEY_SPACE:
+        ui.color_idx++;
+        break;
+      case KEY_C:
+        eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
+        break;
+      case KEY_D:
+        eos_lvgl_flush_full_frame();
+        break;
+      case KEY_B:
+      case KEY_ESC:
+        ui.running = false;
+        break;
+      default:
+        break;
+      }
+      update_test_ui(&ui, eos_lvgl_key_name(key));
     }
 
-    int width;
-    int height;
+    eos_lvgl_step(10);
+    update_test_ui(&ui, NULL);
+  }
 
-    if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width)
-        != 0) {
-        printf("Failed to get display width\n");
-        close(fb_fd);
-        return -1;
-    }
-
-    if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height)
-        != 0) {
-        printf("Failed to get display height\n");
-        close(fb_fd);
-        return -1;
-    }
-
-    printf("Display resolution: %dx%d\n", width, height);
-
-    /*
-     * LVGL is pinned by EOS commit a725313 to ce07667.
-     *
-     * The ST7789 EOS driver is 16-bit RGB565, so one framebuffer
-     * requires width * height * 2 bytes.
-     */
-    size_t framebuffer_size = (size_t)width * height * 2;
-
-    void *framebuffer = malloc(framebuffer_size);
-
-    if (!framebuffer) {
-        perror("Failed to allocate LVGL framebuffer");
-        close(fb_fd);
-        return -1;
-    }
-
-    lv_init();
-
-    /*
-     * LVGL needs a millisecond tick source.
-     *
-     * TODO: replace this with the proper EOS monotonic-time API.
-     */
-    lv_tick_set_cb(lvgl_tick_cb);
-
-    lv_display_t *display = lv_display_create(width, height);
-
-    if (!display) {
-        printf("Failed to create LVGL display\n");
-        free(framebuffer);
-        close(fb_fd);
-        return -1;
-    }
-
-    /*
-     * The EOS ST7789 driver uses 16-bit RGB565.
-     *
-     * DIRECT mode requires a full display-sized buffer.
-     */
-    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
-
-    lv_display_set_buffers(
-        display,
-        framebuffer,
-        NULL,
-        framebuffer_size,
-        LV_DISPLAY_RENDER_MODE_DIRECT
-    );
-
-    lv_display_set_flush_cb(display, lvgl_flush_cb);
-
-    /*
-     * Simple test UI.
-     */
-    lv_obj_t *label = lv_label_create(lv_screen_active());
-
-    lv_label_set_text(label, "Hello from EOS + LVGL!");
-
-    lv_obj_center(label);
-
-    /*
-     * LVGL application loop.
-     */
-    while (1) {
-        uint32_t delay = lv_timer_handler();
-
-        /*
-         * Don't spin at 100% CPU.
-         *
-         * This is intentionally simple for the first test.
-         */
-        if (delay > 10)
-            delay = 10;
-
-        usleep(delay * 1000);
-    }
-
-    /*
-     * Normally unreachable.
-     */
-    free(framebuffer);
-    close(fb_fd);
-
-    return 0;
+  eos_lvgl_deinit();
+  return 0;
 }
 
 EOS_BIN_ATTR const eos_bin_t lvgl_test_app = {
@@ -179,7 +188,6 @@ EOS_BIN_ATTR const eos_bin_t lvgl_test_app = {
     .filename = "test_lvgl",
     .name = "LVGL Test",
     .group = "Tools",
-    .description = "LVGL display test",
-    .entry_point = test_lvgl_main
+    .description = "LVGL partial/full framebuffer and keyboard test",
+    .entry_point = test_lvgl_main,
 };
-

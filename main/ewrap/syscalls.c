@@ -19,8 +19,9 @@
 // components/esp_lib/src/syscalls.c
 extern int __real_system(const char *str);
 
-#define EOS_SYSTEM_MAX_STAGES 8
-#define EOS_SYSTEM_MAX_ARGS   32
+#define EOS_SYSTEM_MAX_STAGES        8
+#define EOS_SYSTEM_MAX_ARGS          32
+#define EOS_SYSTEM_THREAD_STACK_SIZE 24576
 
 typedef struct {
   int argc;
@@ -505,11 +506,22 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
   return 0;
 }
 
+static bool has_stage_redirections(const eos_stage_exec_t *st) {
+  if (!st) return false;
+  return (st->pipe_in_fd >= 0 || st->pipe_out_fd >= 0 ||
+          st->in_file != NULL || st->out_file != NULL ||
+          st->err_file != NULL || st->err_to_out || st->out_to_err);
+}
+
 static int apply_stage_redirections(const eos_stage_exec_t *st,
                                     int opened_fds[3]) {
   opened_fds[0] = -1;
   opened_fds[1] = -1;
   opened_fds[2] = -1;
+
+  if (!has_stage_redirections(st)) {
+    return 0;
+  }
 
   // 1. Pipe descriptors first (explicit file redirections override pipes)
   if (st->pipe_in_fd >= 0) {
@@ -661,14 +673,75 @@ static void *pipeline_stage_thread(void *arg) {
 
 static int eval_ast(eos_ast_node_t *node);
 
+static char *dup_str_untracked(const char *str, eos_tctx_t *parent_tctx) {
+  if (!str) return NULL;
+  char *copy = strdup(str);
+  if (copy && parent_tctx) {
+    eos_tctx_unreg_memblock(copy, parent_tctx);
+  }
+  return copy;
+}
+
+static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src,
+                                      eos_tctx_t *parent_tctx) {
+  if (!src) return NULL;
+  eos_ast_node_t *dst = calloc(1, sizeof(eos_ast_node_t));
+  if (!dst) return NULL;
+  if (parent_tctx) {
+    eos_tctx_unreg_memblock(dst, parent_tctx);
+  }
+
+  dst->type = src->type;
+  dst->stage_count = src->stage_count;
+  dst->left = clone_ast_node(src->left, parent_tctx);
+  dst->right = clone_ast_node(src->right, parent_tctx);
+
+  for (int i = 0; i < src->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
+    const eos_cmd_stage_t *st_src = &src->stages[i];
+    eos_cmd_stage_t *st_dst = &dst->stages[i];
+    st_dst->argc = st_src->argc;
+    for (int j = 0; j < st_src->argc && j < EOS_SYSTEM_MAX_ARGS - 1; j++) {
+      st_dst->argv[j] = dup_str_untracked(st_src->argv[j], parent_tctx);
+    }
+    st_dst->argv[st_dst->argc] = NULL;
+    st_dst->in_file = dup_str_untracked(st_src->in_file, parent_tctx);
+    st_dst->out_file = dup_str_untracked(st_src->out_file, parent_tctx);
+    st_dst->err_file = dup_str_untracked(st_src->err_file, parent_tctx);
+    st_dst->out_append = st_src->out_append;
+    st_dst->err_append = st_src->err_append;
+    st_dst->err_to_out = st_src->err_to_out;
+    st_dst->out_to_err = st_src->out_to_err;
+  }
+  return dst;
+}
+
+static void free_cloned_ast_node(eos_ast_node_t *node) {
+  if (!node) return;
+  free_cloned_ast_node(node->left);
+  free_cloned_ast_node(node->right);
+  for (int i = 0; i < node->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
+    eos_cmd_stage_t *st = &node->stages[i];
+    for (int j = 0; j < st->argc && j < EOS_SYSTEM_MAX_ARGS; j++) {
+      free(st->argv[j]);
+    }
+    free(st->in_file);
+    free(st->out_file);
+    free(st->err_file);
+  }
+  free(node);
+}
+
 typedef struct {
   eos_ast_node_t *node;
 } bg_wrapper_t;
 
 static void *bg_thread_entry(void *arg) {
   bg_wrapper_t *bg = (bg_wrapper_t *)arg;
-  eval_ast(bg->node);
-  free(bg);
+  if (bg) {
+    eval_ast(bg->node);
+    free_cloned_ast_node(bg->node);
+    free(bg);
+  }
   return NULL;
 }
 
@@ -799,6 +872,7 @@ static int eval_command_node(eos_ast_node_t *node) {
     fflush(stdout);
     fflush(stderr);
 
+    bool redir = has_stage_redirections(&exec_stages[0]);
     int opened_fds[3] = {-1, -1, -1};
     if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
       ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
@@ -809,21 +883,23 @@ static int eval_command_node(eos_ast_node_t *node) {
     fflush(stderr);
     clearerr(stdin);
 
-    stdin = saved_stdin;
-    stdout = saved_stdout;
-    stderr = saved_stderr;
+    if (redir) {
+      stdin = saved_stdin;
+      stdout = saved_stdout;
+      stderr = saved_stderr;
 #ifdef _GLOBAL_REENT
-    _GLOBAL_REENT->_stdin = stdin;
-    _GLOBAL_REENT->_stdout = stdout;
-    _GLOBAL_REENT->_stderr = stderr;
+      _GLOBAL_REENT->_stdin = stdin;
+      _GLOBAL_REENT->_stdout = stdout;
+      _GLOBAL_REENT->_stderr = stderr;
 #endif
 
-    if (tctx) {
-      for (int i = 0; i < 3; i++)
-        tctx->fd_map[i] = saved_map[i];
-    }
+      if (tctx) {
+        for (int i = 0; i < 3; i++)
+          tctx->fd_map[i] = saved_map[i];
+      }
 
-    close_stage_fds(opened_fds, -1, -1);
+      close_stage_fds(opened_fds, -1, -1);
+    }
   } else {
     eos_tctx_t *parent_tctx = eos_tctx_get();
     for (int i = 0; i < stage_count - 1; i++) {
@@ -867,6 +943,7 @@ static int eval_command_node(eos_ast_node_t *node) {
       pthread_attr_t attr;
       pthread_attr_init(&attr);
       pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+      pthread_attr_setstacksize(&attr, EOS_SYSTEM_THREAD_STACK_SIZE);
 
       int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
       pthread_attr_destroy(&attr);
@@ -929,19 +1006,36 @@ static int eval_ast(eos_ast_node_t *node) {
       }
       break;
     case EOS_NODE_BG: {
-      bg_wrapper_t *bg = malloc(sizeof(bg_wrapper_t));
-      if (bg) {
-        bg->node = node->left;
-        pthread_t t;
-        pthread_attr_t attr;
-        pthread_attr_init(&attr);
-        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-        if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
-          free(bg);
+      if (node->left &&
+          (node->left->type != EOS_NODE_COMMAND || node->left->stage_count > 0)) {
+        bg_wrapper_t *bg = malloc(sizeof(bg_wrapper_t));
+        if (bg) {
+          if (tctx) {
+            eos_tctx_unreg_memblock(bg, tctx);
+          }
+          bg->node = clone_ast_node(node->left, tctx);
+          if (bg->node) {
+            pthread_t t;
+            pthread_attr_t attr;
+            pthread_attr_init(&attr);
+            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+            pthread_attr_setstacksize(&attr, EOS_SYSTEM_THREAD_STACK_SIZE);
+            if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
+              free_cloned_ast_node(bg->node);
+              free(bg);
+            }
+            pthread_attr_destroy(&attr);
+          } else {
+            free(bg);
+          }
         }
-        pthread_attr_destroy(&attr);
       }
-      status = 0;
+      if (node->right &&
+          (node->right->type != EOS_NODE_COMMAND || node->right->stage_count > 0)) {
+        status = eval_ast(node->right);
+      } else {
+        status = 0;
+      }
       break;
     }
   }
