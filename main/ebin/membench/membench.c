@@ -271,7 +271,6 @@ EOS_BIN_ATTR const eos_bin_t membench_app = {
     .filename = "membench",
     .name = "Memory Benchmark",
     .group = "Tools",
-    .description = "Read/write/copy speed across DRAM, PSRAM, DMA memory at "
-                   "various block sizes",
+    .description = "Benchmark read, write, and copy throughput across DRAM, PSRAM, and DMA memory",
     .entry_point = membench_main,
 };

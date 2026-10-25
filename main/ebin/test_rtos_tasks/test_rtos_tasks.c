@@ -363,5 +363,9 @@ int test_rtos_tasks_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_rtos_tasks = {
-    EOS_BIN_INITIALIZER, .filename = "test_rtos_tasks",
-    .name = "test_rtos_tasks", .entry_point = test_rtos_tasks_main};
+    EOS_BIN_INITIALIZER,
+    .filename = "test_rtos_tasks",
+    .name = "FreeRTOS Tasks Test",
+    .group = "Tests",
+    .description = "Validate FreeRTOS task scheduling, notifications, and context isolation",
+    .entry_point = test_rtos_tasks_main};

@@ -31,6 +31,8 @@ EOS_BIN_ATTR eos_bin_t echo_app = {
     EOS_BIN_INITIALIZER,
     .flags = EOS_BIN_FLAG_HIDDEN,
     .filename = "echo",
-    .name = "echo",
+    .name = "Echo",
+    .group = "Utils",
+    .description = "Print arguments separated by spaces followed by a newline to stdout",
     .entry_point = echo_main
 };

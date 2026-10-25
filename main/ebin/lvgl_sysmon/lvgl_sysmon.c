@@ -183,6 +183,6 @@ EOS_BIN_ATTR const eos_bin_t lvgl_sysmon_app = {
     .filename = "lvgl_sysmon",
     .name = "System Monitor",
     .group = "Tools",
-    .description = "LVGL live DRAM, PSRAM, DMA, and framebuffer monitor",
+    .description = "Real-time graphical monitor for CPU, DRAM, PSRAM, and display framerate",
     .entry_point = lvgl_sysmon_main,
 };

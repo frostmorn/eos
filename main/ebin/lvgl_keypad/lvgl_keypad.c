@@ -173,6 +173,6 @@ EOS_BIN_ATTR const eos_bin_t lvgl_keypad_app = {
     .filename = "lvgl_keypad",
     .name = "Keypad Tester",
     .group = "Tests",
-    .description = "Interactive LVGL keyboard matrix and event tester",
+    .description = "Interactive test utility visualizing keypad scan matrix and key events",
     .entry_point = lvgl_keypad_main,
 };

@@ -30,5 +30,9 @@ int heapdump_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t heapdump_app = {
-    EOS_BIN_INITIALIZER, .filename = "heapdump", .name = "heapdump",
+    EOS_BIN_INITIALIZER,
+    .filename = "heapdump",
+    .name = "Heap Dump",
+    .group = "Diag",
+    .description = "Detailed report of internal DRAM, PSRAM, and DMA heap utilization",
     .entry_point = heapdump_main};

@@ -28,5 +28,9 @@ int ls_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t ls_app = {
-    EOS_BIN_INITIALIZER, .filename = "ls", .name = "ls",
+    EOS_BIN_INITIALIZER,
+    .filename = "ls",
+    .name = "List Directory",
+    .group = "Utils",
+    .description = "List files and subdirectories in specified or current working directory",
     .entry_point = ls_main};

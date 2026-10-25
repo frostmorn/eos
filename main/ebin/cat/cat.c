@@ -54,5 +54,10 @@ int cat_main(int argc, char **argv){
 
 
 EOS_BIN_ATTR eos_bin_t cat_app = {
-    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "cat", .name = "cat",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
+    .filename = "cat",
+    .name = "Concatenate File",
+    .group = "Utils",
+    .description = "Concatenate and print file contents or standard input to stdout",
     .entry_point = cat_main};

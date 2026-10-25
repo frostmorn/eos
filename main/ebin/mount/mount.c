@@ -40,5 +40,10 @@ int mount_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t mount_app = {
-    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "mount", .name = "mount",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
+    .filename = "mount",
+    .name = "Mount Filesystem",
+    .group = "System",
+    .description = "Mount storage devices or virtual filesystems to target directory paths",
     .entry_point = mount_main};

@@ -292,8 +292,8 @@ EOS_BIN_ATTR const eos_bin_t lvgl_calc_app = {
     .flags = EOS_BIN_FLAG_GUI,
     .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "lvgl_calc",
-    .name = "LVGL Calculator",
+    .name = "Calculator",
     .group = "Apps",
-    .description = "Keypad-navigable calculator and hex converter",
+    .description = "Keypad-driven graphical calculator with hex and decimal conversions",
     .entry_point = lvgl_calc_main,
 };

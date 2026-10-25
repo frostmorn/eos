@@ -26,9 +26,9 @@ EOS_BIN_ATTR eos_bin_t rmdir_app = {
   EOS_BIN_INITIALIZER,
   .flags       = EOS_BIN_FLAG_HIDDEN,
   .filename    = "rmdir",
-  .name        = "rmdir",
+  .name        = "Remove Directory",
   .group       = "Utils",
-  .description = "Remove directories",
+  .description = "Remove empty directories from the filesystem",
   .entry_point = rmdir_main
 };
 ///////////////////////////////////////////////////////////////////////

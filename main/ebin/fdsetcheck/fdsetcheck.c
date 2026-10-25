@@ -30,9 +30,9 @@ EOS_BIN_ATTR eos_bin_t fdsetcheck_app = {
   EOS_BIN_INITIALIZER,
   .flags       = 0,
   .filename    = "fdsetcheck",
-  .name        = "fdsetcheck",
-  .group       = "Utils",
-  .description = "FD_SET_CHECK",
+  .name        = "FD Set Check",
+  .group       = "Diag",
+  .description = "Test maximum open file descriptors against FD_SETSIZE limit",
   .entry_point = fdsetcheck_main
 };
 ///////////////////////////////////////////////////////////////////////

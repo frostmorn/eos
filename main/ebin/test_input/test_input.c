@@ -84,5 +84,9 @@ int test_input_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_input = {
-    EOS_BIN_INITIALIZER, .filename = "test_input", .name = "test_input",
+    EOS_BIN_INITIALIZER,
+    .filename = "test_input",
+    .name = "Input Test",
+    .group = "Tests",
+    .description = "Listen to and log input events from /dev/keyboard0 device",
     .entry_point = test_input_main};

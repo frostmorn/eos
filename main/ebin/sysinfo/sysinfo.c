@@ -116,5 +116,9 @@ int sysinfo_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t sysinfo = {
-    EOS_BIN_INITIALIZER, .filename = "sysinfo", .name = "sysinfo",
+    EOS_BIN_INITIALIZER,
+    .filename = "sysinfo",
+    .name = "System Info",
+    .group = "System",
+    .description = "Display ESP32-S3 SoC revision, CPU frequency, MAC addresses, and memory",
     .entry_point = sysinfo_main};

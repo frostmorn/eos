@@ -12,5 +12,9 @@ int pwd_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t pwd_app = {
-    EOS_BIN_INITIALIZER, .filename = "pwd", .name = "pwd",
+    EOS_BIN_INITIALIZER,
+    .filename = "pwd",
+    .name = "Print Working Directory",
+    .group = "Utils",
+    .description = "Print the absolute pathname of the current working directory",
     .entry_point = pwd_main};

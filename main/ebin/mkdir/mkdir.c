@@ -23,5 +23,10 @@ int mkdir_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t mkdir_app = {
-    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "mkdir", .name = "mkdir",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
+    .filename = "mkdir",
+    .name = "Make Directory",
+    .group = "Utils",
+    .description = "Create one or more directories at specified filesystem paths",
     .entry_point = mkdir_main};

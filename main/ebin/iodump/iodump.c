@@ -8,5 +8,9 @@ int iodump_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t iodump_app = {
-    EOS_BIN_INITIALIZER, .filename = "iodump", .name = "iodump",
+    EOS_BIN_INITIALIZER,
+    .filename = "iodump",
+    .name = "GPIO Dump",
+    .group = "Diag",
+    .description = "Dump pin direction, pull resistors, drive strength, and function for all GPIOs",
     .entry_point = iodump_main};

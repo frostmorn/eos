@@ -50,6 +50,7 @@ typedef struct {
   char *text_buf;
   bool should_exit;
   bool trigger_run;
+  bool is_editing;
 
   lv_obj_t *hdr_title;
   lv_obj_t *hdr_meta;
@@ -57,6 +58,10 @@ typedef struct {
   lv_obj_t *viewport;
   lv_obj_t *out_label;
   lv_obj_t *footer_label;
+
+  lv_obj_t *edit_overlay;
+  lv_obj_t *edit_ta;
+  lv_obj_t *edit_kb;
 } term_viewer_state_t;
 
 static void ensure_empty_input_file(void) {
@@ -265,7 +270,7 @@ static void term_update_ui(term_viewer_state_t *st) {
     const char *cmd =
         st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
     char cbuf[96];
-    snprintf(cbuf, sizeof(cbuf), "< Cmd: %.48s >  [A:Run]", cmd);
+    snprintf(cbuf, sizeof(cbuf), "< Cmd: %.40s >  [A:Run D:Edit]", cmd);
     lv_label_set_text(st->cmd_label, cbuf);
   }
 
@@ -278,7 +283,7 @@ static void term_update_ui(term_viewer_state_t *st) {
     int32_t bottom = st->viewport ? lv_obj_get_scroll_bottom(st->viewport) : 0;
     char fbuf[96];
     snprintf(fbuf, sizeof(fbuf),
-             "U/D:Scrl(%d/%d) L/R:Cmd A:Run C:Mode B:Exit", (int)sy,
+             "U/D:Scrl(%d/%d) L/R:Preset A:Run D:Edit B:Exit", (int)sy,
              (int)(sy + (bottom > 0 ? bottom : 0)));
     lv_label_set_text(st->footer_label, fbuf);
   }
@@ -398,7 +403,159 @@ static void term_scroll_by(term_viewer_state_t *st, int32_t dy) {
   term_update_ui(st);
 }
 
+static void term_close_edit_mode(term_viewer_state_t *st);
+
+static void term_kb_event_cb(lv_event_t *e) {
+  term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
+  lv_event_code_t code = lv_event_get_code(e);
+
+  if (code == LV_EVENT_READY) {
+    if (st->edit_ta) {
+      const char *text = lv_textarea_get_text(st->edit_ta);
+      if (text && text[0]) {
+        snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", text);
+      }
+    }
+    term_close_edit_mode(st);
+    st->trigger_run = true;
+  } else if (code == LV_EVENT_CANCEL) {
+    term_close_edit_mode(st);
+  }
+}
+
+static void term_close_edit_mode(term_viewer_state_t *st) {
+  if (!st->is_editing)
+    return;
+
+  st->is_editing = false;
+  eos_lvgl_set_dpad_group_nav(false);
+
+  if (st->edit_overlay) {
+    lv_obj_delete(st->edit_overlay);
+    st->edit_overlay = NULL;
+    st->edit_ta = NULL;
+    st->edit_kb = NULL;
+  }
+
+  eos_lvgl_clear_keys();
+  term_update_ui(st);
+}
+
+static void term_open_edit_mode(term_viewer_state_t *st) {
+  if (st->is_editing)
+    return;
+
+  st->is_editing = true;
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *scr = lv_screen_active();
+
+  // Full-screen overlay container
+  st->edit_overlay = lv_obj_create(scr);
+  lv_obj_set_size(st->edit_overlay, (int32_t)w, (int32_t)h);
+  lv_obj_align(st->edit_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
+  lv_obj_set_style_bg_color(st->edit_overlay, lv_color_hex(0x050811), 0);
+  lv_obj_set_style_bg_opa(st->edit_overlay, LV_OPA_90, 0);
+  lv_obj_set_style_border_width(st->edit_overlay, 0, 0);
+  lv_obj_set_style_radius(st->edit_overlay, 0, 0);
+  lv_obj_set_style_pad_all(st->edit_overlay, 4, 0);
+  lv_obj_clear_flag(st->edit_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Title bar
+  lv_obj_t *title = lv_label_create(st->edit_overlay);
+  lv_label_set_text(title, "Edit Command  (A/Enter:Run  B:Cancel)");
+  lv_obj_set_style_text_color(title, lv_color_hex(0x60A5FA), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 2);
+
+  // Single-line Textarea for command input
+  st->edit_ta = lv_textarea_create(st->edit_overlay);
+  lv_obj_set_size(st->edit_ta, (int32_t)w - 8, 30);
+  lv_obj_align(st->edit_ta, LV_ALIGN_TOP_MID, 0, 22);
+  lv_textarea_set_one_line(st->edit_ta, true);
+  const char *initial_cmd =
+      st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
+  lv_textarea_set_text(st->edit_ta, initial_cmd);
+  lv_obj_set_style_bg_color(st->edit_ta, lv_color_hex(0x1E293B), 0);
+  lv_obj_set_style_text_color(st->edit_ta, lv_color_hex(0xFDE047), 0);
+  lv_obj_set_style_border_color(st->edit_ta, lv_color_hex(0x3B82F6), 0);
+  lv_obj_set_style_border_width(st->edit_ta, 1, 0);
+  lv_obj_set_style_radius(st->edit_ta, 4, 0);
+
+  // Virtual keyboard below textarea
+  int32_t kb_h = (int32_t)h - 60;
+  if (kb_h < 100)
+    kb_h = 100;
+  st->edit_kb = lv_keyboard_create(st->edit_overlay);
+  lv_obj_set_size(st->edit_kb, (int32_t)w - 4, kb_h);
+  lv_obj_align(st->edit_kb, LV_ALIGN_BOTTOM_MID, 0, -2);
+  lv_keyboard_set_textarea(st->edit_kb, st->edit_ta);
+  lv_obj_add_event_cb(st->edit_kb, term_kb_event_cb, LV_EVENT_ALL, st);
+
+  // Focus keyboard in LVGL input group if available
+  lv_group_t *g = eos_lvgl_get_group();
+  if (g) {
+    lv_group_add_obj(g, st->edit_kb);
+    lv_group_focus_obj(st->edit_kb);
+    eos_lvgl_set_dpad_group_nav(true);
+  }
+}
+
+static char term_key_to_ascii(uint16_t key) {
+  if (key >= KEY_1 && key <= KEY_9)
+    return (char)('1' + (key - KEY_1));
+  if (key == KEY_0)
+    return '0';
+  if (key == KEY_SPACE)
+    return ' ';
+  if (key == KEY_MINUS)
+    return '-';
+  if (key == KEY_EQUAL)
+    return '=';
+  if (key == KEY_SLASH)
+    return '/';
+  if (key == KEY_DOT)
+    return '.';
+  if (key == KEY_COMMA)
+    return ',';
+  if (key == KEY_SEMICOLON)
+    return ';';
+  if (key == KEY_BACKSLASH)
+    return '\\';
+  return 0;
+}
+
 static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
+  if (st->is_editing) {
+    if (key == KEY_B || key == KEY_ESC) {
+      term_close_edit_mode(st);
+      return;
+    }
+    if (key == KEY_ENTER) {
+      if (st->edit_ta) {
+        const char *text = lv_textarea_get_text(st->edit_ta);
+        if (text && text[0]) {
+          snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", text);
+        }
+      }
+      term_close_edit_mode(st);
+      st->trigger_run = true;
+      return;
+    }
+    if (key == KEY_BACKSPACE) {
+      if (st->edit_ta) {
+        lv_textarea_delete_char(st->edit_ta);
+      }
+      return;
+    }
+    char ch = term_key_to_ascii(key);
+    if (ch != 0 && st->edit_ta) {
+      lv_textarea_add_char(st->edit_ta, (uint32_t)ch);
+      return;
+    }
+    return;
+  }
+
   switch (key) {
   case KEY_UP:
     term_scroll_by(st, -TERM_SCROLL_STEP_PX);
@@ -408,9 +565,13 @@ static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
     term_scroll_by(st, TERM_SCROLL_STEP_PX);
     break;
 
-  case KEY_D:
   case KEY_SPACE:
     term_scroll_by(st, TERM_PAGE_STEP_PX);
+    break;
+
+  case KEY_D:
+  case KEY_E:
+    term_open_edit_mode(st);
     break;
 
   case KEY_LEFT:
@@ -579,6 +740,6 @@ EOS_BIN_ATTR const eos_bin_t lvgl_term_app = {
     .filename = "lvgl_term",
     .name = "Terminal Viewer",
     .group = "Tools",
-    .description = "LVGL viewer for piped or file-redirected terminal task output",
+    .description = "Interactive terminal viewer and runner with on-screen command editor",
     .entry_point = lvgl_term_main,
 };

@@ -677,6 +677,6 @@ EOS_BIN_ATTR const eos_bin_t launcher_app = {
     .filename = "launcher",
     .name = "App Launcher",
     .group = "System",
-    .description = "LVGL application launcher grouped by ebin group",
+    .description = "Graphical application launcher with category tabs and command execution",
     .entry_point = launcher_main,
 };

@@ -39,5 +39,10 @@ int umount_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t umount_app = {
-    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "umount", .name = "umount",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
+    .filename = "umount",
+    .name = "Unmount Filesystem",
+    .group = "System",
+    .description = "Unmount a currently mounted storage device or filesystem",
     .entry_point = umount_main};

@@ -189,7 +189,7 @@ EOS_BIN_ATTR const eos_bin_t lvgl_test_app = {
     .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "test_lvgl",
     .name = "LVGL Test",
-    .group = "Tools",
-    .description = "LVGL partial/full framebuffer and keyboard test",
+    .group = "Tests",
+    .description = "Test LVGL display rendering pipelines and keypad input handling",
     .entry_point = test_lvgl_main,
 };

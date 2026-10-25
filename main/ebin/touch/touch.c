@@ -32,5 +32,10 @@ int touch_main(int argc, char **argv){
 
 
 EOS_BIN_ATTR eos_bin_t touch_app = {
-    EOS_BIN_INITIALIZER, .flags = EOS_BIN_FLAG_HIDDEN, .filename = "touch", .name = "touch",
+    EOS_BIN_INITIALIZER,
+    .flags = EOS_BIN_FLAG_HIDDEN,
+    .filename = "touch",
+    .name = "Touch File",
+    .group = "Utils",
+    .description = "Create empty files or update file timestamps",
     .entry_point = touch_main};

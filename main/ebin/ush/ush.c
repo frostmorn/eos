@@ -182,6 +182,6 @@ EOS_BIN_ATTR eos_bin_t ush = {
     .filename = "ush",
     .name = "MicroShell",
     .group = "System",
-    .description = "EOS command line shell",
+    .description = "EOS interactive command line shell with job control and I/O redirection",
     .entry_point = ush_main,
 };

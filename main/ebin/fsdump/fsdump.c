@@ -9,5 +9,9 @@ int fsdump_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t fsdump_app = {
-    EOS_BIN_INITIALIZER, .filename = "fsdump", .name = "fsdump",
+    EOS_BIN_INITIALIZER,
+    .filename = "fsdump",
+    .name = "FS Dump",
+    .group = "Diag",
+    .description = "Dump registered Virtual Filesystem (VFS) mount points and drivers",
     .entry_point = fsdump_main};

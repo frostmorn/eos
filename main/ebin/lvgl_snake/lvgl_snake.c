@@ -306,8 +306,8 @@ EOS_BIN_ATTR const eos_bin_t lvgl_snake_app = {
     .flags = EOS_BIN_FLAG_GUI,
     .stack_size = EOS_BIN_GUI_STACK_SIZE,
     .filename = "lvgl_snake",
-    .name = "LVGL Snake",
+    .name = "Snake",
     .group = "Games",
-    .description = "Classic Snake mini-game using LVGL and keyboard",
+    .description = "Classic arcade Snake mini-game with score tracking and speed levels",
     .entry_point = lvgl_snake_main,
 };

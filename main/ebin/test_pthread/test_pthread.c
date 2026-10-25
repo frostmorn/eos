@@ -165,5 +165,9 @@ int test_pthread_main(int argc, char **argv) {
 }
 
 EOS_BIN_ATTR eos_bin_t test_pthread = {
-    EOS_BIN_INITIALIZER, .filename = "test_pthread", .name = "test_pthread",
+    EOS_BIN_INITIALIZER,
+    .filename = "test_pthread",
+    .name = "POSIX Threads Test",
+    .group = "Tests",
+    .description = "Validate POSIX threads creation, mutexes, condition variables, and TLS",
     .entry_point = test_pthread_main};

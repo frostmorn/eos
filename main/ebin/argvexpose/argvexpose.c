@@ -16,5 +16,9 @@ int argvdump_main(int argc, char ** argv){
 }
 
 EOS_BIN_ATTR eos_bin_t argvdump_app = {
-    EOS_BIN_INITIALIZER, .filename = "argvdump", .name = "argvdump",
+    EOS_BIN_INITIALIZER,
+    .filename = "argvdump",
+    .name = "Argv Dump",
+    .group = "Diag",
+    .description = "Print command line argument count and values for debugging argument parsing",
     .entry_point = argvdump_main};

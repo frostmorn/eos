@@ -8,5 +8,9 @@ int fddump_main(int argc, char **argv){
 }
 
 EOS_BIN_ATTR eos_bin_t fddump_app = {
-    EOS_BIN_INITIALIZER, .filename = "fddump", .name = "fddump",
+    EOS_BIN_INITIALIZER,
+    .filename = "fddump",
+    .name = "FD Dump",
+    .group = "Diag",
+    .description = "Display active VFS file descriptors, paths, and driver handles",
     .entry_point = fddump_main};

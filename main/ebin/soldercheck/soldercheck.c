@@ -151,9 +151,9 @@ EOS_BIN_ATTR eos_bin_t soldercheck_app = {
   EOS_BIN_INITIALIZER,
   .flags       = 0,
   .filename    = "soldercheck",
-  .name        = "soldercheck",
-  .group       = "Utils",
-  .description = "Solder test",
+  .name        = "Solder Check",
+  .group       = "Diag",
+  .description = "Probe GPIO pins with test patterns to detect solder bridges and shorts",
   .entry_point = soldercheck_main
 };
 ///////////////////////////////////////////////////////////////////////
