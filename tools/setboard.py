@@ -85,7 +85,6 @@ def setboard(board):
     rm("sdkconfig.old")
 
     shutil.copy(bpath+"/sdkconfig", ".")
-    update_pregen(board)
 
 def selectboard():
     if len(sys.argv) > 1:

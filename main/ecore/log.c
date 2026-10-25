@@ -5,7 +5,10 @@
 
 #include <esp_log.h>
 #include <fcntl.h>
-#include <reent.h>
+#include <sys/reent.h>
+#ifndef _REENT
+#define _REENT (__getreent())
+#endif
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>

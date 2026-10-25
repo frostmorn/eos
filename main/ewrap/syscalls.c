@@ -1001,6 +1001,7 @@ static int eval_command_node(eos_ast_node_t *node) {
 
   if (stage_count == 1) {
     eos_tctx_t *tctx = eos_tctx_get();
+    eos_tctx_fd_snapshot_t fd_snap = eos_tctx_snapshot_fds(tctx);
     int saved_map[3] = {-1, -1, -1};
     if (tctx) {
       for (int i = 0; i < 3; i++)
@@ -1031,6 +1032,9 @@ static int eval_command_node(eos_ast_node_t *node) {
 
       close_stage_fds(opened_fds, -1, -1);
     }
+
+    // Clean up any leaked file descriptors or directory handles from the executed command
+    eos_tctx_cleanup_leaked_fds(tctx, &fd_snap);
   } else {
     eos_tctx_t *parent_tctx = eos_tctx_get();
     for (int i = 0; i < stage_count - 1; i++) {
@@ -1192,10 +1196,14 @@ int __wrap_system(const char *cmdline) {
     return -1;
   }
 
+  eos_tctx_t *tctx = eos_tctx_get();
+  eos_tctx_fd_snapshot_t snap = eos_tctx_snapshot_fds(tctx);
+
   size_t cmd_len = strlen(cmdline);
   size_t arena_size = cmd_len * 2 + EOS_LARGE_STR_LEN;
   char *arena_buf = malloc(arena_size);
   if (!arena_buf) {
+    eos_tctx_cleanup_leaked_fds(tctx, &snap);
     return -1;
   }
   const char *arena_end = arena_buf + arena_size - 1;
@@ -1204,6 +1212,7 @@ int __wrap_system(const char *cmdline) {
   eos_token_t *tokens = calloc(max_tokens, sizeof(eos_token_t));
   if (!tokens) {
     free(arena_buf);
+    eos_tctx_cleanup_leaked_fds(tctx, &snap);
     return -1;
   }
 
@@ -1225,6 +1234,7 @@ int __wrap_system(const char *cmdline) {
   if (num_tokens == 0) {
     free(tokens);
     free(arena_buf);
+    eos_tctx_cleanup_leaked_fds(tctx, &snap);
     return 0;
   }
 
@@ -1240,6 +1250,9 @@ int __wrap_system(const char *cmdline) {
 
   free(tokens);
   free(arena_buf);
+
+  // Perform leak check: verify and close any descriptors left unclosed by commands
+  eos_tctx_cleanup_leaked_fds(tctx, &snap);
   return ret;
 }
 

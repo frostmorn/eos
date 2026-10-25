@@ -48,6 +48,17 @@ char **eos_tctx_get_environ(void);
 void eos_tctx_reg_fd(int fd, eos_tctx_t *tctx);
 void eos_tctx_unreg_fd(int fd, eos_tctx_t *tctx);
 
+// FD snapshot & leak cleanup
+typedef struct {
+  int *fds;
+  size_t count;
+  DIR **dirs;
+  size_t dir_count;
+} eos_tctx_fd_snapshot_t;
+
+eos_tctx_fd_snapshot_t eos_tctx_snapshot_fds(eos_tctx_t *tctx);
+void eos_tctx_cleanup_leaked_fds(eos_tctx_t *tctx, eos_tctx_fd_snapshot_t *snap);
+
 // FD redirection / mapping
 int eos_tctx_resolve_fd(int fd);
 

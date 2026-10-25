@@ -4,3 +4,6 @@ trace/*
 .clangd
 .cache
 .ai/
+sdkconfig
+sdkconfig.old
+dependencies.lock

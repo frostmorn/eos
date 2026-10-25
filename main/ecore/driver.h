@@ -155,7 +155,7 @@ bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child);
 ///////////////////////////////////////////////////////
 // VFS operations:
 ///////////////////////////////////////////////////////
-ssize_t eos_drv_write(eos_dev_t *dev, int fd, void *data, size_t size);
+ssize_t eos_drv_write(eos_dev_t *dev, int fd, const void *data, size_t size);
 off_t eos_drv_lseek(eos_dev_t *dev, int fd, off_t offset, int whence);
 ssize_t eos_drv_read(eos_dev_t *dev, int fd, void *dst, size_t size);
 ssize_t eos_drv_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offset);

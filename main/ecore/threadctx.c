@@ -350,6 +350,115 @@ void eos_tctx_unreg_dir(DIR *dir, eos_tctx_t *tctx) {
   kv_opt(DIR *, tctx->dirs);
 }
 
+eos_tctx_fd_snapshot_t eos_tctx_snapshot_fds(eos_tctx_t *tctx) {
+  eos_tctx_fd_snapshot_t snap = {0};
+  if (!tctx) return snap;
+
+  size_t n_fds = kv_size(tctx->fds);
+  if (n_fds > 0) {
+    extern void *__real_heap_caps_aligned_alloc_base(size_t, size_t, uint32_t);
+    snap.fds = __real_heap_caps_aligned_alloc_base(4, n_fds * sizeof(int), MALLOC_CAP_DEFAULT);
+    if (snap.fds) {
+      for (size_t j = 0; j < n_fds; j++) {
+        snap.fds[j] = kv_A(tctx->fds, j);
+      }
+      snap.count = n_fds;
+    }
+  }
+
+  size_t n_dirs = kv_size(tctx->dirs);
+  if (n_dirs > 0) {
+    extern void *__real_heap_caps_aligned_alloc_base(size_t, size_t, uint32_t);
+    snap.dirs = __real_heap_caps_aligned_alloc_base(4, n_dirs * sizeof(DIR *), MALLOC_CAP_DEFAULT);
+    if (snap.dirs) {
+      for (size_t j = 0; j < n_dirs; j++) {
+        snap.dirs[j] = kv_A(tctx->dirs, j);
+      }
+      snap.dir_count = n_dirs;
+    }
+  }
+
+  return snap;
+}
+
+void eos_tctx_cleanup_leaked_fds(eos_tctx_t *tctx, eos_tctx_fd_snapshot_t *snap) {
+  if (!tctx) {
+    if (snap) {
+      extern void __real_heap_caps_free(void *ptr);
+      if (snap->fds) __real_heap_caps_free(snap->fds);
+      if (snap->dirs) __real_heap_caps_free(snap->dirs);
+      snap->fds = NULL;
+      snap->dirs = NULL;
+      snap->count = 0;
+      snap->dir_count = 0;
+    }
+    return;
+  }
+
+  // 1. Close any leaked file descriptors not in the snapshot
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (size_t i = 0; i < kv_size(tctx->fds); i++) {
+      int fd = kv_A(tctx->fds, i);
+      bool was_present = false;
+      if (snap && snap->fds) {
+        for (size_t j = 0; j < snap->count; j++) {
+          if (snap->fds[j] == fd) {
+            was_present = true;
+            break;
+          }
+        }
+      }
+      if (!was_present) {
+        EOS_LOGW("Closing leaked fd %d\n", fd);
+        close(fd);
+        changed = true;
+        break; // restart search since close() mutates tctx->fds
+      }
+    }
+  }
+
+  // 2. Close any leaked directory handles not in the snapshot
+  changed = true;
+  while (changed) {
+    changed = false;
+    for (size_t i = 0; i < kv_size(tctx->dirs); i++) {
+      DIR *dir = kv_A(tctx->dirs, i);
+      bool was_present = false;
+      if (snap && snap->dirs) {
+        for (size_t j = 0; j < snap->dir_count; j++) {
+          if (snap->dirs[j] == dir) {
+            was_present = true;
+            break;
+          }
+        }
+      }
+      if (!was_present) {
+        EOS_LOGW("Closing leaked dir %p\n", dir);
+        closedir(dir);
+        changed = true;
+        break; // restart search since closedir() mutates tctx->dirs
+      }
+    }
+  }
+
+  // 3. Free snapshot buffers
+  if (snap) {
+    extern void __real_heap_caps_free(void *ptr);
+    if (snap->fds) {
+      __real_heap_caps_free(snap->fds);
+      snap->fds = NULL;
+    }
+    if (snap->dirs) {
+      __real_heap_caps_free(snap->dirs);
+      snap->dirs = NULL;
+    }
+    snap->count = 0;
+    snap->dir_count = 0;
+  }
+}
+
 void eos_tctx_reg_memblock(void *block, eos_tctx_t *tctx) {
   if (!tctx || !block) return;
   kv_push(void *, tctx->memblocks, block);

@@ -1,0 +1,26 @@
+menu "EOS Board Configuration"
+
+    choice EOS_BOARD
+        prompt "Target Board"
+        default EOS_BOARD_LILKA_V23
+        help
+            Select the target hardware board profile for EOS.
+
+    config EOS_BOARD_LILKA_V23
+        bool "Lilka v2/v3 (ESP32-S3)"
+        help
+            Lilka v2/v3 handheld console with ST7789 display, SD card, and keypad.
+
+    config EOS_BOARD_ESP32S3_QEMU
+        bool "ESP32-S3 QEMU"
+        help
+            ESP32-S3 emulator target for QEMU testing.
+
+    config EOS_BOARD_JC4880P443C_I_W_Y
+        bool "JC4880P443C_I_W_Y (ESP32-P4)"
+        help
+            ESP32-P4 development board with MIPI-DSI, touch, and audio codec.
+
+    endchoice
+
+endmenu

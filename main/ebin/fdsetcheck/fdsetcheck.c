@@ -6,7 +6,7 @@ int fdsetcheck_main(int argc, char **argv){
 
   printf("FD set set to %d\n", FD_SETSIZE);
   
-  const char filename[64];
+  char filename[64];
 
   size_t index = 0;
   while(1){

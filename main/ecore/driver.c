@@ -60,7 +60,7 @@ bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child) {
   return true;
 }
 
-ssize_t eos_drv_write(eos_dev_t *dev, int fd, void *data, size_t size) {
+ssize_t eos_drv_write(eos_dev_t *dev, int fd, const void *data, size_t size) {
   if (dev && dev->driver && dev->driver->write)
     return dev->driver->write(dev, fd, data, size);
 

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "ecore/bin.h"
 #include "SDL2/SDL.h"
 
