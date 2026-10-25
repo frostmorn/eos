@@ -96,47 +96,22 @@ jobs:
           echo "=== Building firmware for ${BOARD} ==="
           idf.py build
 
-          echo "=== Packaging artifacts for ${BOARD} ==="
-          OUTPUT_DIR="dist/${BOARD}"
-          mkdir -p "${OUTPUT_DIR}"
+          echo "=== Packaging binary outputs for ${BOARD} ==="
+          mkdir -p dist
 
-          # Primary firmware binaries
-          cp build/eos.bin "${OUTPUT_DIR}/eos-${BOARD}.bin"
-          cp build/bootloader/bootloader.bin "${OUTPUT_DIR}/bootloader-${BOARD}.bin"
-          cp build/partition_table/partition-table.bin "${OUTPUT_DIR}/partition-table-${BOARD}.bin"
-          cp build/eos.elf "${OUTPUT_DIR}/eos-${BOARD}.elf"
+          # 1. Firmware without bootloader (.bin specifically)
+          cp build/eos.bin "dist/eos-${BOARD}-without-bootloader.bin"
 
-          # Flashing metadata
-          if [ -f build/flash_args ]; then
-            cp build/flash_args "${OUTPUT_DIR}/flash_args"
-          fi
-          if [ -f build/flasher_args.json ]; then
-            cp build/flasher_args.json "${OUTPUT_DIR}/flasher_args.json"
-          fi
+          # 2. Firmware with bootloader (.bin specifically, merged with bootloader and partition table)
+          python tools/merge_bin.py "dist/eos-${BOARD}-with-bootloader.bin" build
 
-          # Generate single factory/merged image if flash_args is available
-          if [ -f build/flash_args ]; then
-            echo "Generating merged flash binary for ${BOARD}..."
-            (cd build && esptool.py merge_bin -o "../${OUTPUT_DIR}/eos-${BOARD}-merged.bin" @flash_args) || true
-          fi
-
-          # Create a standalone zip package for this board
-          (cd "${OUTPUT_DIR}" && python3 -m zipfile -c "../../dist/eos-${BOARD}.zip" *)
-
-          # Also expose uncompressed application and merged binaries at root dist
-          cp "${OUTPUT_DIR}/eos-${BOARD}.bin" "dist/"
-          if [ -f "${OUTPUT_DIR}/eos-${BOARD}-merged.bin" ]; then
-            cp "${OUTPUT_DIR}/eos-${BOARD}-merged.bin" "dist/"
-          fi
-
-      - name: Upload board artifact
+      - name: Upload board binaries
         uses: actions/upload-artifact@v4
         with:
-          name: eos-${{ matrix.board }}
+          name: eos-binaries-${{ matrix.board }}
           path: |
-            dist/eos-${{ matrix.board }}.zip
-            dist/eos-${{ matrix.board }}.bin
-            dist/eos-${{ matrix.board }}-merged.bin
+            dist/eos-${{ matrix.board }}-without-bootloader.bin
+            dist/eos-${{ matrix.board }}-with-bootloader.bin
           if-no-files-found: error
           retention-days: 14
 
@@ -150,7 +125,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
-          pattern: eos-*
+          pattern: eos-binaries-*
           merge-multiple: true
 
       - name: Inspect release assets
@@ -161,7 +136,7 @@ jobs:
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: release-assets/*.bin
           generate_release_notes: true
           draft: false
           prerelease: false
