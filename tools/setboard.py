@@ -34,7 +34,7 @@ def loadboards():
     board_list.sort()
 
 def update_pregen(board):
-    target_macro = board_target_map.get(board)
+    target_macro = board_target_map.get(board, f"EOS_TARGET_{board.upper()}")
     pregen_path = "main/pregen.h"
     if not os.path.exists(pregen_path):
         print(f"WARNING: {pregen_path} not found, skipping pregen update.")
@@ -89,7 +89,16 @@ def setboard(board):
 
 def selectboard():
     if len(sys.argv) > 1:
-        board = sys.argv[1]
+        arg = sys.argv[1]
+        if arg in ("--list", "-l"):
+            for b in board_list:
+                print(b)
+            return
+        if arg == "--json":
+            import json
+            print(json.dumps(board_list))
+            return
+        board = arg
         setboard(board)
         return
 

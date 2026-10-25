@@ -1,0 +1,136 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+      - '*.*.*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  discover-boards:
+    name: Discover Available Boards
+    runs-on: ubuntu-latest
+    outputs:
+      boards: ${{ steps.list-boards.outputs.boards }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Discover board directories
+        id: list-boards
+        run: |
+          BOARDS_JSON=$(python tools/setboard.py --json)
+          echo "Discovered boards: $BOARDS_JSON"
+          echo "boards=$BOARDS_JSON" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.board }})
+    needs: discover-boards
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v6.0
+    strategy:
+      fail-fast: false
+      matrix:
+        board: ${{ fromJson(needs.discover-boards.outputs.boards) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Mark git workspace as safe
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Configure board target
+        run: |
+          python tools/setboard.py "${{ matrix.board }}"
+
+      - name: Clean build cache
+        run: |
+          idf.py fullclean
+
+      - name: Build firmware
+        run: |
+          idf.py build
+
+      - name: Package board artifacts
+        run: |
+          BOARD="${{ matrix.board }}"
+          OUTPUT_DIR="dist/${BOARD}"
+          mkdir -p "${OUTPUT_DIR}"
+
+          # Primary firmware binaries
+          cp build/eos.bin "${OUTPUT_DIR}/eos-${BOARD}.bin"
+          cp build/bootloader/bootloader.bin "${OUTPUT_DIR}/bootloader-${BOARD}.bin"
+          cp build/partition_table/partition-table.bin "${OUTPUT_DIR}/partition-table-${BOARD}.bin"
+          cp build/eos.elf "${OUTPUT_DIR}/eos-${BOARD}.elf"
+
+          # Flashing metadata
+          if [ -f build/flash_args ]; then
+            cp build/flash_args "${OUTPUT_DIR}/flash_args"
+          fi
+          if [ -f build/flasher_args.json ]; then
+            cp build/flasher_args.json "${OUTPUT_DIR}/flasher_args.json"
+          fi
+
+          # Generate single factory/merged image if flash_args is available
+          if [ -f build/flash_args ]; then
+            echo "Generating merged flash binary for ${BOARD}..."
+            (cd build && esptool.py merge_bin -o "../${OUTPUT_DIR}/eos-${BOARD}-merged.bin" @flash_args) || true
+          fi
+
+          # Create a standalone zip package for this board
+          (cd "${OUTPUT_DIR}" && python3 -m zipfile -c "../../dist/eos-${BOARD}.zip" *)
+
+          # Also expose uncompressed application and merged binaries at root dist
+          cp "${OUTPUT_DIR}/eos-${BOARD}.bin" "dist/"
+          if [ -f "${OUTPUT_DIR}/eos-${BOARD}-merged.bin" ]; then
+            cp "${OUTPUT_DIR}/eos-${BOARD}-merged.bin" "dist/"
+          fi
+
+      - name: Upload board artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: eos-${{ matrix.board }}
+          path: |
+            dist/eos-${{ matrix.board }}.zip
+            dist/eos-${{ matrix.board }}.bin
+            dist/eos-${{ matrix.board }}-merged.bin
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [discover-boards, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all board artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          pattern: eos-*
+          merge-multiple: true
+
+      - name: Inspect release assets
+        run: |
+          echo "Release assets ready for publication:"
+          ls -lah release-assets/
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

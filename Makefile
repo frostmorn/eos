@@ -46,7 +46,7 @@ clean:
 	idf.py fullclean
 
 setboard:
-	python tools/setboard.py
+	python tools/setboard.py $(BOARD)
 
 menuconfig:
 	@echo "Runing build configuration menu"
