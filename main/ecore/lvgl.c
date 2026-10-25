@@ -24,6 +24,9 @@ typedef struct {
   uint8_t key_tail;
   uint32_t pending_lv_key;
   bool send_release;
+  uint16_t last_touch_x;
+  uint16_t last_touch_y;
+  bool touch_pressed;
 } eos_lvgl_internal_t;
 
 static eos_lvgl_internal_t s_lvgl = {
@@ -32,6 +35,7 @@ static eos_lvgl_internal_t s_lvgl = {
             .initialized = false,
             .fb_fd = -1,
             .kbd_fd = -1,
+            .touch_fd = -1,
         },
 };
 
@@ -202,6 +206,28 @@ static void eos_lvgl_indev_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   }
 
   data->state = LV_INDEV_STATE_RELEASED;
+}
+
+static void eos_lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+  eos_lvgl_ctx_t *ctx = (eos_lvgl_ctx_t *)lv_indev_get_user_data(indev);
+  if (!ctx || ctx->touch_fd < 0) {
+    data->state = LV_INDEV_STATE_RELEASED;
+    return;
+  }
+
+  eos_input_event_t ev;
+  memset(&ev, 0, sizeof(ev));
+  int ret = ioctl(ctx->touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
+  if (ret > 0 && ev.type == EOS_INPUT_EVENT_TOUCH) {
+    s_lvgl.last_touch_x = ev.x;
+    s_lvgl.last_touch_y = ev.y;
+    s_lvgl.touch_pressed = (ev.state != 0);
+  }
+
+  data->point.x = s_lvgl.last_touch_x;
+  data->point.y = s_lvgl.last_touch_y;
+  data->state =
+      s_lvgl.touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 // ── Framebuffer Partial & Full-Frame Flushing ──────────────────
@@ -399,6 +425,7 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   memset(&s_lvgl, 0, sizeof(s_lvgl));
   s_lvgl.pub.fb_fd = -1;
   s_lvgl.pub.kbd_fd = -1;
+  s_lvgl.pub.touch_fd = -1;
 
   const char *fb_path = (cfg && cfg->fb_path) ? cfg->fb_path : getenv("EOS_FB");
   if (!fb_path || !fb_path[0]) {
@@ -411,7 +438,14 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
     kbd_path = EOS_LVGL_DEFAULT_KBD_PATH;
   }
 
+  const char *touch_path =
+      (cfg && cfg->touch_path) ? cfg->touch_path : getenv("EOS_TOUCH");
+  if (!touch_path || !touch_path[0]) {
+    touch_path = EOS_LVGL_DEFAULT_TOUCH_PATH;
+  }
+
   bool enable_kbd = cfg ? cfg->enable_keyboard : true;
+  bool enable_touch = cfg ? (!cfg->disable_touch) : true;
   s_lvgl.pub.dpad_group_nav = cfg ? cfg->dpad_group_nav : true;
 
   int fb_fd = open(fb_path, O_RDWR);
@@ -559,6 +593,31 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
     }
   }
 
+  // Open touch device if enabled
+  if (enable_touch) {
+    int touch_fd = open(touch_path, O_RDWR);
+    if (touch_fd < 0) {
+      touch_fd = open(touch_path, O_RDONLY);
+    }
+    if (touch_fd < 0 && strcmp(touch_path, "/dev/touch0") == 0) {
+      touch_fd = open("/dev/touch", O_RDONLY);
+    }
+    if (touch_fd >= 0) {
+      s_lvgl.pub.touch_fd = touch_fd;
+      lv_indev_t *tindev = lv_indev_create();
+      if (tindev) {
+        lv_indev_set_type(tindev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(tindev, eos_lvgl_touch_read_cb);
+        lv_indev_set_user_data(tindev, &s_lvgl.pub);
+        lv_indev_set_display(tindev, disp);
+        s_lvgl.pub.touch_indev = tindev;
+      }
+    } else {
+      EOS_LOGI("Touch device '%s' not available: %s", touch_path,
+               strerror(errno));
+    }
+  }
+
   s_lvgl.pub.initialized = true;
   return 0;
 }
@@ -584,6 +643,11 @@ void eos_lvgl_deinit(void) {
     if (scr) {
       lv_obj_clean(scr);
     }
+  }
+
+  if (s_lvgl.pub.touch_indev) {
+    lv_indev_delete(s_lvgl.pub.touch_indev);
+    s_lvgl.pub.touch_indev = NULL;
   }
 
   if (s_lvgl.pub.indev) {
@@ -621,6 +685,11 @@ void eos_lvgl_deinit(void) {
     s_lvgl.pub.kbd_fd = -1;
   }
 
+  if (s_lvgl.pub.touch_fd >= 0) {
+    close(s_lvgl.pub.touch_fd);
+    s_lvgl.pub.touch_fd = -1;
+  }
+
   s_lvgl.pub.initialized = false;
 }
 
@@ -631,6 +700,8 @@ eos_lvgl_ctx_t *eos_lvgl_get_ctx(void) {
 lv_display_t *eos_lvgl_get_display(void) { return s_lvgl.pub.display; }
 
 lv_indev_t *eos_lvgl_get_indev(void) { return s_lvgl.pub.indev; }
+
+lv_indev_t *eos_lvgl_get_touch_indev(void) { return s_lvgl.pub.touch_indev; }
 
 lv_group_t *eos_lvgl_get_group(void) { return s_lvgl.pub.group; }
 

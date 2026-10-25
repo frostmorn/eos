@@ -101,6 +101,12 @@ typedef enum {
   // edriver/input/keyboard
   //=====================================================
   EOS_KEYBOARD_IOCTL_POLL,           // eos_input_event_t *ev
+
+  //=====================================================
+  // edriver/input/touch
+  //=====================================================
+  EOS_TOUCH_IOCTL_POLL,              // eos_input_event_t *ev
+  EOS_TOUCH_IOCTL_GET_COORDS,        // uint16_t *x, uint16_t *y, bool *pressed
 } eos_ioctl_t;
 
 // (^__^)==\~

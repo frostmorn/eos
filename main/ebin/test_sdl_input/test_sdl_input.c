@@ -38,6 +38,15 @@ int test_sdl_input_main(int argc, char **argv) {
           printf("ESC pressed, exiting SDL input test.\n");
           break;
         }
+      } else if (e.type == SDL_MOUSEBUTTONDOWN) {
+        printf("[%d] SDL_MOUSEBUTTONDOWN: btn=%d at (%d, %d)\n", count,
+               (int)e.button.button, (int)e.button.x, (int)e.button.y);
+      } else if (e.type == SDL_MOUSEBUTTONUP) {
+        printf("[%d] SDL_MOUSEBUTTONUP: btn=%d at (%d, %d)\n", count,
+               (int)e.button.button, (int)e.button.x, (int)e.button.y);
+      } else if (e.type == SDL_MOUSEMOTION) {
+        printf("[%d] SDL_MOUSEMOTION: pos=(%d, %d), rel=(%d, %d)\n", count,
+               (int)e.motion.x, (int)e.motion.y, (int)e.motion.xrel, (int)e.motion.yrel);
       } else if (e.type == SDL_QUIT) {
         printf("SDL_QUIT received.\n");
         break;

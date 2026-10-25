@@ -13,8 +13,9 @@
 extern "C" {
 #endif
 
-#define EOS_LVGL_DEFAULT_FB_PATH  "/dev/fb0"
-#define EOS_LVGL_DEFAULT_KBD_PATH "/dev/keyboard0"
+#define EOS_LVGL_DEFAULT_FB_PATH    "/dev/fb0"
+#define EOS_LVGL_DEFAULT_KBD_PATH   "/dev/keyboard0"
+#define EOS_LVGL_DEFAULT_TOUCH_PATH "/dev/touch0"
 
 // Key event callback invoked when a physical key press is polled
 typedef void (*eos_lvgl_key_cb_t)(uint16_t eos_key, uint32_t lv_key,
@@ -24,10 +25,12 @@ typedef void (*eos_lvgl_key_cb_t)(uint16_t eos_key, uint32_t lv_key,
 typedef struct {
   const char *fb_path;    // Framebuffer VFS path (NULL -> $EOS_FB or "/dev/fb0")
   const char *kbd_path;   // Keyboard VFS path (NULL -> $EOS_KEYBOARD or "/dev/keyboard0")
+  const char *touch_path; // Touch VFS path (NULL -> $EOS_TOUCH or "/dev/touch0")
   uint32_t partial_lines; // Lines per partial buffer (0 -> auto 16KB strip like st7789)
   bool force_full_frame;  // Start directly in full-frame mode instead of partial mode
   bool dpad_group_nav;    // Map UP/DOWN to LV_KEY_PREV/NEXT for LVGL group navigation
   bool enable_keyboard;   // Open and bind /dev/keyboard0 input device
+  bool disable_touch;     // Explicitly disable touch device (enabled by default if device exists)
 } eos_lvgl_cfg_t;
 
 // Runtime state of the EOS LVGL framebuffer & input adapter
@@ -35,6 +38,7 @@ typedef struct {
   bool initialized;
   int fb_fd;
   int kbd_fd;
+  int touch_fd;
   uint32_t width;
   uint32_t height;
   uint32_t partial_lines;
@@ -48,6 +52,7 @@ typedef struct {
   uint32_t full_flushes;
   lv_display_t *display;
   lv_indev_t *indev;
+  lv_indev_t *touch_indev;
   lv_group_t *group;
   eos_lvgl_key_cb_t key_cb;
   void *key_cb_user_data;
@@ -67,6 +72,7 @@ void eos_lvgl_deinit(void);
 eos_lvgl_ctx_t *eos_lvgl_get_ctx(void);
 lv_display_t *eos_lvgl_get_display(void);
 lv_indev_t *eos_lvgl_get_indev(void);
+lv_indev_t *eos_lvgl_get_touch_indev(void);
 lv_group_t *eos_lvgl_get_group(void);
 
 // Query active framebuffer dimensions.

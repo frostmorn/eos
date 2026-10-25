@@ -10,10 +10,12 @@ typedef struct {
   union{
     // keyboard
     uint16_t code;
-    // touch(should be simple as that)
+    // touch
     struct{
       uint16_t x;
       uint16_t y;
+      uint8_t state; // 1 = pressed, 0 = released
+      uint8_t count; // touch point count
     };
   };
 } eos_input_event_t;

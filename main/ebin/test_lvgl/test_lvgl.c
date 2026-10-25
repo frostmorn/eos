@@ -55,6 +55,18 @@ static void update_test_ui(test_lvgl_ui_t *ui, const char *last_key_name) {
       0);
 }
 
+static void scr_touch_event_cb(lv_event_t *e) {
+  test_lvgl_ui_t *ui = (test_lvgl_ui_t *)lv_event_get_user_data(e);
+  lv_indev_t *indev = lv_indev_active();
+  if (indev && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    ui->box_x = p.x - 18;
+    ui->box_y = p.y - 18;
+    update_test_ui(ui, "TOUCH");
+  }
+}
+
 static int test_lvgl_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
@@ -123,6 +135,9 @@ static int test_lvgl_main(int argc, char **argv) {
   lv_label_set_text(hint, "C: Partial/Full  D: FullRedraw  B/ESC: Quit");
   lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSED, &ui);
+  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSING, &ui);
 
   update_test_ui(&ui, NULL);
 

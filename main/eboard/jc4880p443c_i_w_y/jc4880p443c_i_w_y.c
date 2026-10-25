@@ -21,6 +21,21 @@ void eos_board_init() {
                                {NULL}};
   eos_dev_attach(display, eos_devtree_root());
 
+#ifdef EOS_DRV_INPUT_GT911_ENABLED
+  // ===================== Touch controller =====================
+  // GT911 capacitive touch screen
+  eos_dev_t *touch = eos_dev_alloc();
+  touch->driver = eos_drv_find("input", "gt911");
+  touch->pins = (eos_pin_t[]){{"sda", 7}, {"scl", 8}, {NULL, 0}};
+  touch->cfg = (eos_cfg_t[]){{"port", EOS_CFG_INT, .val.i = 0},
+                             {"clk_speed", EOS_CFG_INT, .val.i = 400000},
+                             {"width", EOS_CFG_INT, .val.i = 480},
+                             {"height", EOS_CFG_INT, .val.i = 800},
+                             {"addr", EOS_CFG_INT, .val.i = 0x5D},
+                             {NULL}};
+  eos_dev_attach(touch, eos_devtree_root());
+#endif
+
   /*
   // ===================== I2C bus =====================
   // Shared between touch controller and ES8311 codec
