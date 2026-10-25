@@ -42,6 +42,9 @@ jobs:
       fail-fast: false
       matrix:
         board: ${{ fromJson(needs.discover-boards.outputs.boards) }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -51,21 +54,49 @@ jobs:
       - name: Mark git workspace as safe
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Configure board target
+      - name: Setup ESP-IDF environment
         run: |
-          python tools/setboard.py "${{ matrix.board }}"
+          if [ -f "$IDF_PATH/export.sh" ]; then
+            . "$IDF_PATH/export.sh"
+          elif [ -f /opt/esp/idf/export.sh ]; then
+            . /opt/esp/idf/export.sh
+          elif [ -f /opt/esp-idf/export.sh ]; then
+            . /opt/esp-idf/export.sh
+          fi
+          echo "$PATH" | tr ':' '\n' | while read -r p; do
+            if [ -n "$p" ] && [ -d "$p" ]; then
+              echo "$p" >> "$GITHUB_PATH"
+            fi
+          done
+          echo "IDF_PATH=$IDF_PATH" >> "$GITHUB_ENV"
+          if [ -n "$IDF_TOOLS_PATH" ]; then
+            echo "IDF_TOOLS_PATH=$IDF_TOOLS_PATH" >> "$GITHUB_ENV"
+          fi
+          if [ -n "$IDF_PYTHON_ENV_PATH" ]; then
+            echo "IDF_PYTHON_ENV_PATH=$IDF_PYTHON_ENV_PATH" >> "$GITHUB_ENV"
+          fi
 
-      - name: Clean build cache
+      - name: Build and Package Firmware
         run: |
+          if [ -f "$IDF_PATH/export.sh" ]; then
+            . "$IDF_PATH/export.sh"
+          elif [ -f /opt/esp/idf/export.sh ]; then
+            . /opt/esp/idf/export.sh
+          elif [ -f /opt/esp-idf/export.sh ]; then
+            . /opt/esp-idf/export.sh
+          fi
+
+          BOARD="${{ matrix.board }}"
+          echo "=== Configuring board: ${BOARD} ==="
+          python tools/setboard.py "${BOARD}"
+
+          echo "=== Cleaning build cache ==="
           idf.py fullclean
 
-      - name: Build firmware
-        run: |
+          echo "=== Building firmware for ${BOARD} ==="
           idf.py build
 
-      - name: Package board artifacts
-        run: |
-          BOARD="${{ matrix.board }}"
+          echo "=== Packaging artifacts for ${BOARD} ==="
           OUTPUT_DIR="dist/${BOARD}"
           mkdir -p "${OUTPUT_DIR}"
 
