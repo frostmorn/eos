@@ -6,10 +6,12 @@
 
 void eos_board_init() {
   // ================== RESERVED PINS ==================
-  // Strapping & SoC system pins (USB, PSRAM, Flash, UART, Strapping 3/45)
+  // Hardware bus & SoC system pins (USB, PSRAM, Flash, UART)
   // are claimed automatically during eos_capsmgr_init().
-  // GPIO 0 is wired to input/keyboard (Select).
-  // GPIO 46 is wired to display/st7789 (EN).
+  // Strapping pins (0, 3, 45, 46) are runtime-usable GPIOs:
+  // - GPIO 0 is wired to input/keyboard (Select).
+  // - GPIO 46 is wired to display/st7789 (EN).
+  // - GPIO 3, 45 are free for expansion and diagnostics.
   // ====================== FLASH ======================
   eos_dev_t *flash = eos_dev_alloc();
   flash->driver = eos_drv_find("storage", "flash");

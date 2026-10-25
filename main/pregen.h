@@ -34,17 +34,18 @@
 // Using 49 as count so pin number == array index directly.
 #define EOS_GPIO_COUNT SOC_GPIO_PIN_COUNT
 
-// Reserved pins — claiming these will be rejected by eos_pin_claim().
+// Reserved pins — claiming these will be rejected by eos_cap_claim().
 // Covers:
-//   0, 3, 45, 46  — strapping pins (boot mode, JTAG, VDD_SPI)
 //   19, 20        — USB D-/D+ (used by ESP-IDF USB stack)
-//   26..32        — SPI0/1 flash + PSRAM (always reserved)
-//   33..37        — Octal PSRAM (reserved if using R8 or higher variant)
-//   43, 44        — UART0 TX/RX (used by ROM/bootloader console)
 //   22, 23, 24, 25 — do not exist on ESP32-S3 silicon
+//   26..32        — SPI0/1 flash (always reserved)
+//   33..37        — Octal PSRAM (reserved on R8 variant)
+//   43, 44        — UART0 TX/RX (used by ROM/bootloader console)
+// Note: Strapping pins (0, 3, 45, 46) are sampled only at boot and are
+// usable as standard GPIOs at runtime (e.g. 0 for Select, 46 for LCD EN).
 #define EOS_GPIO_RESERVED                                                      \
-  {0,  3,  19, 20, 22, 23, 24, 25, 26, 27, 28, 29,                             \
-   30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45}
+  {19, 20, 22, 23, 24, 25, 26, 27, 28, 29,                                     \
+   30, 31, 32, 33, 34, 35, 36, 37, 43, 44}
 
 // I2C
 #define EOS_I2C_COUNT SOC_I2C_NUM

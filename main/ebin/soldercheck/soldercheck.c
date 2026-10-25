@@ -30,8 +30,49 @@ static int compare_pins(const void *a, const void *b) {
 
 static void pin_reset_to_input_pullup(int fd) {
   ioctl(fd, EOS_GPIO_IOCTL_SET_PULLUP);
-  uint8_t dummy = 0;
-  (void)read(fd, &dummy, 1);
+}
+
+static void pin_reset_to_input_pulldown(int fd) {
+  ioctl(fd, EOS_GPIO_IOCTL_SET_PULLDOWN);
+}
+
+static bool test_pin_bridge(int fd_drive, int fd_read) {
+  // 1. Pull-up test: fd_read pulled up, fd_drive outputs 0.
+  //    If bridged, fd_read is pulled down to 0.
+  //    If not bridged, fd_read remains 1 due to pull-up.
+  pin_reset_to_input_pullup(fd_read);
+  uint8_t zero = 0;
+  if (write(fd_drive, &zero, 1) < 0)
+    return false;
+  usleep(50);
+  uint8_t val = 1;
+  if (read(fd_read, &val, 1) < 0 || val != 0)
+    return false;
+
+  // 2. Pull-down test: fd_read pulled down, fd_drive outputs 1.
+  //    If bridged, fd_read is pulled up to 1.
+  //    If not bridged, fd_read remains 0 due to pull-down.
+  pin_reset_to_input_pulldown(fd_read);
+  uint8_t one = 1;
+  if (write(fd_drive, &one, 1) < 0)
+    return false;
+  usleep(50);
+  val = 0;
+  if (read(fd_read, &val, 1) < 0 || val != 1)
+    return false;
+
+  // 3. Dynamic pattern verification under pull-up
+  pin_reset_to_input_pullup(fd_read);
+  for (size_t k = 0; k < sizeof(s_pattern); k++) {
+    if (write(fd_drive, &s_pattern[k], 1) < 0)
+      return false;
+    usleep(30);
+    val = 0;
+    if (read(fd_read, &val, 1) < 0 || val != s_pattern[k])
+      return false;
+  }
+
+  return true;
 }
 
 int soldercheck_main(int argc, char **argv) {
@@ -88,10 +129,7 @@ int soldercheck_main(int argc, char **argv) {
     if (file_list[opened_count].fd >= 0) {
       int fd = file_list[opened_count].fd;
       ioctl(fd, EOS_GPIO_IOCTL_SET_PULLUP);
-      ioctl(fd, EOS_GPIO_IOCTL_SET_SAMPLE_PERIOD_US, 20);
       ioctl(fd, EOS_GPIO_IOCTL_SET_IOMODE_BIN);
-      uint8_t dummy = 0;
-      (void)read(fd, &dummy, 1);
     }
     opened_count++;
   }
@@ -147,7 +185,7 @@ int soldercheck_main(int argc, char **argv) {
     bool is_short_gnd = false;
     bool is_short_vcc = false;
 
-    // Test A: Active write-and-readback test.
+    // Active write-and-readback test:
     // Drive alternating values (0, 1, 0, 1, 1, 0, 1, 0) and verify if the pin changes level.
     // If a pin is shorted to ground, it will NEVER read 1 (remains 0 despite writes to 1).
     // If a pin is shorted to +, it will NEVER read 0 (remains 1 despite writes to 0).
@@ -178,22 +216,6 @@ int soldercheck_main(int argc, char **argv) {
       } else if (one_reads == successful_writes && zero_reads == 0) {
         is_short_vcc = true;
       }
-    }
-
-    // Test B: Passive pull-up / pull-down test to confirm.
-    uint8_t pu_val = 1;
-    uint8_t pd_val = 0;
-
-    ioctl(fd, EOS_GPIO_IOCTL_SET_PULLUP);
-    usleep(50);
-    if (read(fd, &pu_val, 1) > 0 && pu_val == 0) {
-      is_short_gnd = true;
-    }
-
-    ioctl(fd, EOS_GPIO_IOCTL_SET_PULLDOWN);
-    usleep(50);
-    if (read(fd, &pd_val, 1) > 0 && pd_val == 1) {
-      is_short_vcc = true;
     }
 
     pin_reset_to_input_pullup(fd);
@@ -232,38 +254,14 @@ int soldercheck_main(int argc, char **argv) {
       pairs_tested++;
 
       // Test Direction 1: Drive pin i, read pin j
-      bool match_ij = true;
-      for (size_t k = 0; k < sizeof(s_pattern); k++) {
-        if (write(test_pins[i].fd, &s_pattern[k], 1) < 0) {
-          match_ij = false;
-          break;
-        }
-        usleep(15);
-        uint8_t val = 0;
-        if (read(test_pins[j].fd, &val, 1) < 0 || val != s_pattern[k]) {
-          match_ij = false;
-          break;
-        }
-      }
+      bool match_ij = test_pin_bridge(test_pins[i].fd, test_pins[j].fd);
       pin_reset_to_input_pullup(test_pins[i].fd);
       pin_reset_to_input_pullup(test_pins[j].fd);
 
       // If Direction 1 matched, test reverse direction to confirm bridge
       bool match_ji = false;
       if (match_ij) {
-        match_ji = true;
-        for (size_t k = 0; k < sizeof(s_pattern); k++) {
-          if (write(test_pins[j].fd, &s_pattern[k], 1) < 0) {
-            match_ji = false;
-            break;
-          }
-          usleep(15);
-          uint8_t val = 0;
-          if (read(test_pins[i].fd, &val, 1) < 0 || val != s_pattern[k]) {
-            match_ji = false;
-            break;
-          }
-        }
+        match_ji = test_pin_bridge(test_pins[j].fd, test_pins[i].fd);
         pin_reset_to_input_pullup(test_pins[j].fd);
         pin_reset_to_input_pullup(test_pins[i].fd);
       }
