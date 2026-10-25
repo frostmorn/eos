@@ -4,8 +4,9 @@
 #include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include <esp_heap_caps.h>
-#include <string.h>
 #include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
 
 // This requires system wide TLS INDEX register
@@ -404,7 +405,9 @@ void *eos_twrap_pthread(void *data) {
 
   void *thread_result = thread_start(thread_arg);
 
-  // TODO: RTOS task never reach that since is destroyed via vTaskDelete(NULL)
+  // Flush any buffered thread output while inherited stdio fd_map is still active
+  fflush(stdout);
+  fflush(stderr);
 
   // Cleanup resources. Note it won't happen in case thread killed from outside
   while (kv_size(tctx->fds)) {

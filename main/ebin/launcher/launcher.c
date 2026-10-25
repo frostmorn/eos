@@ -2,6 +2,7 @@
 #include "ecore/lvgl.h"
 #include "emisc/fancymacro.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,8 @@
 #define LAUNCHER_MAX_BINS      96
 #define LAUNCHER_MAX_GROUPS    24
 #define LAUNCHER_DEFAULT_GROUP "System"
+#define LAUNCHER_TERM_OUT_FILE "/term.out"
+#define LAUNCHER_TERM_IN_FILE  "/term.in"
 
 typedef struct {
   char name[EOS_XSMALL_STR_LEN];
@@ -73,6 +76,26 @@ static const char *bin_effective_desc(const eos_bin_t *bin) {
   return "EOS native binary application";
 }
 
+// Returns true if the binary manages /dev/fb0 directly (LVGL, SDL, or raw display)
+// or is an interactive shell; returns false for CLI/terminal tasks whose stdout/stderr
+// should be piped to LAUNCHER_TERM_OUT_FILE and displayed in lvgl_term.
+static bool bin_is_direct_display_or_shell(const eos_bin_t *bin) {
+  if (!bin || !bin->filename[0])
+    return false;
+  const char *fn = bin->filename;
+  if (strncmp(fn, "lvgl_", 5) == 0)
+    return true;
+  if (strcmp(fn, "test_lvgl") == 0)
+    return true;
+  if (strncmp(fn, "test_disp_", 10) == 0)
+    return true;
+  if (strncmp(fn, "test_sdl", 8) == 0)
+    return true;
+  if (strcmp(fn, "ush") == 0 || strcmp(fn, "launcher") == 0)
+    return true;
+  return false;
+}
+
 static int find_or_add_group(launcher_state_t *st, const char *group_name) {
   for (int i = 1; i < st->group_count; i++) {
     if (strcasecmp(st->groups[i].name, group_name) == 0) {
@@ -84,7 +107,7 @@ static int find_or_add_group(launcher_state_t *st, const char *group_name) {
   }
   int idx = st->group_count++;
   snprintf(st->groups[idx].name, sizeof(st->groups[idx].name), "%s",
-           group_name);
+            group_name);
   st->groups[idx].count = 0;
   return idx;
 }
@@ -461,9 +484,16 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
   if (!target)
     return -1;
 
+  bool is_direct = bin_is_direct_display_or_shell(target);
+
   if (st->status_bar) {
     char msg[64];
-    snprintf(msg, sizeof(msg), "Launching %s...", target->filename);
+    if (is_direct) {
+      snprintf(msg, sizeof(msg), "Launching %s...", target->filename);
+    } else {
+      snprintf(msg, sizeof(msg), "Running %s -> %s...", target->filename,
+               LAUNCHER_TERM_OUT_FILE);
+    }
     lv_label_set_text(st->status_bar, msg);
     if (eos_lvgl_get_display()) {
       lv_refr_now(eos_lvgl_get_display());
@@ -479,22 +509,50 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
   printf("\n[launcher] Starting '%s' (%s)...\n", target->filename,
          bin_effective_name(target));
 
-  int rc = system(target->filename);
-  if (rc < 0 && target->entry_point) {
-    char arg0[EOS_SMALL_STR_LEN];
-    snprintf(arg0, sizeof(arg0), "%s", target->filename);
-    char *argv_local[2] = {arg0, NULL};
-    rc = target->entry_point(1, argv_local);
-  }
+  int rc = 0;
+  if (is_direct) {
+    rc = system(target->filename);
+    if (rc < 0 && target->entry_point) {
+      char arg0[EOS_SMALL_STR_LEN];
+      snprintf(arg0, sizeof(arg0), "%s", target->filename);
+      char *argv_local[2] = {arg0, NULL};
+      rc = target->entry_point(1, argv_local);
+    }
 
-  gettimeofday(&t1, NULL);
-  int64_t elapsed_ms = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000LL +
-                       (int64_t)(t1.tv_usec - t0.tv_usec) / 1000LL;
+    gettimeofday(&t1, NULL);
+    int64_t elapsed_ms = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000LL +
+                         (int64_t)(t1.tv_usec - t0.tv_usec) / 1000LL;
 
-  // If the app drew a static frame and exited immediately (e.g. test_disp_bars),
-  // pause briefly so its output stays visible before restoring the launcher UI.
-  if (elapsed_ms >= 0 && elapsed_ms < 250) {
-    usleep(600000);
+    // If the app drew a static frame and exited immediately (e.g. test_disp_bars),
+    // pause briefly so its output stays visible before restoring the launcher UI.
+    if (elapsed_ms >= 0 && elapsed_ms < 250) {
+      usleep(600000);
+    }
+  } else {
+    // Terminal/CLI task: pipe stdout & stderr into LAUNCHER_TERM_OUT_FILE
+    // and display the results in lvgl_term.
+    int in_fd = open(LAUNCHER_TERM_IN_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (in_fd >= 0) {
+      close(in_fd);
+    }
+
+    char cmd_str[EOS_MID_STR_LEN];
+    if (strcmp(target->filename, "test_input") == 0) {
+      snprintf(cmd_str, sizeof(cmd_str), "test_input 8");
+    } else {
+      snprintf(cmd_str, sizeof(cmd_str), "%s", target->filename);
+    }
+
+    char redir_cmd[EOS_LARGE_STR_LEN];
+    snprintf(redir_cmd, sizeof(redir_cmd), "%s < %s > %s 2>&1", cmd_str,
+             LAUNCHER_TERM_IN_FILE, LAUNCHER_TERM_OUT_FILE);
+    rc = system(redir_cmd);
+
+    char view_cmd[EOS_LARGE_STR_LEN];
+    snprintf(view_cmd, sizeof(view_cmd),
+             "lvgl_term %s \"%s (exit %d)\" \"%s\"", LAUNCHER_TERM_OUT_FILE,
+             target->filename, rc, cmd_str);
+    (void)system(view_cmd);
   }
 
   st->last_exit_code = rc;

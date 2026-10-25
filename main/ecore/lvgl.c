@@ -9,7 +9,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-#ifdef MALLOC_CAP_DMA
+#if defined(ESP_PLATFORM) || (defined(__has_include) && __has_include(<esp_heap_caps.h>))
 #include <esp_heap_caps.h>
 #endif
 
@@ -206,31 +206,42 @@ static void eos_lvgl_indev_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
 // ── Framebuffer Partial & Full-Frame Flushing ──────────────────
 
-// Writes a full frame to /dev/fb0, falling back to row-strip writes
-// (modeled after st7789.c) if a single full-frame write fails.
+// Round invalidated areas horizontally to full display width so LVGL's
+// draw buffer row stride always matches ctx->width * 2 without stride-alignment
+// padding shifts. When full-frame fallback is active, round to full screen.
+static void eos_lvgl_invalidate_area_cb(lv_event_t *e) {
+  eos_lvgl_ctx_t *ctx = (eos_lvgl_ctx_t *)lv_event_get_user_data(e);
+  lv_area_t *area = (lv_area_t *)lv_event_get_param(e);
+  if (!ctx || !area || ctx->width == 0 || ctx->height == 0)
+    return;
+
+  area->x1 = 0;
+  area->x2 = (int32_t)ctx->width - 1;
+  if (ctx->fallback_full) {
+    area->y1 = 0;
+    area->y2 = (int32_t)ctx->height - 1;
+  }
+}
+
+// Writes a full frame to /dev/fb0 using windowed row strips (matching the
+// partial draw coordinate mapping), falling back to a single unclipped write
+// only if SET_WINDOW is unsupported.
 static int eos_lvgl_write_full_frame_buf(eos_lvgl_ctx_t *ctx,
                                          const uint16_t *frame_pixels) {
   if (!ctx || ctx->fb_fd < 0 || !frame_pixels)
     return -1;
 
-  // Clear any active window clip in the display driver (st7789 sets has_clip=false)
-  (void)ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, NULL);
-
-  size_t full_bytes = (size_t)ctx->width * ctx->height * sizeof(uint16_t);
-  ssize_t written = write(ctx->fb_fd, frame_pixels, full_bytes);
-  if (written >= 0 && (written == 0 || (size_t)written == full_bytes)) {
-    ctx->full_flushes++;
-    return 0;
-  }
-
-  // Strip-by-strip full-frame fallback (referencing st7789.c strip logic)
   size_t row_bytes = (size_t)ctx->width * sizeof(uint16_t);
-  uint32_t strip_h = (uint32_t)(EOS_LVGL_DMA_STRIP_BYTES / row_bytes);
+  uint32_t strip_h =
+      (ctx->partial_lines > 0)
+          ? ctx->partial_lines
+          : (uint32_t)(EOS_LVGL_DMA_STRIP_BYTES / row_bytes);
   if (strip_h == 0)
     strip_h = 1;
   if (strip_h > ctx->height)
     strip_h = ctx->height;
 
+  bool strip_ok = true;
   for (uint32_t sy = 0; sy < ctx->height; sy += strip_h) {
     uint32_t sh = (sy + strip_h <= ctx->height) ? strip_h : (ctx->height - sy);
     eos_display_rect_t rect = {
@@ -240,18 +251,33 @@ static int eos_lvgl_write_full_frame_buf(eos_lvgl_ctx_t *ctx,
         .h = sh,
     };
     if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &rect) != 0) {
-      return -1;
+      strip_ok = false;
+      break;
     }
     size_t chunk_bytes = (size_t)sh * row_bytes;
     const uint8_t *src = (const uint8_t *)frame_pixels + (size_t)sy * row_bytes;
     ssize_t rc = write(ctx->fb_fd, src, chunk_bytes);
     if (rc < 0 || (rc > 0 && (size_t)rc != chunk_bytes)) {
-      return -1;
+      strip_ok = false;
+      break;
     }
   }
 
-  ctx->full_flushes++;
-  return 0;
+  if (strip_ok) {
+    ctx->full_flushes++;
+    return 0;
+  }
+
+  // Unclipped single-write fallback if SET_WINDOW is not supported
+  (void)ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, NULL);
+  size_t full_bytes = (size_t)ctx->width * ctx->height * sizeof(uint16_t);
+  ssize_t written = write(ctx->fb_fd, frame_pixels, full_bytes);
+  if (written >= 0 && (written == 0 || (size_t)written == full_bytes)) {
+    ctx->full_flushes++;
+    return 0;
+  }
+
+  return -1;
 }
 
 static void eos_lvgl_blit_to_shadow(eos_lvgl_ctx_t *ctx, const lv_area_t *area,
@@ -268,6 +294,15 @@ static void eos_lvgl_blit_to_shadow(eos_lvgl_ctx_t *ctx, const lv_area_t *area,
   if (w <= 0 || h <= 0)
     return;
 
+  // Respect LVGL's draw buffer stride alignment (LV_DRAW_BUF_STRIDE_ALIGN)
+  uint32_t src_stride_bytes =
+      lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_RGB565);
+  if (src_stride_bytes < (uint32_t)w * sizeof(uint16_t)) {
+    src_stride_bytes = (uint32_t)w * sizeof(uint16_t);
+  }
+
+  const uint8_t *src_bytes = (const uint8_t *)src;
+
   for (int32_t row = 0; row < h; row++) {
     int32_t dst_y = y1 + row;
     if (dst_y < 0 || dst_y >= (int32_t)ctx->height)
@@ -282,9 +317,10 @@ static void eos_lvgl_blit_to_shadow(eos_lvgl_ctx_t *ctx, const lv_area_t *area,
     if (copy_w <= 0)
       continue;
 
+    const uint16_t *src_row =
+        (const uint16_t *)(src_bytes + (size_t)row * src_stride_bytes);
     memcpy(&ctx->full_buf[(size_t)dst_y * ctx->width + (size_t)dst_x],
-           &src[(size_t)row * (size_t)w + (size_t)src_x],
-           (size_t)copy_w * sizeof(uint16_t));
+           &src_row[src_x], (size_t)copy_w * sizeof(uint16_t));
   }
 }
 
@@ -489,6 +525,8 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
                            LV_DISPLAY_RENDER_MODE_FULL);
   }
 
+  lv_display_add_event_cb(disp, eos_lvgl_invalidate_area_cb,
+                          LV_EVENT_INVALIDATE_AREA, &s_lvgl.pub);
   lv_display_set_flush_cb(disp, eos_lvgl_flush_cb);
   s_lvgl.pub.display = disp;
 

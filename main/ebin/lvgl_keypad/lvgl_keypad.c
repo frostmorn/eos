@@ -14,17 +14,19 @@ typedef struct {
   int32_t h;
 } key_cap_def_t;
 
+// Action buttons layout on Lilka v2.3:
+// C = top, B = bottom, D = left, A = right
 static const key_cap_def_t s_key_caps[] = {
-    {KEY_UP, "UP", 42, 46, 36, 28},
-    {KEY_LEFT, "L", 8, 78, 32, 28},
-    {KEY_RIGHT, "R", 80, 78, 32, 28},
-    {KEY_DOWN, "DN", 42, 110, 36, 28},
-    {KEY_ENTER, "SEL", 76, 148, 40, 24},
-    {KEY_SPACE, "STA", 124, 148, 40, 24},
-    {KEY_C, "C", 168, 46, 32, 28},
-    {KEY_D, "D", 202, 78, 32, 28},
-    {KEY_A, "A", 168, 110, 32, 28},
-    {KEY_B, "B", 134, 78, 32, 28},
+    {KEY_UP, "UP", 40, 32, 36, 26},
+    {KEY_LEFT, "L", 6, 62, 32, 26},
+    {KEY_RIGHT, "R", 78, 62, 32, 26},
+    {KEY_DOWN, "DN", 40, 92, 36, 26},
+    {KEY_ENTER, "SEL", 92, 124, 44, 22},
+    {KEY_SPACE, "STA", 144, 124, 44, 22},
+    {KEY_C, "C", 188, 32, 36, 26},
+    {KEY_D, "D", 150, 62, 36, 26},
+    {KEY_A, "A", 226, 62, 36, 26},
+    {KEY_B, "B", 188, 92, 36, 26},
 };
 
 #define KEY_CAP_COUNT (sizeof(s_key_caps) / sizeof(s_key_caps[0]))

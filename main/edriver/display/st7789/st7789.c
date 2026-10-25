@@ -3,6 +3,7 @@
 
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
+#include <esp_heap_caps.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
@@ -13,8 +14,9 @@
 
 // Actual Display dimensions maxima defined by st7789 datasheets
 // We need to know those values to deduce an x/y shifts to make it actually work
-#define ST7789_GRAM_WIDTH 240
-#define ST7789_GRAM_HEIGHT 320
+#define ST7789_GRAM_WIDTH      240
+#define ST7789_GRAM_HEIGHT     320
+#define ST7789_DMA_STRIP_BYTES 8192U
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -29,6 +31,8 @@ typedef struct {
   uint32_t clip_w;
   uint32_t clip_h;
   bool has_clip;
+  uint8_t *dma_buf[2];
+  uint8_t dma_idx;
 } st7789_state_t;
 
 // Placement options
@@ -187,6 +191,14 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
     return false;
   }
 
+  // Pre-allocate two persistent ping-pong DMA strip buffers so asynchronous
+  // queued SPI DMA transfers are never overwritten or freed while in flight.
+  state->dma_buf[0] =
+      heap_caps_malloc(ST7789_DMA_STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  state->dma_buf[1] =
+      heap_caps_malloc(ST7789_DMA_STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+  state->dma_idx = 0;
+
   esp_lcd_panel_reset(state->panel);
   esp_lcd_panel_init(state->panel);
 
@@ -224,42 +236,57 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
   }
 
   size_t expected_len = (size_t)w * h * 2;
-  if (len > expected_len) len = expected_len;
+  if (len > expected_len)
+    len = expected_len;
 
-  // Try allocating DMA-capable memory for the bitmap transfer
-  void *dma_buf = heap_caps_malloc(len, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-  if (dma_buf) {
-    memcpy(dma_buf, buf, len);
-    ssize_t ret = esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, dma_buf) == ESP_OK ? (ssize_t)len : -1;
-    free(dma_buf);
-    return ret;
-  }
-
-  // If DMA allocation failed (e.g. too large), send in row strips
   size_t row_bytes = (size_t)w * 2;
-  size_t strip_h = 16384 / row_bytes;
-  if (strip_h == 0) strip_h = 1;
-  if (strip_h > h) strip_h = h;
-
-  void *strip_buf = heap_caps_malloc(strip_h * row_bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-  if (!strip_buf) {
-    return esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + h, buf) == ESP_OK ? (ssize_t)len : -1;
+  if (row_bytes == 0 || len < row_bytes) {
+    errno = EINVAL;
+    return -1;
   }
 
-  const uint8_t *src = buf;
-  ssize_t ret = (ssize_t)len;
-  for (uint32_t sy = 0; sy < h; sy += strip_h) {
-    uint32_t sh = (sy + strip_h <= h) ? strip_h : (h - sy);
-    size_t chunk_len = sh * row_bytes;
-    memcpy(strip_buf, src + sy * row_bytes, chunk_len);
-    if (esp_lcd_panel_draw_bitmap(state->panel, x, y + sy, x + w, y + sy + sh, strip_buf) != ESP_OK) {
-      ret = -1;
-      break;
+  uint32_t total_rows = (uint32_t)(len / row_bytes);
+  if (total_rows == 0)
+    return 0;
+  if (total_rows > h)
+    total_rows = h;
+
+  // Transfer in horizontal strips using persistent ping-pong DMA buffers.
+  // Because esp_lcd_panel_draw_bitmap sends CASET/RASET synchronously via
+  // polling transmit before queuing RAMWR color data, alternating between
+  // dma_buf[0] and dma_buf[1] guarantees the previous strip's DMA transfer
+  // has completed before its buffer is reused on the next strip.
+  if (state->dma_buf[0] && state->dma_buf[1] &&
+      row_bytes <= ST7789_DMA_STRIP_BYTES) {
+    uint32_t strip_h = (uint32_t)(ST7789_DMA_STRIP_BYTES / row_bytes);
+    if (strip_h == 0)
+      strip_h = 1;
+    if (strip_h > total_rows)
+      strip_h = total_rows;
+
+    const uint8_t *src = (const uint8_t *)buf;
+    for (uint32_t sy = 0; sy < total_rows; sy += strip_h) {
+      uint32_t sh =
+          (sy + strip_h <= total_rows) ? strip_h : (total_rows - sy);
+      size_t chunk_len = (size_t)sh * row_bytes;
+      uint8_t *dst = state->dma_buf[state->dma_idx & 1U];
+      state->dma_idx ^= 1U;
+
+      memcpy(dst, src + (size_t)sy * row_bytes, chunk_len);
+      if (esp_lcd_panel_draw_bitmap(state->panel, x, y + sy, x + w,
+                                    y + sy + sh, dst) != ESP_OK) {
+        return -1;
+      }
     }
+    return (ssize_t)((size_t)total_rows * row_bytes);
   }
 
-  free(strip_buf);
-  return ret;
+  // Fallback if persistent ping-pong buffers are unavailable
+  if (esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + total_rows,
+                                buf) != ESP_OK) {
+    return -1;
+  }
+  return (ssize_t)((size_t)total_rows * row_bytes);
 }
 
 int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
@@ -338,6 +365,15 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   }
   if (state->io) {
     esp_lcd_panel_io_del(state->io);
+  }
+
+  if (state->dma_buf[0]) {
+    free(state->dma_buf[0]);
+    state->dma_buf[0] = NULL;
+  }
+  if (state->dma_buf[1]) {
+    free(state->dma_buf[1]);
+    state->dma_buf[1] = NULL;
   }
 
   if (en_pin >= 0) {

@@ -100,6 +100,7 @@ static void resolve_path(const char *name, char *out, size_t len) {
 }
 
 static void expand_env_vars(const char **src_ptr, char **arena_ptr, char quote) {
+  (void)quote;
   char *p = (char *)*src_ptr;
   char *w = *arena_ptr;
 
@@ -523,6 +524,10 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     return 0;
   }
 
+  // Flush any pending output before changing thread-local fd_map targets
+  fflush(stdout);
+  fflush(stderr);
+
   // 1. Pipe descriptors first (explicit file redirections override pipes)
   if (st->pipe_in_fd >= 0) {
     dup2(st->pipe_in_fd, STDIN_FILENO);
@@ -577,32 +582,13 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     dup2(STDERR_FILENO, STDOUT_FILENO);
   }
 
-  // Re-bind FILE streams to match redirected FDs (Newlib/Picolibc reentrancy support)
-  fflush(stdout);
-  fflush(stderr);
-
-  FILE *new_stdin = fdopen(STDIN_FILENO, "r");
-  FILE *new_stdout = fdopen(STDOUT_FILENO, "w");
-  FILE *new_stderr = fdopen(STDERR_FILENO, "w");
-
-  if (new_stdin) {
-    stdin = new_stdin;
-    setvbuf(stdin, NULL, _IONBF, 0);
-  }
-  if (new_stdout) {
-    stdout = new_stdout;
-    setvbuf(stdout, NULL, _IONBF, 0);
-  }
-  if (new_stderr) {
-    stderr = new_stderr;
-    setvbuf(stderr, NULL, _IONBF, 0);
-  }
-
-#ifdef _GLOBAL_REENT
-  if (new_stdin) _GLOBAL_REENT->_stdin = new_stdin;
-  if (new_stdout) _GLOBAL_REENT->_stdout = new_stdout;
-  if (new_stderr) _GLOBAL_REENT->_stderr = new_stderr;
-#endif
+  // Ensure stdio streams pass through immediately to __wrap__read_r / __wrap__write_r
+  // without leaking FILE objects via fdopen() or clobbering _GLOBAL_REENT across threads.
+  clearerr(stdin);
+  clearerr(stdout);
+  clearerr(stderr);
+  setvbuf(stdout, NULL, _IONBF, 0);
+  setvbuf(stderr, NULL, _IONBF, 0);
 
   return 0;
 }
@@ -612,6 +598,8 @@ static void close_stage_fds(int opened_fds[3], int pipe_in_fd,
   fflush(stdout);
   fflush(stderr);
   clearerr(stdin);
+  clearerr(stdout);
+  clearerr(stderr);
 
   for (int i = 0; i < 3; i++) {
     if (opened_fds[i] >= 0) {
@@ -630,10 +618,6 @@ static void *pipeline_stage_thread(void *arg) {
   int opened_fds[3] = {-1, -1, -1};
   int ret = -1;
 
-  FILE *saved_stdin = stdin;
-  FILE *saved_stdout = stdout;
-  FILE *saved_stderr = stderr;
-
   // Transfer ownership of the inherited pipe descriptors into this stage's
   // thread context so closing them on stage completion unregisters cleanly.
   eos_tctx_t *tctx = eos_tctx_get();
@@ -648,17 +632,8 @@ static void *pipeline_stage_thread(void *arg) {
     ret = st->manifest.entry_point(st->argc, st->argv);
   }
 
-  // Restore stdio streams
   fflush(stdout);
   fflush(stderr);
-  stdin = saved_stdin;
-  stdout = saved_stdout;
-  stderr = saved_stderr;
-#ifdef _GLOBAL_REENT
-  _GLOBAL_REENT->_stdin = stdin;
-  _GLOBAL_REENT->_stdout = stdout;
-  _GLOBAL_REENT->_stderr = stderr;
-#endif
 
   // Clear thread-local stdio mappings before closing underlying fds
   if (tctx) {
@@ -861,9 +836,6 @@ static int eval_command_node(eos_ast_node_t *node) {
   if (stage_count == 1) {
     eos_tctx_t *tctx = eos_tctx_get();
     int saved_map[3] = {-1, -1, -1};
-    FILE *saved_stdin = stdin;
-    FILE *saved_stdout = stdout;
-    FILE *saved_stderr = stderr;
     if (tctx) {
       for (int i = 0; i < 3; i++)
         saved_map[i] = tctx->fd_map[i];
@@ -882,17 +854,10 @@ static int eval_command_node(eos_ast_node_t *node) {
     fflush(stdout);
     fflush(stderr);
     clearerr(stdin);
+    clearerr(stdout);
+    clearerr(stderr);
 
     if (redir) {
-      stdin = saved_stdin;
-      stdout = saved_stdout;
-      stderr = saved_stderr;
-#ifdef _GLOBAL_REENT
-      _GLOBAL_REENT->_stdin = stdin;
-      _GLOBAL_REENT->_stdout = stdout;
-      _GLOBAL_REENT->_stderr = stderr;
-#endif
-
       if (tctx) {
         for (int i = 0; i < 3; i++)
           tctx->fd_map[i] = saved_map[i];
