@@ -3,8 +3,10 @@
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
 #include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <pthread.h>
 #include <reent.h>
 #include <stdbool.h>
@@ -12,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 // This call isn't implemented in picolib, but cause it have a declaration
@@ -20,18 +23,14 @@
 extern int __real_system(const char *str);
 
 #define EOS_SYSTEM_MAX_STAGES 8
-#define EOS_SYSTEM_MAX_ARGS   32
+#define EOS_SYSTEM_MAX_ARGS   128
 
 typedef struct {
   int argc;
   char *argv[EOS_SYSTEM_MAX_ARGS];
   char *in_file;
   char *out_file;
-  char *err_file;
   bool out_append;
-  bool err_append;
-  bool err_to_out; // 2>&1
-  bool out_to_err; // 1>&2
 } eos_cmd_stage_t;
 
 typedef struct {
@@ -43,11 +42,7 @@ typedef struct {
   int pipe_out_fd;
   char *in_file;
   char *out_file;
-  char *err_file;
   bool out_append;
-  bool err_append;
-  bool err_to_out;
-  bool out_to_err;
 } eos_stage_exec_t;
 
 static void resolve_path(const char *name, char *out, size_t len) {
@@ -180,7 +175,8 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
 // Reads the next shell token from *cursor, handling single/double quotes,
 // environment variable expansion, and operator tokens (&&, ||, ;, &, |, <, >, etc.).
 static char *next_shell_token(char **cursor, char **arena,
-                              const char *arena_end, bool *is_op) {
+                              const char *arena_end, bool *is_op,
+                              bool *has_wildcard) {
   char *p = *cursor;
   while (*p && isspace((unsigned char)*p))
     p++;
@@ -191,6 +187,7 @@ static char *next_shell_token(char **cursor, char **arena,
   }
 
   *is_op = false;
+  *has_wildcard = false;
 
   // Check operators: &&, ||, ;, &, |, etc.
   if (strncmp(p, "&&", 2) == 0) {
@@ -312,7 +309,14 @@ static char *next_shell_token(char **cursor, char **arena,
         p++;
     } else if (*p == '$' && p[1]) {
       p++;
+      char *before = w;
       expand_env_vars((const char **)&p, &w, arena_end, '\0');
+      for (char *c = before; c < w; c++) {
+        if (*c == '*' || *c == '?' || *c == '[') {
+          *has_wildcard = true;
+          break;
+        }
+      }
     } else if (*p == '\\' && p[1]) {
       p++;
       if (w < arena_end) {
@@ -320,6 +324,9 @@ static char *next_shell_token(char **cursor, char **arena,
       }
       p++;
     } else {
+      if (*p == '*' || *p == '?' || *p == '[') {
+        *has_wildcard = true;
+      }
       if (w < arena_end) {
         *w++ = *p;
       }
@@ -336,6 +343,7 @@ static char *next_shell_token(char **cursor, char **arena,
 typedef struct {
   char *text;
   bool is_op;
+  bool has_wildcard;
 } eos_token_t;
 
 typedef enum {
@@ -352,7 +360,122 @@ typedef struct eos_ast_node_t {
   struct eos_ast_node_t *right;
   int stage_count;
   eos_cmd_stage_t stages[EOS_SYSTEM_MAX_STAGES];
+  char *glob_strings[EOS_SYSTEM_MAX_ARGS];
+  int glob_string_count;
 } eos_ast_node_t;
+
+static void free_ast_node_single(eos_ast_node_t *node) {
+  if (!node) return;
+  for (int i = 0; i < node->glob_string_count; i++) {
+    if (node->glob_strings[i]) {
+      free(node->glob_strings[i]);
+    }
+  }
+  free(node);
+}
+
+typedef struct {
+  char **paths;
+  int count;
+  int cap;
+} glob_result_t;
+
+static void glob_add_path(glob_result_t *res, const char *path) {
+  if (res->count >= EOS_SYSTEM_MAX_ARGS) return;
+  if (res->count >= res->cap) {
+    int new_cap = res->cap ? res->cap * 2 : 16;
+    char **new_paths = realloc(res->paths, new_cap * sizeof(char *));
+    if (!new_paths) return;
+    res->paths = new_paths;
+    res->cap = new_cap;
+  }
+  res->paths[res->count++] = strdup(path);
+}
+
+static int glob_cmp(const void *a, const void *b) {
+  const char *sa = *(const char *const *)a;
+  const char *sb = *(const char *const *)b;
+  return strcmp(sa, sb);
+}
+
+static void glob_recurse(const char *base_dir, const char *rem_pat, glob_result_t *res) {
+  while (rem_pat && *rem_pat == '/') {
+    rem_pat++;
+  }
+  if (!rem_pat || !*rem_pat) {
+    if (base_dir && *base_dir) {
+      glob_add_path(res, base_dir);
+    }
+    return;
+  }
+
+  char segment[128];
+  const char *slash = strchr(rem_pat, '/');
+  const char *next_rem = NULL;
+
+  if (slash) {
+    size_t seg_len = (size_t)(slash - rem_pat);
+    if (seg_len >= sizeof(segment)) return;
+    memcpy(segment, rem_pat, seg_len);
+    segment[seg_len] = '\0';
+    next_rem = slash + 1;
+    while (*next_rem == '/') next_rem++;
+  } else {
+    strncpy(segment, rem_pat, sizeof(segment) - 1);
+    segment[sizeof(segment) - 1] = '\0';
+    next_rem = NULL;
+  }
+
+  bool has_wildcard = (strchr(segment, '*') || strchr(segment, '?') || strchr(segment, '['));
+
+  if (!has_wildcard) {
+    char new_base[EOS_LARGE_STR_LEN];
+    if (!base_dir || !*base_dir) {
+      snprintf(new_base, sizeof(new_base), "%s", segment);
+    } else if (strcmp(base_dir, "/") == 0) {
+      snprintf(new_base, sizeof(new_base), "/%s", segment);
+    } else {
+      snprintf(new_base, sizeof(new_base), "%s/%s", base_dir, segment);
+    }
+    glob_recurse(new_base, next_rem, res);
+    return;
+  }
+
+  const char *dir_to_open = (base_dir && *base_dir) ? base_dir : ".";
+  DIR *d = opendir((char *)dir_to_open);
+  if (!d) return;
+
+  struct dirent *ent;
+  while ((ent = readdir(d)) != NULL) {
+    if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+      continue;
+    }
+    if (ent->d_name[0] == '.' && segment[0] != '.') {
+      continue;
+    }
+
+    if (fnmatch(segment, ent->d_name, 0) == 0) {
+      char match_path[EOS_LARGE_STR_LEN];
+      if (!base_dir || !*base_dir) {
+        snprintf(match_path, sizeof(match_path), "%s", ent->d_name);
+      } else if (strcmp(base_dir, "/") == 0) {
+        snprintf(match_path, sizeof(match_path), "/%s", ent->d_name);
+      } else {
+        snprintf(match_path, sizeof(match_path), "%s/%s", base_dir, ent->d_name);
+      }
+
+      if (next_rem && *next_rem) {
+        struct stat st;
+        if (stat(match_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+          glob_recurse(match_path, next_rem, res);
+        }
+      } else {
+        glob_add_path(res, match_path);
+      }
+    }
+  }
+  closedir(d);
+}
 
 static bool get_op_bp(const char *op, int *bp) {
   if (strcmp(op, ";") == 0 || strcmp(op, "&") == 0) {
@@ -381,30 +504,49 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
         (*idx)++;
         if (node->stages[stage_idx].argc == 0) {
           EOS_LOGE("eos_system() syntax error: empty pipe stage");
-          free(node);
+          free_ast_node_single(node);
           return NULL;
         }
         if (stage_idx + 1 >= EOS_SYSTEM_MAX_STAGES) {
           EOS_LOGE("eos_system() too many pipeline stages");
-          free(node);
+          free_ast_node_single(node);
           return NULL;
         }
         node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
         stage_idx++;
         continue;
       } else if (strcmp(tok->text, "<") == 0 || strcmp(tok->text, ">") == 0 ||
-                 strcmp(tok->text, ">>") == 0 || strcmp(tok->text, "2>") == 0 ||
-                 strcmp(tok->text, "2>>") == 0 || strcmp(tok->text, "&>") == 0 ||
-                 strcmp(tok->text, "&>>") == 0) {
+                 strcmp(tok->text, ">>") == 0) {
         eos_cmd_stage_t *st = &node->stages[stage_idx];
         char *op = tok->text;
         (*idx)++;
         if (*idx >= num_tokens || tokens[*idx].is_op) {
           EOS_LOGE("eos_system() syntax error: missing target for '%s'", op);
-          free(node);
+          free_ast_node_single(node);
           return NULL;
         }
         char *target = tokens[*idx].text;
+        if (tokens[*idx].has_wildcard) {
+          glob_result_t gres = {0};
+          const char *pat = target;
+          const char *base = NULL;
+          if (*pat == '/') {
+            base = "/";
+            while (*pat == '/') pat++;
+          }
+          glob_recurse(base, pat, &gres);
+          if (gres.count == 1) {
+            target = gres.paths[0];
+            if (node->glob_string_count < EOS_SYSTEM_MAX_ARGS) {
+              node->glob_strings[node->glob_string_count++] = target;
+            }
+          } else {
+            for (int g = 0; g < gres.count; g++) {
+              free(gres.paths[g]);
+            }
+          }
+          free(gres.paths);
+        }
         (*idx)++;
 
         if (strcmp(op, "<") == 0) {
@@ -415,43 +557,53 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
         } else if (strcmp(op, ">>") == 0) {
           st->out_file = target;
           st->out_append = true;
-        } else if (strcmp(op, "2>") == 0) {
-          st->err_file = target;
-          st->err_append = false;
-        } else if (strcmp(op, "2>>") == 0) {
-          st->err_file = target;
-          st->err_append = true;
-        } else if (strcmp(op, "&>") == 0) {
-          st->out_file = target;
-          st->out_append = false;
-          st->err_to_out = true;
-        } else if (strcmp(op, "&>>") == 0) {
-          st->out_file = target;
-          st->out_append = true;
-          st->err_to_out = true;
         }
-        continue;
-      } else if (strcmp(tok->text, "2>&1") == 0) {
-        node->stages[stage_idx].err_to_out = true;
-        node->stages[stage_idx].out_to_err = false;
-        (*idx)++;
-        continue;
-      } else if (strcmp(tok->text, "1>&2") == 0) {
-        node->stages[stage_idx].out_to_err = true;
-        node->stages[stage_idx].err_to_out = false;
-        (*idx)++;
         continue;
       } else {
         break;
       }
     } else {
       eos_cmd_stage_t *st = &node->stages[stage_idx];
-      if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
-        EOS_LOGE("eos_system() too many arguments");
-        free(node);
-        return NULL;
+      if (tok->has_wildcard) {
+        glob_result_t gres = {0};
+        const char *pat = tok->text;
+        const char *base = NULL;
+        if (*pat == '/') {
+          base = "/";
+          while (*pat == '/') pat++;
+        }
+        glob_recurse(base, pat, &gres);
+        if (gres.count > 0) {
+          if (gres.count > 1) {
+            qsort(gres.paths, gres.count, sizeof(char *), glob_cmp);
+          }
+          for (int g = 0; g < gres.count; g++) {
+            if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS ||
+                node->glob_string_count >= EOS_SYSTEM_MAX_ARGS) {
+              free(gres.paths[g]);
+              continue;
+            }
+            node->glob_strings[node->glob_string_count++] = gres.paths[g];
+            st->argv[st->argc++] = gres.paths[g];
+          }
+          free(gres.paths);
+        } else {
+          // If no matches found, keep pattern literal as POSIX/Linux standard
+          if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
+            EOS_LOGE("eos_system() too many arguments");
+            free_ast_node_single(node);
+            return NULL;
+          }
+          st->argv[st->argc++] = tok->text;
+        }
+      } else {
+        if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
+          EOS_LOGE("eos_system() too many arguments");
+          free_ast_node_single(node);
+          return NULL;
+        }
+        st->argv[st->argc++] = tok->text;
       }
-      st->argv[st->argc++] = tok->text;
       (*idx)++;
     }
   }
@@ -459,7 +611,7 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
   node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
   if (stage_idx > 0 && node->stages[stage_idx].argc == 0) {
     EOS_LOGE("eos_system() syntax error: trailing pipe '|'");
-    free(node);
+    free_ast_node_single(node);
     return NULL;
   }
 
@@ -481,7 +633,7 @@ static eos_ast_node_t *parse_expr(eos_token_t *tokens, int num_tokens, int *idx,
     char *op = tok->text;
     (*idx)++;
 
-    eos_ast_node_t *right = parse_expr(tokens, num_tokens, idx, bp);
+    eos_ast_node_t *right = parse_expr(tokens, num_tokens, idx, bp + 1);
     if (!right) {
       return left;
     }
@@ -630,15 +782,13 @@ static bool is_shell_builtin(int argc, char **argv) {
 static bool has_stage_redirections(const eos_stage_exec_t *st) {
   if (!st) return false;
   return (st->pipe_in_fd >= 0 || st->pipe_out_fd >= 0 ||
-          st->in_file != NULL || st->out_file != NULL ||
-          st->err_file != NULL || st->err_to_out || st->out_to_err);
+          st->in_file != NULL || st->out_file != NULL);
 }
 
 static int apply_stage_redirections(const eos_stage_exec_t *st,
-                                    int opened_fds[3]) {
+                                    int opened_fds[2]) {
   opened_fds[0] = -1;
   opened_fds[1] = -1;
-  opened_fds[2] = -1;
 
   if (!has_stage_redirections(st)) {
     return 0;
@@ -646,14 +796,19 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
 
   // Flush any pending output before changing thread-local fd_map targets
   fflush(stdout);
-  fflush(stderr);
 
   // 1. Pipe descriptors first (explicit file redirections override pipes)
   if (st->pipe_in_fd >= 0) {
     dup2(st->pipe_in_fd, STDIN_FILENO);
+    if (stdin && fileno(stdin) >= 0) {
+      dup2(st->pipe_in_fd, fileno(stdin));
+    }
   }
   if (st->pipe_out_fd >= 0) {
     dup2(st->pipe_out_fd, STDOUT_FILENO);
+    if (stdout && fileno(stdout) >= 0) {
+      dup2(st->pipe_out_fd, fileno(stdout));
+    }
   }
 
   // 2. Explicit input redirection (< file)
@@ -666,6 +821,9 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     }
     opened_fds[0] = fd;
     dup2(fd, STDIN_FILENO);
+    if (stdin && fileno(stdin) >= 0) {
+      dup2(fd, fileno(stdin));
+    }
   }
 
   // 3. Explicit output redirection (> file or >> file)
@@ -679,45 +837,24 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     }
     opened_fds[1] = fd;
     dup2(fd, STDOUT_FILENO);
-  }
-
-  // 4. Explicit stderr redirection (2> file or 2>> file)
-  if (st->err_file) {
-    int flags = O_WRONLY | O_CREAT | (st->err_append ? O_APPEND : O_TRUNC);
-    int fd = open(st->err_file, flags, 0644);
-    if (fd < 0) {
-      EOS_LOGE("eos_system() failed to open error output '%s': %s",
-               st->err_file, strerror(errno));
-      return -1;
+    if (stdout && fileno(stdout) >= 0) {
+      dup2(fd, fileno(stdout));
     }
-    opened_fds[2] = fd;
-    dup2(fd, STDERR_FILENO);
-  }
-
-  // 5. Stream duplication (2>&1 or 1>&2)
-  if (st->err_to_out) {
-    dup2(STDOUT_FILENO, STDERR_FILENO);
-  }
-  if (st->out_to_err) {
-    dup2(STDERR_FILENO, STDOUT_FILENO);
   }
 
   clearerr(stdin);
   clearerr(stdout);
-  clearerr(stderr);
 
   return 0;
 }
 
-static void close_stage_fds(int opened_fds[3], int pipe_in_fd,
+static void close_stage_fds(int opened_fds[2], int pipe_in_fd,
                             int pipe_out_fd) {
   fflush(stdout);
-  fflush(stderr);
   clearerr(stdin);
   clearerr(stdout);
-  clearerr(stderr);
 
-  for (int i = 0; i < 3; i++) {
+  for (int i = 0; i < 2; i++) {
     if (opened_fds[i] >= 0) {
       close(opened_fds[i]);
       opened_fds[i] = -1;
@@ -731,7 +868,7 @@ static void close_stage_fds(int opened_fds[3], int pipe_in_fd,
 
 static void *pipeline_stage_thread(void *arg) {
   eos_stage_exec_t *st = (eos_stage_exec_t *)arg;
-  int opened_fds[3] = {-1, -1, -1};
+  int opened_fds[2] = {-1, -1};
   int ret = -1;
 
   // Transfer ownership of the inherited pipe descriptors into this stage's
@@ -753,9 +890,9 @@ static void *pipeline_stage_thread(void *arg) {
 
   // Clear thread-local stdio mappings before closing underlying fds
   if (tctx) {
-    tctx->fd_map[STDIN_FILENO] = -1;
-    tctx->fd_map[STDOUT_FILENO] = -1;
-    tctx->fd_map[STDERR_FILENO] = -1;
+    for (int i = 0; i < 16; i++) {
+      tctx->fd_map[i] = -1;
+    }
   }
 
   close_stage_fds(opened_fds, st->pipe_in_fd, st->pipe_out_fd);
@@ -797,11 +934,7 @@ static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src,
     st_dst->argv[st_dst->argc] = NULL;
     st_dst->in_file = dup_str_untracked(st_src->in_file, parent_tctx);
     st_dst->out_file = dup_str_untracked(st_src->out_file, parent_tctx);
-    st_dst->err_file = dup_str_untracked(st_src->err_file, parent_tctx);
     st_dst->out_append = st_src->out_append;
-    st_dst->err_append = st_src->err_append;
-    st_dst->err_to_out = st_src->err_to_out;
-    st_dst->out_to_err = st_src->out_to_err;
   }
   return dst;
 }
@@ -817,7 +950,6 @@ static void free_cloned_ast_node(eos_ast_node_t *node) {
     }
     free(st->in_file);
     free(st->out_file);
-    free(st->err_file);
   }
   free(node);
 }
@@ -990,11 +1122,7 @@ static int eval_command_node(eos_ast_node_t *node) {
     exec_stages[i].pipe_out_fd = -1;
     exec_stages[i].in_file = node->stages[i].in_file;
     exec_stages[i].out_file = node->stages[i].out_file;
-    exec_stages[i].err_file = node->stages[i].err_file;
     exec_stages[i].out_append = node->stages[i].out_append;
-    exec_stages[i].err_append = node->stages[i].err_append;
-    exec_stages[i].err_to_out = node->stages[i].err_to_out;
-    exec_stages[i].out_to_err = node->stages[i].out_to_err;
   }
 
   int ret = 0;
@@ -1002,31 +1130,27 @@ static int eval_command_node(eos_ast_node_t *node) {
   if (stage_count == 1) {
     eos_tctx_t *tctx = eos_tctx_get();
     eos_tctx_fd_snapshot_t fd_snap = eos_tctx_snapshot_fds(tctx);
-    int saved_map[3] = {-1, -1, -1};
-    if (tctx) {
-      for (int i = 0; i < 3; i++)
-        saved_map[i] = tctx->fd_map[i];
+    int saved_map[16];
+    for (int i = 0; i < 16; i++) {
+      saved_map[i] = tctx ? tctx->fd_map[i] : -1;
     }
 
     fflush(stdout);
-    fflush(stderr);
 
     bool redir = has_stage_redirections(&exec_stages[0]);
-    int opened_fds[3] = {-1, -1, -1};
+    int opened_fds[2] = {-1, -1};
     if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
       ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
                                                 exec_stages[0].argv);
     }
 
     fflush(stdout);
-    fflush(stderr);
     clearerr(stdin);
     clearerr(stdout);
-    clearerr(stderr);
 
     if (redir) {
       if (tctx) {
-        for (int i = 0; i < 3; i++)
+        for (int i = 0; i < 16; i++)
           tctx->fd_map[i] = saved_map[i];
       }
 
@@ -1187,6 +1311,11 @@ static void free_ast(eos_ast_node_t *node) {
   if (!node) return;
   free_ast(node->left);
   free_ast(node->right);
+  for (int i = 0; i < node->glob_string_count; i++) {
+    if (node->glob_strings[i]) {
+      free(node->glob_strings[i]);
+    }
+  }
   free(node);
 }
 
@@ -1219,15 +1348,17 @@ int __wrap_system(const char *cmdline) {
   char *cursor = (char *)cmdline;
   char *arena = arena_buf;
   bool is_op = false;
+  bool has_wildcard = false;
   char *tok = NULL;
   int num_tokens = 0;
 
-  while ((tok = next_shell_token(&cursor, &arena, arena_end, &is_op)) != NULL) {
+  while ((tok = next_shell_token(&cursor, &arena, arena_end, &is_op, &has_wildcard)) != NULL) {
     if (num_tokens >= max_tokens - 1) {
       break;
     }
     tokens[num_tokens].text = tok;
     tokens[num_tokens].is_op = is_op;
+    tokens[num_tokens].has_wildcard = has_wildcard;
     num_tokens++;
   }
 

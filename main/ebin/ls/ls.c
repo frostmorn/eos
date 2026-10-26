@@ -5,26 +5,52 @@
 #include <stdlib.h>
 
 int ls_main(int argc, char **argv){ 
- 
-  char *path = (argc < 2) ? getcwd(NULL, 0): argv[1];
-
-  DIR *dir = opendir(path);
-
-  if (!dir){
-    printf("Can't open dir %s\n", path);
-    return -1;
+  if (argc < 2) {
+    char *path = getcwd(NULL, 0);
+    DIR *dir = opendir(path ? path : ".");
+    if (!dir) {
+      printf("Can't open dir %s\n", path ? path : ".");
+      if (path) free(path);
+      return -1;
+    }
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+      printf("%s\n", entry->d_name);
+    }
+    closedir(dir);
+    if (path) free(path);
+    return 0;
   }
 
-  struct dirent *entry;
-  while ((entry = readdir(dir)) != NULL){
-    printf("%s\n", entry->d_name);
+  int ret = 0;
+  for (int i = 1; i < argc; i++) {
+    const char *path = argv[i];
+    DIR *dir = opendir(path);
+    if (dir) {
+      if (argc > 2) {
+        printf("%s:\n", path);
+      }
+      struct dirent *entry;
+      while ((entry = readdir(dir)) != NULL) {
+        printf("%s\n", entry->d_name);
+      }
+      closedir(dir);
+      if (argc > 2 && i < argc - 1) {
+        putchar('\n');
+      }
+    } else {
+      FILE *f = fopen(path, "r");
+      if (f) {
+        fclose(f);
+        printf("%s\n", path);
+      } else {
+        printf("Can't open dir %s\n", path);
+        ret = -1;
+      }
+    }
   }
-  
-  closedir(dir);
 
-  if (argc < 2) free (path);
-
-  return 0;
+  return ret;
 }
 
 EOS_BIN_ATTR eos_bin_t ls_app = {

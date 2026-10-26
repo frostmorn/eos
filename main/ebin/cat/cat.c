@@ -22,34 +22,37 @@ int cat_main(int argc, char **argv){
     return (count_read < 0) ? -1 : 0;
   }
 
-  if (argc < 2){
-    printf("cat: Usage cat <filename>\n");
-    return -1;
+  int ret = 0;
+  for (int i = 1; i < argc; i++) {
+    const char *path = argv[i];
+
+    if (strcmp(path, "-") == 0) {
+      ssize_t count_read = 0;
+      while ((count_read = read(STDIN_FILENO, buffer, CAT_BUFFER_SIZE)) > 0) {
+        fwrite(buffer, 1, (size_t)count_read, stdout);
+        vTaskDelay((pdMS_TO_TICKS(10)));
+      }
+      continue;
+    }
+
+    FILE *fp = fopen(path, "r");
+    if (!fp) {
+      printf("Can't open file %s. %d: %s\n", path, errno, strerror(errno));
+      ret = -1;
+      continue;
+    }
+
+    size_t count_read = 0;
+    while ((count_read = fread(buffer, 1, CAT_BUFFER_SIZE, fp)) > 0) {
+      fwrite(buffer, 1, count_read, stdout);
+      vTaskDelay((pdMS_TO_TICKS(10)));
+    }
+
+    fclose(fp);
   }
 
-  const char* path = argv[1];  
- 
-  FILE *fp = fopen(path, "r");
-
-  if (!fp){
-    printf("Can't open file %s. %d: %s\n", path, errno, strerror(errno));
-    return -1;
-  }
-
-  size_t count_read = 0;
-
-  while ((count_read = fread(buffer, 1, CAT_BUFFER_SIZE, fp))){ 
-    fwrite(buffer, 1, count_read, stdout);
-   
-    // TODO: solve WDT problem
-    // usleep(10); 
-    vTaskDelay((pdMS_TO_TICKS(10)));
-  }
-
-  fclose(fp);
   fflush(stdout);
-
-  return 0;
+  return ret;
 }
 
 

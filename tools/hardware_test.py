@@ -40,7 +40,10 @@ class EOSTestHarness:
     def connect(self):
         print(f"{Colors.CYAN}Connecting to EOS on {self.port} at {self.baudrate} baud...{Colors.RESET}")
         self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        time.sleep(0.5)
+        time.sleep(1.0)
+        self.ser.reset_input_buffer()
+        self.ser.write(b"\n")
+        time.sleep(0.3)
         self.ser.reset_input_buffer()
 
     def close(self):
@@ -52,17 +55,32 @@ class EOSTestHarness:
             raise RuntimeError("Serial connection not open")
         self.ser.reset_input_buffer()
         self.ser.write((cmd + "\n").encode("utf-8"))
-        time.sleep(wait)
+        deadline = time.time() + wait
         out = b""
+        while time.time() < deadline:
+            if self.ser.in_waiting:
+                chunk = self.ser.read(self.ser.in_waiting)
+                if chunk:
+                    out += chunk
+                    # Check if shell prompt has returned after executing command
+                    if b">" in out[-6:]:
+                        break
+            time.sleep(0.02)
+        # Flush any trailing bytes
+        time.sleep(0.05)
         while self.ser.in_waiting:
             out += self.ser.read(self.ser.in_waiting)
-            time.sleep(0.05)
+            time.sleep(0.02)
         return out.decode("utf-8", errors="replace").strip()
 
     def check(self, suite, name, cmd, pattern, wait=1.0, not_pattern=None):
         out = self.run_cmd(cmd, wait=wait)
-        has_match = re.search(pattern, out, re.MULTILINE) is not None
-        has_bad = (not_pattern and re.search(not_pattern, out, re.MULTILINE) is not None)
+        # Strip command echo line from serial out before matching
+        lines = out.splitlines()
+        cmd_output = "\n".join(lines[1:]) if len(lines) > 1 else out
+
+        has_match = re.search(pattern, cmd_output, re.MULTILINE) is not None
+        has_bad = (not_pattern and re.search(not_pattern, cmd_output, re.MULTILINE) is not None)
 
         if suite not in self.suite_counts:
             self.suite_counts[suite] = {"pass": 0, "fail": 0}
@@ -78,7 +96,8 @@ class EOSTestHarness:
             print(f"    Expected regex: {pattern}")
             if not_pattern:
                 print(f"    Forbidden regex: {not_pattern}")
-            print(f"    Actual output:\n{out}\n")
+            print(f"    Raw output repr: {repr(out)}")
+            print(f"    Cmd output:\n{cmd_output}\n")
             self.failed += 1
             self.suite_counts[suite]["fail"] += 1
             return False, out
@@ -103,9 +122,71 @@ class EOSTestHarness:
         self.check(suite, "SoC and core info in /proc/cpuinfo", "cat /proc/cpuinfo", r"model name[\s\S]+cpu cores\s+:\s+\d+")
         self.check(suite, "System uptime in /proc/uptime", "cat /proc/uptime", r"uptime:\s+\d+s[\s\S]+reset reason:")
 
+    def test_pratt_parser(self):
+        suite = "pratt"
+        print(f"\n{Colors.BOLD}=== 2. Shell & Pratt Parser Tests ==={Colors.RESET}")
+        # 1. Sequencing (;)
+        self.check(suite, "Sequential execution (;)", "echo alpha ; echo beta", r"alpha[\s\S]+beta")
+        self.check(suite, "Triple sequential execution (;)", "echo one ; echo two ; echo three", r"one[\s\S]+two[\s\S]+three")
+        self.check(suite, "Trailing semicolon handling", "echo trailing ;", r"trailing")
+
+        # 2. Logical AND (&&) & Short-circuit
+        self.check(suite, "Logical AND success path (&&)", "echo first && echo second", r"first[\s\S]+second")
+        self.check(suite, "Logical AND short-circuit on failure", "cat /nonexistent_file_xyz && echo fail_run",
+                   r"Can't open file", not_pattern=r"fail_run")
+        self.check(suite, "Chained logical AND", "echo a && echo b && echo c", r"a[\s\S]+b[\s\S]+c")
+
+        # 3. Logical OR (||) & Short-circuit
+        self.check(suite, "Logical OR fallback on failure (||)", "cat /nonexistent_file_xyz || echo recovered_ok",
+                   r"recovered_ok")
+        self.check(suite, "Logical OR short-circuit on success", "echo initial_ok || echo should_not_run",
+                   r"initial_ok", not_pattern=r"should_not_run")
+
+        # 4. Mixed Pratt Precedence (&&, ||, ;)
+        self.check(suite, "Precedence: AND tighter than semicolon", "echo a && echo b ; echo c", r"a[\s\S]+b[\s\S]+c")
+        self.check(suite, "Precedence: Failure AND short-circuit with semicolon",
+                   "cat /nonexistent_file_xyz && echo skip ; echo continue", r"continue", not_pattern=r"skip")
+        self.check(suite, "Precedence: Failure AND with OR recovery",
+                   "cat /nonexistent_file_xyz && echo skip || echo recovered", r"recovered", not_pattern=r"skip")
+
+        # 5. Output Redirections (>, >>)
+        self.check(suite, "Output redirection (>)", "echo pratt_redir_text > /tmp_pratt.txt ; cat /tmp_pratt.txt",
+                   r"pratt_redir_text")
+        self.check(suite, "Output overwrite (>)", "echo overwritten_text > /tmp_pratt.txt ; cat /tmp_pratt.txt",
+                   r"overwritten_text", not_pattern=r"pratt_redir_text")
+        self.check(suite, "Output append (>>)", "echo appended_line >> /tmp_pratt.txt ; cat /tmp_pratt.txt",
+                   r"overwritten_text[\s\S]+appended_line")
+
+        # 7. Quoting & Escaping
+        self.check(suite, "Single quotes literal preservation ('')",
+                   "echo 'literal   spaces ; && | > *'", r"literal   spaces ; && \| > \*")
+        self.check(suite, "Double quotes whitespace preservation (\"\")",
+                   "echo \"spaced   double   quotes\"", r"spaced   double   quotes")
+        self.check(suite, "Backslash space escaping (\\ )", "echo escaped\\ \\ space", r"escaped  space")
+        self.check(suite, "Backslash operator escaping (\\;)", "echo cmd\\;arg", r"cmd;arg")
+
+        # 8. Pathname Expansion (Globbing)
+        self.check(suite, "Glob prefix expansion (/proc/c*)", "echo /proc/c*", r"/proc/cpuinfo")
+        self.check(suite, "Glob middle wildcard (/proc/*info)", "echo /proc/*info",
+                   r"/proc/cpuinfo\s+/proc/heapinfo\s+/proc/meminfo")
+        self.check(suite, "Glob character class (/proc/[cd]*)", "echo /proc/[cd]*",
+                   r"/proc/cpuinfo\s+/proc/devices\s+/proc/drivers")
+        self.check(suite, "Glob single char wildcard (/proc/?ds)", "echo /proc/?ds", r"/proc/fds")
+        self.check(suite, "Glob directory expansion (/proc/*)", "echo /proc/*",
+                   r"/proc/cpuinfo[\s\S]+/proc/devices[\s\S]+/proc/uptime[\s\S]+/proc/version")
+        self.check(suite, "Quotes inhibit glob expansion (\"/proc/*\")", "echo \"/proc/*\"",
+                   r"/proc/\*", not_pattern=r"/proc/cpuinfo")
+        self.check(suite, "Non-matching glob preserves pattern", "echo /proc/nonexistent_*",
+                   r"/proc/nonexistent_\*")
+        self.check(suite, "Glob with multi-file cat concatenation", "cat /proc/c* /proc/u*",
+                   r"model name[\s\S]+reset reason")
+
+        # 9. Background Execution (&)
+        self.check(suite, "Background execution (&)", "echo bg_task &", r"bg_task")
+
     def test_devctl(self):
         suite = "devctl"
-        print(f"\n{Colors.BOLD}=== 2. Device Control (devctl) Tests ==={Colors.RESET}")
+        print(f"\n{Colors.BOLD}=== 3. Device Control (devctl) Tests ==={Colors.RESET}")
         self.check(suite, "devctl usage / help", "devctl", r"Usage:\s+devctl\s+<command>")
         self.check(suite, "devctl scopes", "devctl scopes", r"Driver Scopes:[\s\S]+net")
         self.check(suite, "devctl drivers (all)", "devctl drivers", r"net\s+bridge")
@@ -220,7 +301,7 @@ def main():
     parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "devctl", "wlanctl", "netctl", "gui"],
+    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "gui"],
                         default="all", help="Test suite to execute (default: all)")
     args = parser.parse_args()
 
@@ -229,6 +310,8 @@ def main():
         harness.connect()
         if args.suite in ("all", "procfs"):
             harness.test_procfs()
+        if args.suite in ("all", "pratt"):
+            harness.test_pratt_parser()
         if args.suite in ("all", "devctl"):
             harness.test_devctl()
         if args.suite in ("all", "wlanctl"):
