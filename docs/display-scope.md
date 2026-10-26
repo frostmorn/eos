@@ -4,6 +4,14 @@ Display drivers expose a standard VFS interface under `/dev` (typically `/dev/fb
 
 ---
 
+## Supported Display Controllers (`edriver/display/`)
+
+EOS includes drivers for popular display panels:
+*   **`st7789`:** Standard SPI/parallel TFT LCD controller for general embedded displays.
+*   **`st7701s`:** Advanced MIPI-DSI / RGB parallel display controller supporting high-resolution panels (e.g., JC4880P443C boards).
+
+---
+
 ## Frame Format & IOCTL Contract
 
 Display drivers accept standard POSIX file operations (`write`) combined with `ioctl` calls to query dimensions or configure display windows.

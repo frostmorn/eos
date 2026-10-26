@@ -136,19 +136,25 @@ EOS includes built-in interactive template generators (`tools/codegen.py`) for c
     make research
     ```
 
+*   **Refine Documentation:**
+    ```bash
+    make refine-docs
+    ```
+    *(Invokes Gemini to refine project documentation based on `DEVELOPMENT.md`).*
+
 ---
 
 ## 7. Project Architecture Overview
 
 *   **`main/`**: Core OS implementation
-    *   **`ecore/`**: Core kernel subsystems (VFS, device management, binfs, devfs, capsmgr, driver model, thread context, tmpfs).
-    *   **`edriver/`**: Hardware drivers categorized by scope (`bus/`, `display/`, `sound/`, `storage/`).
-    *   **`ebin/`**: Built-in system commands and applications (`ush`, `ls`, `cat`, `mkdir`, `mount`, test utilities, etc.).
-    *   **`eboard/`**: Board-specific definitions and configurations (`lilka_v23`, etc.).
+    *   **`ecore/`**: Core kernel subsystems (VFS, device management, binfs, devfs, pipefs, procfs, capsmgr, driver model, thread context, tmpfs, asset management, net_common).
+    *   **`edriver/`**: Hardware drivers categorized by scope (`bus/`, `display/`, `input/`, `net/`, `sound/`, `storage/`).
+    *   **`ebin/`**: Built-in system commands and applications (`ush`, `ls`, `cat`, `mkdir`, `mount`, network utilities `wlanctl`/`netctl`, UI apps, test utilities, etc.).
+    *   **`eboard/`**: Board-specific definitions and configurations (`lilka_v23`, `esp32s3_qemu`, `jc4880p443c_i_w_y`).
     *   **`eld/`**: Linker scripts for compile-time driver and binary registration.
     *   **`ewrap/`**: ESP-IDF / FreeRTOS / POSIX syscall wrappers and hooks.
 *   **`components/`**: External components such as LVGL graphics library.
-*   **`docs/`**: Detailed architecture scope documents (Bus, Display, Sound, Storage, VFS).
+*   **`docs/`**: Detailed architecture scope documents (Bus, Display, Input, Network, Sound, Storage, VFS, Wrappers, Board Porting).
 *   **`tools/`**: Build setup and code generation scripts (`setboard.py`, `codegen.py`, debug scripts).
 
 ---
@@ -162,4 +168,3 @@ EOS includes built-in interactive template generators (`tools/codegen.py`) for c
 The repository includes workspace-scoped custom skills under `.ai/skills/`:
 - **`qemu-testing`**: Located in `.ai/skills/qemu-testing/SKILL.md`. Provides specialized procedures for building firmware, running QEMU in the background (`esp32s3_qemu`), serial log redirection, and process cleanup.
 - **Skill Loadage / Activation:** Activate workspace skills using the `activate_skill` tool (e.g., `activate_skill(name="qemu-testing")`) when performing corresponding specialized workflows.
-

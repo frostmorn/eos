@@ -12,10 +12,12 @@ EOS includes robust implementations for core hardware and virtual buses under `m
 *   **Root (`root.c`):** The foundational anchor bus representing the top of the device tree (`eos_devtree_root()`).
 *   **SPI (`spi.c`):** Serial Peripheral Interface bus managing SPI host controllers, chip selects, clock modes, and child peripheral attachment.
 *   **I2C (`i2c.c`):** Inter-Integrated Circuit bus managing I2C controllers, master/slave transactions, and sensor/codec attachment.
-*   **SDIO (`sdio.c`):** Secure Digital Input Output bus managing high-speed card communication and SDIO peripheral attachments.
 *   **USB (`usb.c`):** Universal Serial Bus interface managing USB host/device endpoints and composite interfaces.
 *   **GPIO (`gpio.c`):** General Purpose Input/Output bus managing pin multiplexing, interrupt lines, and discrete device/keyboard attachment.
-*   **1-Wire (`onewire.c`):** Single-wire bidirectional serial bus supporting multi-drop bus communication and sensor polling.
+
+### Planned / Stubbed Bus Drivers (Not Yet Implemented)
+*   **SDIO (`sdio/sdio.c`):** Secure Digital Input Output bus stub (currently empty).
+*   **1-Wire (`onewire/onewire.c`):** Single-wire bidirectional serial bus stub (currently empty).
 
 ---
 

@@ -1,6 +1,6 @@
 # Input Driver Scope & Event Architecture
 
-Input drivers in EOS (`edriver/input/`) capture user interaction events—such as physical button presses, directional pads, keyboards, and touchscreens—and expose them via standard VFS file nodes (such as `/dev/keyboard0`) adhering to the Linux input subsystem event model.
+Input drivers in EOS (`edriver/input/`) capture user interaction events—such as physical button presses, directional pads, keyboards, and capacitive touchscreens—and expose them via standard VFS file nodes (such as `/dev/keyboard0`, `/dev/input0`) adhering to the Linux input subsystem event model.
 
 ---
 
@@ -31,12 +31,10 @@ typedef struct {
 
 ---
 
-## 2. Keyboard & Keypad Driver (`edriver/input/keyboard/keyboard.c`)
+## 2. Implemented Input Drivers (`edriver/input/`)
 
-The keyboard driver attaches as a child node to the GPIO bus, monitoring configured input pins (e.g., D-pad buttons, action buttons).
-*   **Active-Low Polling:** Pins are configured as inputs with internal pull-ups enabled (`GPIO_PULLUP_ENABLE`), triggering press states when pulled low (`0`).
-*   **Blocking & Non-Blocking Read:** Reading from a keyboard device node (`read()`) blocks until a new key press transition is detected or returns an event struct.
-*   **IOCTL Polling (`EOS_KEYBOARD_IOCTL_POLL`):** Applications or compatibility layers (such as SDL backend event pumps) can query the keyboard non-blockingly using `ioctl(fd, EOS_KEYBOARD_IOCTL_POLL, &ev)`.
+*   **Keyboard & Keypad (`keyboard/`):** Attaches as a child node to the GPIO bus, monitoring configured input pins with active-low polling and pull-ups enabled.
+*   **GT911 Touchscreen (`gt911/`):** Capacitive touch controller driver communicating over I2C to report multi-touch absolute coordinates (`EOS_INPUT_EVENT_TOUCH`).
 
 ---
 

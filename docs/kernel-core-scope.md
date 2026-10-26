@@ -50,4 +50,10 @@ The File API helper module (`fapi`) provides robust path normalization and resol
 *   **Core-Safe Scratch Buffers:** Multi-core safe static buffer pools (`eos_fapi_buffer`) prevent race conditions during nested path transformations across CPU cores.
 
 ---
+
+## 6. Asset Management (`asset.c`, `asset.h`)
+
+EOS provides lightweight asset management (`eos_asset_t`) for accessing compiled-in static assets (such as fonts, images, or configuration payloads).
+
+---
 [Back to Documentation Index](./Readme.md) | [Development Guide](../DEVELOPMENT.md)
