@@ -513,7 +513,7 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
 
   FILE *f = fopen(path, "r");
   if (!f) {
-    EOS_LOGE("eos_system() not found: %s", path);
+    EOS_LOGE("eos_system() not found: %s (errno=%d: %s)", path, errno, strerror(errno));
     errno = ENOENT;
     return -1;
   }

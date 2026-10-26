@@ -96,13 +96,6 @@ void eos_board_init() {
   ap->driver = eos_drv_find("net", "ap");
   eos_dev_attach(ap, wifi);
 #endif
-
-#ifdef EOS_DRV_NET_BRIDGE_ENABLED
-  // ===================== Network Bridge =================
-  eos_dev_t *br = eos_dev_alloc();
-  br->driver = eos_drv_find("net", "bridge");
-  eos_dev_attach(br, eos_devtree_root());
-#endif
 #endif
 
   // ==================== Buzzer =======================

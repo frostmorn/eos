@@ -140,6 +140,60 @@ bool eos_lvgl_get_touch_gestures(void);
 lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
                                    void *user_data);
 
+// ===================== EOS Standard Theme Palette =====================
+#define EOS_COLOR_BG_DARK        0x0B1120
+#define EOS_COLOR_BG_PANEL       0x0F172A
+#define EOS_COLOR_BG_CARD        0x1E293B
+#define EOS_COLOR_BG_HDR         0x1E3A8A
+#define EOS_COLOR_BG_SUBHDR      0x172554
+#define EOS_COLOR_BORDER         0x334155
+#define EOS_COLOR_BORDER_FOCUS   0x93C5FD
+#define EOS_COLOR_TEXT_PRIMARY   0xF8FAFC
+#define EOS_COLOR_TEXT_SECONDARY 0xE2E8F0
+#define EOS_COLOR_TEXT_MUTED     0x94A3B8
+#define EOS_COLOR_TEXT_WHITE     0xFFFFFF
+#define EOS_COLOR_ACCENT_BLUE    0x2563EB
+#define EOS_COLOR_ACCENT_CYAN    0x38BDF8
+#define EOS_COLOR_ACCENT_YELLOW  0xFDE047
+#define EOS_COLOR_STATUS_GREEN   0x34D399
+#define EOS_COLOR_STATUS_ORANGE  0xFB923C
+#define EOS_COLOR_STATUS_RED     0xEF4444
+
+static inline lv_color_t eos_lvgl_color(uint32_t hex) {
+  return lv_color_hex(hex);
+}
+
+// ===================== Reusable UI Components =====================
+
+// Creates a standardized styled container card
+lv_obj_t *eos_lvgl_create_card(lv_obj_t *parent, int32_t w, int32_t h);
+
+// Creates a standardized top header bar (24px height)
+lv_obj_t *eos_lvgl_create_header(lv_obj_t *parent, const char *title, const char *mode_text);
+
+// Creates a standardized toast notification floating at top of parent
+lv_obj_t *eos_lvgl_create_toast(lv_obj_t *parent, const char *message, bool is_error);
+
+// Callback signature for modal input dialogs
+typedef void (*eos_lvgl_input_cb_t)(const char *text, void *user_data);
+
+typedef struct {
+  const char *title;         // Dialog title (e.g. "Connect to WiFi")
+  const char *prompt;        // Prompt text (e.g. "Enter password:")
+  const char *initial_text;  // Initial text field content (or NULL)
+  const char *ok_label;      // OK button label (NULL defaults to "OK")
+  bool is_password;          // Enable password character masking
+  eos_lvgl_input_cb_t ok_cb;     // Invoked on submit
+  eos_lvgl_input_cb_t cancel_cb; // Invoked on cancel (or NULL)
+  void *user_data;           // Context pointer passed to callbacks
+} eos_lvgl_input_dialog_cfg_t;
+
+// Creates a modal text input / password dialog with touch on-screen keyboard and hardware keypad focus
+lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg);
+
+// Closes and frees an active input dialog
+void eos_lvgl_close_input_dialog(lv_obj_t *dialog);
+
 #ifdef __cplusplus
 }
 #endif

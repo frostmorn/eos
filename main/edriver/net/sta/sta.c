@@ -5,10 +5,11 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "edriver/net/net_common.h"
+#include "ecore/net_common.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <esp_mac.h>
 #include <string.h>
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
@@ -21,6 +22,7 @@ typedef struct {
   bool is_up;
   bool auto_connect;
   bool dhcp_enabled;
+  uint8_t mac[6];
   char last_ssid[33];
   char last_password[64];
   char hostname[32];
@@ -34,6 +36,14 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   st->auto_connect = true;
   st->dhcp_enabled = true;
   strncpy(st->hostname, "eos-sta", sizeof(st->hostname) - 1);
+
+  // Initialize hardware MAC address (from efuse or base MAC)
+  if (esp_base_mac_addr_get(st->mac) != ESP_OK) {
+    if (esp_efuse_mac_get_default(st->mac) != ESP_OK) {
+      st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
+      st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x01;
+    }
+  }
 
   dev->state = st;
   eos_net_set_sta_dev(dev);
@@ -135,7 +145,11 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         }
 
         // Read MAC
-        esp_netif_get_mac(st->netif, info->mac);
+        if (esp_netif_get_mac(st->netif, info->mac) != ESP_OK ||
+            (info->mac[0] == 0 && info->mac[1] == 0 && info->mac[2] == 0 &&
+             info->mac[3] == 0 && info->mac[4] == 0 && info->mac[5] == 0)) {
+          memcpy(info->mac, st->mac, 6);
+        }
 
         // Read DNS
         esp_netif_dns_info_t dns;
@@ -288,14 +302,25 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
     case EOS_NETIF_IOCTL_SET_MAC: {
       const uint8_t *mac = va_arg(args, const uint8_t *);
-      if (!mac || !st->netif) return -1;
-      return (esp_netif_set_mac(st->netif, (uint8_t *)mac) == ESP_OK) ? 0 : -1;
+      if (!mac) return -1;
+      memcpy(st->mac, mac, 6);
+      if (st->netif) {
+        esp_netif_set_mac(st->netif, (uint8_t *)mac);
+      }
+      return 0;
     }
 
     case EOS_NETIF_IOCTL_GET_MAC: {
       uint8_t *out_mac = va_arg(args, uint8_t *);
-      if (!out_mac || !st->netif) return -1;
-      return (esp_netif_get_mac(st->netif, out_mac) == ESP_OK) ? 0 : -1;
+      if (!out_mac) return -1;
+      if (st->netif && esp_netif_get_mac(st->netif, out_mac) == ESP_OK) {
+        if (out_mac[0] != 0 || out_mac[1] != 0 || out_mac[2] != 0 ||
+            out_mac[3] != 0 || out_mac[4] != 0 || out_mac[5] != 0) {
+          return 0;
+        }
+      }
+      memcpy(out_mac, st->mac, 6);
+      return 0;
     }
 
     case EOS_NETIF_IOCTL_BRIDGE_SET_NAPT: {

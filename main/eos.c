@@ -5,6 +5,7 @@
 #include "ecore/devfs.h"
 #include "ecore/log.h"
 #include "ecore/pipefs.h"
+#include "ecore/procfs.h"
 #include "ecore/threadctx.h"
 #include "ecore/tmpfs.h"
 #include <pthread.h>
@@ -23,6 +24,7 @@ void *eos_main(void *data) {
   eos_capsmgr_init();
   eos_devtree_init();
   eos_devfs_init();
+  eos_procfs_init();
   eos_board_init();
   eos_binfs_init();
 

@@ -38,8 +38,6 @@ extern int __real_closedir(DIR *pdir);
 extern int __real_mkdir(char *path, mode_t mode);
 
 int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
-  //  EOS_LOGI("_r_open_r: path=%s\n", path);
-
   char *_path = eos_fapi_get_buffer(0);
   _path = eos_fapi_path_resolve(path, _path);
   int fd = __real__open_r(r, _path, flags, mode);

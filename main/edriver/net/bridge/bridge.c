@@ -5,15 +5,17 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "edriver/net/net_common.h"
+#include "ecore/net_common.h"
 
 #include <errno.h>
 #include <string.h>
 
+#define BRIDGE_MAX_PORTS 8
+
 typedef struct {
   bool is_up;
   bool napt_enabled;
-  char ports[4][16];
+  char ports[BRIDGE_MAX_PORTS][16];
   uint8_t port_count;
   char napt_uplink[16];
   eos_netif_ip_info_t ip_info;
@@ -32,7 +34,7 @@ bool driver_net_bridge_init(eos_dev_t *dev) {
   strncpy(st->ip_info.gw, "192.168.4.1", sizeof(st->ip_info.gw) - 1);
 
   dev->state = st;
-  EOS_LOGI("bridge: network bridge interface initialized (/dev/br0)");
+  EOS_LOGI("bridge: virtual network bridge initialized (/dev/%s)", dev->name[0] ? dev->name : "br0");
   return true;
 }
 
@@ -72,7 +74,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       eos_netif_info_t *info = va_arg(args, eos_netif_info_t *);
       if (!info) return -1;
       memset(info, 0, sizeof(*info));
-      strncpy(info->name, "br0", sizeof(info->name) - 1);
+      strncpy(info->name, dev->name[0] ? dev->name : "br0", sizeof(info->name) - 1);
       info->type = EOS_NETIF_TYPE_BRIDGE;
       info->flags = EOS_NETIF_FLAG_BRIDGE;
       if (st->is_up) info->flags |= EOS_NETIF_FLAG_UP;
@@ -96,7 +98,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (st->napt_enabled) {
         eos_net_set_napt_enabled(true);
       }
-      EOS_LOGI("bridge: br0 set to UP");
+      EOS_LOGI("bridge: %s set to UP", dev->name[0] ? dev->name : "br0");
       return 0;
     }
 
@@ -105,7 +107,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (st->napt_enabled) {
         eos_net_set_napt_enabled(false);
       }
-      EOS_LOGI("bridge: br0 set to DOWN");
+      EOS_LOGI("bridge: %s set to DOWN", dev->name[0] ? dev->name : "br0");
       return 0;
     }
 
@@ -134,7 +136,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         }
       }
 
-      if (st->port_count >= 4) {
+      if (st->port_count >= BRIDGE_MAX_PORTS) {
         errno = ENOSPC;
         return -1;
       }
@@ -143,19 +145,23 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       st->ports[st->port_count][15] = '\0';
       st->port_count++;
 
-      // Check if both sta and ap are present in bridge
-      bool has_sta = false;
-      bool has_ap = false;
+      // Check for uplink interface (e.g. sta or eth) and local AP/downlink
+      bool has_uplink = false;
+      bool has_downlink = false;
       for (size_t i = 0; i < st->port_count; i++) {
-        if (strstr(st->ports[i], "sta")) has_sta = true;
-        if (strstr(st->ports[i], "ap")) has_ap = true;
+        if (strstr(st->ports[i], "sta") || strstr(st->ports[i], "eth")) {
+          has_uplink = true;
+          strncpy(st->napt_uplink, st->ports[i], sizeof(st->napt_uplink) - 1);
+        }
+        if (strstr(st->ports[i], "ap")) has_downlink = true;
       }
-      if (has_sta && has_ap) {
+      if (has_uplink && has_downlink) {
         st->napt_enabled = true;
         eos_net_set_napt_enabled(true);
       }
 
-      EOS_LOGI("bridge: attached port \"%s\" to br0 (total ports: %d)", ifname, st->port_count);
+      EOS_LOGI("bridge: attached port \"%s\" to %s (total ports: %d)",
+               ifname, dev->name[0] ? dev->name : "br0", st->port_count);
       return 0;
     }
 
@@ -180,19 +186,20 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
       st->port_count--;
 
-      // If removed either STA or AP, disable NAPT
-      bool has_sta = false;
-      bool has_ap = false;
+      // If removed either uplink or downlink, disable NAPT
+      bool has_uplink = false;
+      bool has_downlink = false;
       for (size_t i = 0; i < st->port_count; i++) {
-        if (strstr(st->ports[i], "sta")) has_sta = true;
-        if (strstr(st->ports[i], "ap")) has_ap = true;
+        if (strstr(st->ports[i], "sta") || strstr(st->ports[i], "eth")) has_uplink = true;
+        if (strstr(st->ports[i], "ap")) has_downlink = true;
       }
-      if (!has_sta || !has_ap) {
+      if (!has_uplink || !has_downlink) {
         st->napt_enabled = false;
         eos_net_set_napt_enabled(false);
       }
 
-      EOS_LOGI("bridge: removed port \"%s\" from br0", ifname);
+      EOS_LOGI("bridge: removed port \"%s\" from %s",
+               ifname, dev->name[0] ? dev->name : "br0");
       return 0;
     }
 
@@ -200,7 +207,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       eos_netif_bridge_info_t *binfo = va_arg(args, eos_netif_bridge_info_t *);
       if (!binfo) return -1;
       memset(binfo, 0, sizeof(*binfo));
-      strncpy(binfo->name, "br0", sizeof(binfo->name) - 1);
+      strncpy(binfo->name, dev->name[0] ? dev->name : "br0", sizeof(binfo->name) - 1);
       binfo->port_count = st->port_count;
       binfo->napt_enabled = st->napt_enabled;
       strncpy(binfo->napt_uplink, st->napt_uplink, sizeof(binfo->napt_uplink) - 1);

@@ -562,7 +562,8 @@ static void eos_lvgl_flush_cb(lv_display_t *display, const lv_area_t *area,
 
 int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   if (s_lvgl.pub.initialized) {
-    eos_lvgl_deinit();
+    EOS_LOGW("eos_lvgl_init: LVGL is already initialized by another task");
+    return -EBUSY;
   }
 
   memset(&s_lvgl, 0, sizeof(s_lvgl));
@@ -1040,4 +1041,247 @@ lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
 
   return btn;
+}
+
+// ── Reusable UI Components ─────────────────────────────────────
+
+lv_obj_t *eos_lvgl_create_card(lv_obj_t *parent, int32_t w, int32_t h) {
+  if (!parent) parent = lv_screen_active();
+  if (!parent) return NULL;
+
+  lv_obj_t *card = lv_obj_create(parent);
+  lv_obj_set_size(card, w, h);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 4, 0);
+  lv_obj_set_style_pad_all(card, 4, 0);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  return card;
+}
+
+lv_obj_t *eos_lvgl_create_header(lv_obj_t *parent, const char *title, const char *mode_text) {
+  if (!parent) parent = lv_screen_active();
+  if (!parent) return NULL;
+
+  uint32_t w = eos_lvgl_get_width();
+  lv_obj_t *hdr = lv_obj_create(parent);
+  lv_obj_set_size(hdr, (int32_t)w, 24);
+  lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(hdr, lv_color_hex(EOS_COLOR_BG_HDR), 0);
+  lv_obj_set_style_border_width(hdr, 0, 0);
+  lv_obj_set_style_radius(hdr, 0, 0);
+  lv_obj_set_style_pad_hor(hdr, 6, 0);
+  lv_obj_set_style_pad_ver(hdr, 2, 0);
+  lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+
+  if (title) {
+    lv_obj_t *lbl = lv_label_create(hdr);
+    lv_label_set_text(lbl, title);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 0, 0);
+  }
+
+  if (mode_text) {
+    lv_obj_t *badge = lv_label_create(hdr);
+    lv_label_set_text(badge, mode_text);
+    lv_obj_set_style_text_color(badge, lv_color_hex(EOS_COLOR_STATUS_GREEN), 0);
+    lv_obj_align(badge, LV_ALIGN_RIGHT_MID, 0, 0);
+  }
+
+  return hdr;
+}
+
+lv_obj_t *eos_lvgl_create_toast(lv_obj_t *parent, const char *message, bool is_error) {
+  if (!parent) parent = lv_screen_active();
+  if (!parent || !message) return NULL;
+
+  uint32_t w = eos_lvgl_get_width();
+  int32_t toast_w = (int32_t)w - 20;
+  if (toast_w > 360) toast_w = 360;
+
+  lv_obj_t *toast = lv_obj_create(parent);
+  lv_obj_set_size(toast, toast_w, 26);
+  lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, 28);
+  lv_obj_set_style_bg_color(toast, lv_color_hex(is_error ? EOS_COLOR_STATUS_RED : EOS_COLOR_STATUS_GREEN), 0);
+  lv_obj_set_style_border_width(toast, 0, 0);
+  lv_obj_set_style_radius(toast, 4, 0);
+  lv_obj_set_style_pad_all(toast, 2, 0);
+  lv_obj_clear_flag(toast, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *lbl = lv_label_create(toast);
+  lv_label_set_text(lbl, message);
+  lv_obj_set_style_text_color(lbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(lbl);
+
+  return toast;
+}
+
+typedef struct {
+  eos_lvgl_input_dialog_cfg_t cfg;
+  lv_obj_t *overlay;
+  lv_obj_t *textarea;
+} eos_input_dialog_data_t;
+
+static void input_dialog_delete_cb(lv_event_t *e) {
+  eos_input_dialog_data_t *data = (eos_input_dialog_data_t *)lv_event_get_user_data(e);
+  if (data) free(data);
+}
+
+static void input_dialog_ok_click(lv_event_t *e) {
+  eos_input_dialog_data_t *data = (eos_input_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  char text_copy[128] = {0};
+  const char *t = lv_textarea_get_text(data->textarea);
+  if (t) strncpy(text_copy, t, sizeof(text_copy) - 1);
+  eos_lvgl_input_cb_t cb = data->cfg.ok_cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(text_copy, ud);
+}
+
+static void input_dialog_cancel_click(lv_event_t *e) {
+  eos_input_dialog_data_t *data = (eos_input_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_input_cb_t cb = data->cfg.cancel_cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(NULL, ud);
+}
+
+static void input_dialog_kb_event(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_READY) {
+    input_dialog_ok_click(e);
+  } else if (code == LV_EVENT_CANCEL) {
+    input_dialog_cancel_click(e);
+  }
+}
+
+lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_input_dialog_data_t *data = calloc(1, sizeof(eos_input_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  // Dimmed modal overlay
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, input_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  // Dialog card box
+  int32_t dlg_w = (int32_t)w - 20;
+  if (dlg_w > 400) dlg_w = 400;
+  int32_t dlg_h = (int32_t)h - 20;
+  if (dlg_h > 280) dlg_h = 280;
+
+  lv_obj_t *card = lv_obj_create(ov);
+  lv_obj_set_size(card, dlg_w, dlg_h);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
+  lv_obj_set_style_border_width(card, 2, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, 6, 0);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Title
+  lv_obj_t *tlbl = lv_label_create(card);
+  lv_label_set_text(tlbl, cfg->title ? cfg->title : "Input");
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+  lv_obj_align(tlbl, LV_ALIGN_TOP_MID, 0, 2);
+
+  // Prompt
+  if (cfg->prompt) {
+    lv_obj_t *plbl = lv_label_create(card);
+    lv_label_set_text(plbl, cfg->prompt);
+    lv_obj_set_style_text_color(plbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_align(plbl, LV_ALIGN_TOP_LEFT, 4, 22);
+  }
+
+  // Text Area
+  lv_obj_t *ta = lv_textarea_create(card);
+  data->textarea = ta;
+  lv_obj_set_size(ta, dlg_w - 24, 32);
+  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 44);
+  if (cfg->is_password) {
+    lv_textarea_set_password_mode(ta, true);
+  }
+  lv_textarea_set_one_line(ta, true);
+  if (cfg->initial_text) {
+    lv_textarea_set_text(ta, cfg->initial_text);
+  }
+  lv_obj_set_style_bg_color(ta, lv_color_hex(EOS_COLOR_BG_DARK), 0);
+  lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
+
+  // Action Buttons Bar
+  int32_t btn_y = 80;
+  lv_obj_t *btn_cancel = lv_button_create(card);
+  lv_obj_set_size(btn_cancel, 80, 28);
+  lv_obj_align(btn_cancel, LV_ALIGN_TOP_LEFT, 10, btn_y);
+  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+  lv_obj_set_style_border_color(btn_cancel, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(btn_cancel, 1, 0);
+  lv_obj_set_style_radius(btn_cancel, 4, 0);
+  lv_obj_add_event_cb(btn_cancel, input_dialog_cancel_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *clbl = lv_label_create(btn_cancel);
+  lv_label_set_text(clbl, "Cancel");
+  lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
+  lv_obj_center(clbl);
+
+  lv_obj_t *btn_ok = lv_button_create(card);
+  lv_obj_set_size(btn_ok, 80, 28);
+  lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -10, btn_y);
+  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
+  lv_obj_set_style_radius(btn_ok, 4, 0);
+  lv_obj_add_event_cb(btn_ok, input_dialog_ok_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *oklbl = lv_label_create(btn_ok);
+  lv_label_set_text(oklbl, cfg->ok_label ? cfg->ok_label : "OK");
+  lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(oklbl);
+
+  // On-screen touch keyboard (if touch device is present)
+  if (eos_lvgl_has_touch()) {
+    lv_obj_t *kb = lv_keyboard_create(card);
+    lv_keyboard_set_textarea(kb, ta);
+    lv_obj_set_size(kb, dlg_w - 12, dlg_h - btn_y - 36);
+    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+    lv_obj_set_style_text_color(kb, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_add_event_cb(kb, input_dialog_kb_event, LV_EVENT_ALL, data);
+  }
+
+  // Register with group for hardware keys / D-pad
+  lv_group_t *grp = eos_lvgl_get_group();
+  if (grp) {
+    lv_group_add_obj(grp, ta);
+    lv_group_add_obj(grp, btn_ok);
+    lv_group_add_obj(grp, btn_cancel);
+    lv_group_focus_obj(ta);
+  }
+
+  return ov;
+}
+
+void eos_lvgl_close_input_dialog(lv_obj_t *dialog) {
+  if (dialog) {
+    lv_obj_delete(dialog);
+  }
 }

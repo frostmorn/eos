@@ -5,9 +5,10 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "edriver/net/net_common.h"
+#include "ecore/net_common.h"
 
 #include <errno.h>
+#include <esp_mac.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <string.h>
@@ -465,6 +466,33 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
                  st->channel, st->tx_power, st->country);
       }
       return 0;
+    }
+    case EOS_NETIF_IOCTL_GET_MAC: {
+      uint8_t *out_mac = va_arg(args, uint8_t *);
+      if (!out_mac) return -1;
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+      if (esp_wifi_get_mac(WIFI_IF_STA, out_mac) == ESP_OK) {
+        if (out_mac[0] || out_mac[1] || out_mac[2] || out_mac[3] || out_mac[4] || out_mac[5]) {
+          return 0;
+        }
+      }
+      if (esp_read_mac(out_mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        return 0;
+      }
+#endif
+      if (esp_read_mac(out_mac, ESP_MAC_BASE) == ESP_OK) {
+        return 0;
+      }
+      return -1;
+    }
+    case EOS_NETIF_IOCTL_SET_MAC: {
+      const uint8_t *mac = va_arg(args, const uint8_t *);
+      if (!mac) return -1;
+#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+      return esp_wifi_set_mac(WIFI_IF_STA, (uint8_t *)mac) == ESP_OK ? 0 : -1;
+#else
+      return -1;
+#endif
     }
     default:
       return -1;

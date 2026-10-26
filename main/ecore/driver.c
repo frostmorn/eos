@@ -372,7 +372,6 @@ eos_drv_t *eos_drv_find(const char *scope, const char *name) {
     }
   }
 
-  EOS_LOGE("Not found driver %s/%s", scope, name);
-  assert(0);
+  EOS_LOGW("Driver %s/%s not found", scope, name);
   return NULL;
 }

@@ -1,4 +1,4 @@
-#include "net_common.h"
+#include "ecore/net_common.h"
 #include "ecore/log.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>

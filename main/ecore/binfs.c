@@ -259,6 +259,64 @@ static off_t binfs_lseek(void *ctx, int fd, off_t offset, int whence) {
   return new_offset;
 }
 
+static int binfs_fstat(void *ctx, int fd, struct stat *st) {
+  binfs_fd_t *binfs_fd = binfs_fd_get(fd);
+  if (!binfs_fd || !st) {
+    errno = EBADF;
+    return -1;
+  }
+
+  memset(st, 0, sizeof(*st));
+  st->st_mode = S_IFREG | 0555;
+  if (binfs_fd->bin) {
+    st->st_size = sizeof(eos_bin_t);
+  } else if (binfs_fd->asset) {
+    st->st_size = (off_t)binfs_fd->asset->size;
+  }
+  st->st_blksize = 512;
+  return 0;
+}
+
+static int binfs_stat(void *ctx, const char *path, struct stat *st) {
+  if (!path || !st) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  const char *name = path;
+  while (*name == '/') name++;
+  if (strncmp(name, "bin/", 4) == 0) name += 4;
+  while (*name == '/') name++;
+
+  if (*name == '\0') {
+    // Root /bin directory
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFDIR | 0555;
+    return 0;
+  }
+
+  const eos_bin_t *bin = binfs_find_bin(name);
+  if (bin) {
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFREG | 0555;
+    st->st_size = sizeof(eos_bin_t);
+    st->st_blksize = 512;
+    return 0;
+  }
+
+  const eos_asset_t *asset = binfs_find_asset(name);
+  if (asset) {
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFREG | 0555;
+    st->st_size = (off_t)asset->size;
+    st->st_blksize = 512;
+    return 0;
+  }
+
+  errno = ENOENT;
+  return -1;
+}
+
 // ── Directory Operations ───────────────────────────────────────
 
 typedef struct {
@@ -355,6 +413,8 @@ void eos_binfs_init(void) {
       .read_p = binfs_read,
       .write_p = binfs_write,
       .lseek_p = binfs_lseek,
+      .fstat_p = binfs_fstat,
+      .stat_p = binfs_stat,
       .opendir_p = binfs_opendir,
       .readdir_p = binfs_readdir,
       .seekdir_p = binfs_seekdir,
@@ -362,7 +422,11 @@ void eos_binfs_init(void) {
       .closedir_p = binfs_closedir,
   };
   mkdir(EOS_BINFS_ROOT, 0755);
-  esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
-  EOS_LOGI("binfs mounted at %s with %d registered bins and %d registered assets", EOS_BINFS_ROOT,
-           binfs_bin_count(), binfs_asset_count());
+  esp_err_t err = esp_vfs_register(EOS_BINFS_ROOT, &vfs, NULL);
+  if (err != ESP_OK) {
+    EOS_LOGE("Failed to register binfs at %s: %s", EOS_BINFS_ROOT, esp_err_to_name(err));
+  } else {
+    EOS_LOGI("binfs mounted at %s with %d registered bins and %d registered assets", EOS_BINFS_ROOT,
+             binfs_bin_count(), binfs_asset_count());
+  }
 }

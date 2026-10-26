@@ -869,4 +869,6 @@ tmpfs_state_t * eos_tmpfs_mount(const char *path) {
 
 void eos_tmpfs_init(){
   eos_tmpfs_state = eos_tmpfs_mount(EOS_TMPFS_ROOT);
+  mkdir("/tmp", 0777);
+  mkdir("/proc", 0777);
 }
