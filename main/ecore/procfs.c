@@ -3,11 +3,18 @@
 #include "ecore/driver.h"
 #include "ecore/log.h"
 #include <dirent.h>
+#include <driver/gpio.h>
 #include <errno.h>
+#include <esp_chip_info.h>
+#include <esp_flash.h>
 #include <esp_heap_caps.h>
+#include <esp_intr_alloc.h>
+#include <esp_mac.h>
 #include <esp_system.h>
 #include <esp_vfs.h>
 #include <fcntl.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +47,13 @@ static const char *s_proc_entries[] = {
     "devices",
     "meminfo",
     "version",
+    "mounts",
+    "interrupts",
+    "fds",
+    "gpio",
+    "heapinfo",
+    "cpuinfo",
+    "uptime",
 };
 #define PROC_ENTRY_COUNT (sizeof(s_proc_entries) / sizeof(s_proc_entries[0]))
 
@@ -201,6 +215,165 @@ static char *procfs_gen_version(void) {
   return sb.buf;
 }
 
+static char *procfs_gen_mounts(void) {
+  char *buf = NULL;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  if (!f) return NULL;
+  esp_vfs_dump_registered_paths(f);
+  fclose(f);
+  return buf;
+}
+
+static char *procfs_gen_interrupts(void) {
+  char *buf = NULL;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  if (!f) return NULL;
+  esp_intr_dump(f);
+  fclose(f);
+  return buf;
+}
+
+static char *procfs_gen_fds(void) {
+  char *buf = NULL;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  if (!f) return NULL;
+  esp_vfs_dump_fds(f);
+  fclose(f);
+  return buf;
+}
+
+static char *procfs_gen_gpio(void) {
+  char *buf = NULL;
+  size_t sz = 0;
+  FILE *f = open_memstream(&buf, &sz);
+  if (!f) return NULL;
+  gpio_dump_io_configuration(f, SOC_GPIO_VALID_GPIO_MASK);
+  fclose(f);
+  return buf;
+}
+
+static void procfs_dump_cap_row(sbuf_t *sb, const char *label, uint32_t caps) {
+  size_t total = heap_caps_get_total_size(caps);
+  size_t free_sz = heap_caps_get_free_size(caps);
+  size_t min_free = heap_caps_get_minimum_free_size(caps);
+  size_t largest = heap_caps_get_largest_free_block(caps);
+  sbuf_printf(sb, "%-10s total:%8u  free:%8u  min:%8u  largest:%8u\n", label,
+              (unsigned)total, (unsigned)free_sz, (unsigned)min_free,
+              (unsigned)largest);
+}
+
+static char *procfs_gen_heapinfo(void) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  sbuf_printf(&sb, "== HEAP SUMMARY ==\n");
+  procfs_dump_cap_row(&sb, "INTERNAL", MALLOC_CAP_INTERNAL);
+  procfs_dump_cap_row(&sb, "DMA", MALLOC_CAP_DMA);
+#ifdef MALLOC_CAP_SPIRAM
+  procfs_dump_cap_row(&sb, "SPIRAM", MALLOC_CAP_SPIRAM);
+#endif
+  procfs_dump_cap_row(&sb, "DEFAULT", MALLOC_CAP_DEFAULT);
+
+  return sb.buf;
+}
+
+static const char *procfs_chip_model_name(esp_chip_model_t model) {
+  switch (model) {
+    case CHIP_ESP32: return "ESP32";
+    case CHIP_ESP32S2: return "ESP32-S2";
+    case CHIP_ESP32S3: return "ESP32-S3";
+    case CHIP_ESP32C3: return "ESP32-C3";
+    case CHIP_ESP32C2: return "ESP32-C2";
+    case CHIP_ESP32C6: return "ESP32-C6";
+    case CHIP_ESP32H2: return "ESP32-H2";
+    case CHIP_ESP32P4: return "ESP32-P4";
+    default: return "ESP32";
+  }
+}
+
+static char *procfs_gen_cpuinfo(void) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  esp_chip_info_t info;
+  esp_chip_info(&info);
+
+  sbuf_printf(&sb, "processor\t: 0\n");
+  sbuf_printf(&sb, "model name\t: %s (model %d, rev %d)\n",
+              procfs_chip_model_name(info.model), (int)info.model, (int)info.revision);
+  sbuf_printf(&sb, "cpu cores\t: %d\n", (int)info.cores);
+
+  sbuf_printf(&sb, "features\t:");
+  if (info.features & CHIP_FEATURE_WIFI_BGN) sbuf_printf(&sb, " wifi");
+  if (info.features & CHIP_FEATURE_BT) sbuf_printf(&sb, " bt");
+  if (info.features & CHIP_FEATURE_BLE) sbuf_printf(&sb, " ble");
+  if (info.features & CHIP_FEATURE_EMB_FLASH) sbuf_printf(&sb, " flash");
+  if (info.features & CHIP_FEATURE_EMB_PSRAM) sbuf_printf(&sb, " psram");
+  sbuf_printf(&sb, "\n");
+
+  uint32_t flash_sz = 0;
+  if (esp_flash_get_size(NULL, &flash_sz) == ESP_OK) {
+    sbuf_printf(&sb, "flash size\t: %" PRIu32 " bytes\n", flash_sz);
+  }
+
+  uint8_t mac[6];
+  if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+    sbuf_printf(&sb, "mac (wifi)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  }
+  if (esp_read_mac(mac, ESP_MAC_BT) == ESP_OK) {
+    sbuf_printf(&sb, "mac (bt)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  }
+
+  return sb.buf;
+}
+
+static const char *procfs_reset_reason_name(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON: return "power-on";
+    case ESP_RST_EXT: return "external-pin";
+    case ESP_RST_SW: return "software";
+    case ESP_RST_PANIC: return "panic";
+    case ESP_RST_INT_WDT: return "interrupt-wdt";
+    case ESP_RST_TASK_WDT: return "task-wdt";
+    case ESP_RST_WDT: return "wdt";
+    case ESP_RST_DEEPSLEEP: return "deepsleep";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_SDIO: return "sdio";
+    case ESP_RST_USB: return "usb";
+    case ESP_RST_JTAG: return "jtag";
+    case ESP_RST_EFUSE: return "efuse";
+    case ESP_RST_PWR_GLITCH: return "pwr-glitch";
+    case ESP_RST_CPU_LOCKUP: return "cpu-lockup";
+    default: return "unknown";
+  }
+}
+
+static char *procfs_gen_uptime(void) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  uint32_t ticks = (uint32_t)xTaskGetTickCount();
+  uint32_t hz = (uint32_t)configTICK_RATE_HZ;
+  uint32_t sec = ticks / hz;
+  uint32_t csec = (ticks % hz) * 100 / hz;
+
+  sbuf_printf(&sb, "%" PRIu32 ".%02" PRIu32 " 0.00\n", sec, csec);
+  sbuf_printf(&sb, "uptime: %" PRIu32 "s (%" PRIu32 " ticks @ %" PRIu32 " Hz)\n",
+              sec, ticks, hz);
+  sbuf_printf(&sb, "reset reason: %s (%d)\n",
+              procfs_reset_reason_name(esp_reset_reason()), (int)esp_reset_reason());
+
+  return sb.buf;
+}
+
 // ── VFS Implementation ─────────────────────────────────────────
 
 static int procfs_fd_alloc(char *data) {
@@ -254,6 +427,20 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
     content = procfs_gen_meminfo();
   } else if (strcmp(p, "version") == 0) {
     content = procfs_gen_version();
+  } else if (strcmp(p, "mounts") == 0) {
+    content = procfs_gen_mounts();
+  } else if (strcmp(p, "interrupts") == 0) {
+    content = procfs_gen_interrupts();
+  } else if (strcmp(p, "fds") == 0) {
+    content = procfs_gen_fds();
+  } else if (strcmp(p, "gpio") == 0) {
+    content = procfs_gen_gpio();
+  } else if (strcmp(p, "heapinfo") == 0) {
+    content = procfs_gen_heapinfo();
+  } else if (strcmp(p, "cpuinfo") == 0) {
+    content = procfs_gen_cpuinfo();
+  } else if (strcmp(p, "uptime") == 0) {
+    content = procfs_gen_uptime();
   } else {
     errno = ENOENT;
     return -1;
@@ -370,12 +557,12 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
     return 0;
   }
 
-  if (strcmp(p, "scopes") == 0 || strcmp(p, "drivers") == 0 ||
-      strcmp(p, "devices") == 0 || strcmp(p, "meminfo") == 0 ||
-      strcmp(p, "version") == 0) {
-    memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFREG | 0444;
-    return 0;
+  for (size_t i = 2; i < PROC_ENTRY_COUNT; i++) {
+    if (strcmp(p, s_proc_entries[i]) == 0) {
+      memset(st, 0, sizeof(*st));
+      st->st_mode = S_IFREG | 0444;
+      return 0;
+    }
   }
 
   errno = ENOENT;
