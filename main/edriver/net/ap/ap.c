@@ -31,7 +31,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   if (!st) return false;
 
   st->is_up = false;
-  st->dhcps_enabled = true;
+  st->dhcps_enabled = false;
   strncpy(st->hostname, "eos-ap", sizeof(st->hostname) - 1);
 
   // Initialize hardware MAC address for SoftAP
@@ -43,8 +43,9 @@ bool driver_net_ap_init(eos_dev_t *dev) {
     st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x02;
   }
 
-  // Default SoftAP configuration
-  strncpy(st->ap_cfg.ssid, "EOS-AP", sizeof(st->ap_cfg.ssid) - 1);
+  // Default SoftAP configuration using last 3 MAC octets for unique SSID
+  snprintf(st->ap_cfg.ssid, sizeof(st->ap_cfg.ssid), "EOS-%02X%02X%02X",
+           st->mac[3], st->mac[4], st->mac[5]);
   strncpy(st->ap_cfg.password, "12345678", sizeof(st->ap_cfg.password) - 1);
   st->ap_cfg.channel = 1;
   st->ap_cfg.max_connection = 4;
@@ -58,10 +59,11 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   eos_net_ensure_init();
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
-  // Create default WiFi softAP netif
+  // Create default WiFi softAP netif (do not start AP or DHCP server until brought UP)
   st->netif = esp_netif_create_default_wifi_ap();
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
+    esp_netif_dhcps_stop(st->netif);
     eos_net_set_ap_netif(st->netif);
   }
 #else
@@ -73,7 +75,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   esp_netif_inherent_config_t ap_base_cfg = ESP_NETIF_INHERENT_DEFAULT_ETH();
   ap_base_cfg.if_key = "WIFI_AP_DEF";
   ap_base_cfg.if_desc = "ap";
-  ap_base_cfg.flags = (esp_netif_flags_t)(ESP_NETIF_DHCP_SERVER | ESP_NETIF_FLAG_AUTOUP);
+  ap_base_cfg.flags = (esp_netif_flags_t)(ESP_NETIF_FLAG_EVENT_IP_MODIFIED);
   ap_base_cfg.ip_info = &ap_ip_info;
   ap_base_cfg.route_prio = 10;
   esp_netif_config_t ap_netif_cfg = {
@@ -84,6 +86,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   st->netif = esp_netif_new(&ap_netif_cfg);
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
+    esp_netif_dhcps_stop(st->netif);
     eos_net_set_ap_netif(st->netif);
   }
 #endif
@@ -167,25 +170,31 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         }
       }
 
+      if (st->is_up) {
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
-      wifi_sta_list_t sta_list = {0};
-      if (st->is_up && esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
-        if (sta_list.num > 0) info->flags |= EOS_NETIF_FLAG_LINK_UP;
-        snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, %d clients)",
-                 st->ap_cfg.ssid, st->ap_cfg.channel, sta_list.num);
+        wifi_sta_list_t sta_list = {0};
+        if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK && sta_list.num > 0) {
+          info->flags |= EOS_NETIF_FLAG_LINK_UP;
+          snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, %d clients)",
+                   st->ap_cfg.ssid, st->ap_cfg.channel, sta_list.num);
+        } else {
+          snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, idle)",
+                   st->ap_cfg.ssid, st->ap_cfg.channel);
+        }
+#else
+        snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d)",
+                 st->ap_cfg.ssid, st->ap_cfg.channel);
+#endif
       } else {
-        snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, idle)",
+        snprintf(info->extra, sizeof(info->extra), "disabled (SSID \"%s\", ch %d)",
                  st->ap_cfg.ssid, st->ap_cfg.channel);
       }
-#else
-      snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d)",
-               st->ap_cfg.ssid, st->ap_cfg.channel);
-#endif
       return 0;
     }
 
     case EOS_NETIF_IOCTL_SET_UP: {
       st->is_up = true;
+      st->dhcps_enabled = true;
       eos_net_ap_set_enabled(true);
 
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED

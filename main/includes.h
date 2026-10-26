@@ -19,6 +19,9 @@
 // Popular macroses used across EOS
 #include "emisc/fancymacro.h"
 
+// Network math and conversion utilities
+#include "emisc/netmisc.h"
+
 // Default libraries
 #include <stdarg.h>
 #include <stdbool.h>

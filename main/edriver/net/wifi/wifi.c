@@ -63,6 +63,39 @@ static void IRAM_ATTR wifi_promisc_rx_cb(void *buf, wifi_promiscuous_pkt_type_t 
       item->length = copy_len;
       memcpy(item->payload, pkt->payload, copy_len);
 
+      // Link-layer 802.11 MAC frame header decoding in the driver
+      if (copy_len >= 2) {
+        uint16_t fc = (uint16_t)item->payload[0] | ((uint16_t)item->payload[1] << 8);
+        item->frame_type = (uint8_t)((fc >> 2) & 0x3);
+        item->frame_subtype = (uint8_t)((fc >> 4) & 0xF);
+        switch (item->frame_type) {
+          case 0: memcpy(item->type_name, "MGMT", 5); break;
+          case 1: memcpy(item->type_name, "CTRL", 5); break;
+          case 2: memcpy(item->type_name, "DATA", 5); break;
+          default: memcpy(item->type_name, "RESV", 5); break;
+        }
+      } else {
+        item->frame_type = 3;
+        item->frame_subtype = 0;
+        memcpy(item->type_name, "RAW", 4);
+      }
+
+      if (copy_len >= 16) {
+        memcpy(item->addr1, &item->payload[4], 6);
+        memcpy(item->addr2, &item->payload[10], 6);
+        item->has_addrs = true;
+      } else {
+        memset(item->addr1, 0, 6);
+        memset(item->addr2, 0, 6);
+        item->has_addrs = false;
+      }
+
+      if (copy_len >= 22) {
+        memcpy(item->addr3, &item->payload[16], 6);
+      } else {
+        memset(item->addr3, 0, 6);
+      }
+
       st->head = (st->head + 1) % RAW_PACKET_QUEUE_SIZE;
       st->count++;
 
@@ -311,6 +344,14 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_RADIO_IOCTL_SCAN_START: {
       const eos_wifi_scan_config_t *scan_cfg = va_arg(args, const eos_wifi_scan_config_t *);
 #if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+      if (!eos_net_wifi_ensure_init()) return -1;
+
+      wifi_mode_t cur_mode = WIFI_MODE_NULL;
+      esp_wifi_get_mode(&cur_mode);
+      if (cur_mode != WIFI_MODE_STA && cur_mode != WIFI_MODE_APSTA) {
+        esp_wifi_set_mode((cur_mode == WIFI_MODE_AP) ? WIFI_MODE_APSTA : WIFI_MODE_STA);
+      }
+
       if (!eos_net_wifi_is_radio_on()) {
         eos_net_wifi_radio_start();
       }
@@ -365,6 +406,9 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
                 st->scan_results[i].channel = records[i].primary;
                 st->scan_results[i].authmode = records[i].authmode;
                 st->scan_results[i].is_hidden = (records[i].ssid[0] == '\0');
+                strncpy(st->scan_results[i].auth_name,
+                        eos_net_wifi_auth_name(st->scan_results[i].authmode),
+                        sizeof(st->scan_results[i].auth_name) - 1);
               }
             }
           }
@@ -385,11 +429,13 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         st->scan_results[0].rssi = -52;
         st->scan_results[0].channel = 1;
         st->scan_results[0].authmode = 3;
+        strncpy(st->scan_results[0].auth_name, "WPA2_PSK", sizeof(st->scan_results[0].auth_name) - 1);
 
         strncpy(st->scan_results[1].ssid, "EOS-Testbed", sizeof(st->scan_results[1].ssid) - 1);
         st->scan_results[1].rssi = -64;
         st->scan_results[1].channel = 6;
         st->scan_results[1].authmode = 3;
+        strncpy(st->scan_results[1].auth_name, "WPA2_PSK", sizeof(st->scan_results[1].auth_name) - 1);
       }
       EOS_LOGI("wifi: scan complete (external C6 controller), %u APs found", (unsigned)st->scan_count);
       return 0;

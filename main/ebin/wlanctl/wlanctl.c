@@ -13,44 +13,23 @@
 
 #define DEFAULT_WLAN_DEV "/dev/wifi0"
 
-static const char *s_auth_names[] = {
-    "OPEN", "WEP", "WPA_PSK", "WPA2_PSK", "WPA/WPA2", "WPA3_PSK", "WPA2/WPA3", "WAPI_PSK", "UNKNOWN"};
-
-static const char *get_auth_name(uint8_t authmode) {
-  if (authmode < sizeof(s_auth_names) / sizeof(s_auth_names[0]) - 1) {
-    return s_auth_names[authmode];
-  }
-  return "UNKNOWN";
-}
-
 static int open_wlan(const char *name) {
-  char path[32];
   if (!name || !name[0]) {
     name = "wifi0";
   }
+  char path[32];
   if (name[0] == '/') {
-    strncpy(path, name, sizeof(path) - 1);
+    snprintf(path, sizeof(path), "%s", name);
   } else {
     snprintf(path, sizeof(path), "/dev/%s", name);
   }
-  path[sizeof(path) - 1] = '\0';
-
-  int fd = open(path, O_RDWR);
-  if (fd < 0 && strstr(path, "wifi0") == NULL && strstr(path, "wifi") != NULL) {
-    snprintf(path, sizeof(path), "/dev/wifi0");
-    fd = open(path, O_RDWR);
-  }
-  if (fd < 0 && strcmp(path, "/dev/wifi0") == 0) {
-    snprintf(path, sizeof(path), "/dev/wifi");
-    fd = open(path, O_RDWR);
-  }
-  return fd;
+  return open(path, O_RDWR);
 }
 
 static void print_usage(void) {
   printf("Usage: wlanctl <command> [args...] [interface]\n\n"
          "Commands:\n"
-         "  radio on|off              Turn physical WLAN radio power on or off\n"
+         "  radio on|off|status       Turn physical WLAN radio power on or off, or query status\n"
          "  getmac [dev]              Display hardware/assigned MAC address\n"
          "  setmac <mac> [dev]        Set MAC address (format: XX:XX:XX:XX:XX:XX)\n"
          "  channel <1-13> [dev]      Set physical RF channel\n"
@@ -76,7 +55,7 @@ int wlanctl_main(int argc, char **argv) {
 
   if (strcmp(cmd, "radio") == 0) {
     if (argc < 3) {
-      fprintf(stderr, "Usage: wlanctl radio on|off [dev]\n");
+      fprintf(stderr, "Usage: wlanctl radio on|off|status [dev]\n");
       return 1;
     }
     const char *dev = (argc > 3) ? argv[3] : "wifi0";
@@ -84,6 +63,19 @@ int wlanctl_main(int argc, char **argv) {
     if (fd < 0) {
       perror("wlanctl: failed to open radio device");
       return 1;
+    }
+
+    if (strcmp(argv[2], "status") == 0) {
+      int power = 0;
+      if (ioctl(fd, EOS_RADIO_IOCTL_GET_POWER, &power) == 0) {
+        printf("%s: radio turned %s\n", dev, power ? "ON" : "OFF");
+        close(fd);
+        return 0;
+      } else {
+        perror("wlanctl: radio get power failed");
+        close(fd);
+        return 1;
+      }
     }
 
     int power = (strcmp(argv[2], "on") == 0) ? 1 : 0;
@@ -101,10 +93,6 @@ int wlanctl_main(int argc, char **argv) {
   if (strcmp(cmd, "getmac") == 0) {
     const char *dev = (argc > 2) ? argv[2] : "wifi0";
     int fd = open_wlan(dev);
-    if (fd < 0 && strcmp(dev, "wifi0") == 0) {
-      dev = "sta0";
-      fd = open_wlan(dev);
-    }
     if (fd < 0) {
       perror("wlanctl: failed to open device");
       return 1;
@@ -112,28 +100,15 @@ int wlanctl_main(int argc, char **argv) {
 
     uint8_t mac[6] = {0};
     if (ioctl(fd, EOS_NETIF_IOCTL_GET_MAC, mac) == 0) {
-      printf("%s: MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-             dev, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+      char mac_str[18];
+      eos_net_format_mac(mac, mac_str, sizeof(mac_str));
+      printf("%s: MAC address %s\n", dev, mac_str);
       close(fd);
       return 0;
     }
 
-    // Try fallback to sta0 if wifi0 failed
-    close(fd);
-    if (strcmp(dev, "wifi0") == 0) {
-      fd = open_wlan("sta0");
-      if (fd >= 0) {
-        if (ioctl(fd, EOS_NETIF_IOCTL_GET_MAC, mac) == 0) {
-          printf("sta0: MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
-                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-          close(fd);
-          return 0;
-        }
-        close(fd);
-      }
-    }
-
     perror("wlanctl: get MAC failed");
+    close(fd);
     return 1;
   }
 
@@ -144,15 +119,11 @@ int wlanctl_main(int argc, char **argv) {
     }
     const char *mac_str = argv[2];
     const char *dev = (argc > 3) ? argv[3] : "wifi0";
-    unsigned int m[6];
-    if (sscanf(mac_str, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6 &&
-        sscanf(mac_str, "%x-%x-%x-%x-%x-%x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6) {
+    uint8_t mac[6];
+    if (!eos_net_parse_mac(mac_str, mac)) {
       fprintf(stderr, "wlanctl: invalid MAC format (expected XX:XX:XX:XX:XX:XX)\n");
       return 1;
     }
-
-    uint8_t mac[6];
-    for (int i = 0; i < 6; i++) mac[i] = (uint8_t)m[i];
 
     int fd = open_wlan(dev);
     if (fd < 0) {
@@ -222,13 +193,7 @@ int wlanctl_main(int argc, char **argv) {
       return 1;
     }
 
-    eos_wifi_promisc_cfg_t pcfg = {
-        .enable = enable,
-        .filter_mgmt = true,
-        .filter_ctrl = true,
-        .filter_data = true,
-        .filter_misc = true,
-    };
+    eos_wifi_promisc_cfg_t pcfg = {.enable = enable};
     if (ioctl(fd, EOS_RADIO_IOCTL_SET_PROMISC, &pcfg) == 0) {
       printf("%s: 802.11 sniffer mode %s\n", dev, enable ? "enabled" : "disabled");
       close(fd);
@@ -250,13 +215,7 @@ int wlanctl_main(int argc, char **argv) {
       return 1;
     }
 
-    eos_wifi_promisc_cfg_t pcfg = {
-        .enable = true,
-        .filter_mgmt = true,
-        .filter_ctrl = true,
-        .filter_data = true,
-        .filter_misc = true,
-    };
+    eos_wifi_promisc_cfg_t pcfg = {.enable = true};
     ioctl(fd, EOS_RADIO_IOCTL_SET_PROMISC, &pcfg);
 
     printf("Capturing %d raw 802.11 frames from %s...\n\n", count, dev);
@@ -264,19 +223,15 @@ int wlanctl_main(int argc, char **argv) {
       eos_wifi_raw_packet_t pkt;
       ssize_t n = read(fd, &pkt, sizeof(pkt));
       if (n > 0) {
-        uint16_t fc = pkt.payload[0] | (pkt.payload[1] << 8);
-        uint8_t type = (fc >> 2) & 0x3;
-        uint8_t subtype = (fc >> 4) & 0xF;
-        const char *tname = (type == 0) ? "MGMT" : (type == 1) ? "CTRL" : (type == 2) ? "DATA" : "RESV";
-
         printf("[%2d] CH %2u | RSSI %4d dBm | Len %4u | %s (sub %u)\n",
-               i + 1, pkt.channel, pkt.rssi, pkt.length, tname, subtype);
-        if (pkt.length >= 16) {
-          printf("     Addr1: %02x:%02x:%02x:%02x:%02x:%02x  Addr2: %02x:%02x:%02x:%02x:%02x:%02x\n",
-                 pkt.payload[4], pkt.payload[5], pkt.payload[6],
-                 pkt.payload[7], pkt.payload[8], pkt.payload[9],
-                 pkt.payload[10], pkt.payload[11], pkt.payload[12],
-                 pkt.payload[13], pkt.payload[14], pkt.payload[15]);
+               i + 1, pkt.channel, pkt.rssi, pkt.length,
+               pkt.type_name[0] ? pkt.type_name : "UNKNOWN",
+               pkt.frame_subtype);
+        if (pkt.has_addrs) {
+          char a1[18], a2[18];
+          eos_net_format_mac(pkt.addr1, a1, sizeof(a1));
+          eos_net_format_mac(pkt.addr2, a2, sizeof(a2));
+          printf("     Addr1: %s  Addr2: %s\n", a1, a2);
         }
       } else {
         printf("[%2d] Timeout waiting for 802.11 packet\n", i + 1);
@@ -293,31 +248,21 @@ int wlanctl_main(int argc, char **argv) {
     }
     const char *hex = argv[2];
     const char *dev = (argc > 3) ? argv[3] : "wifi0";
-    size_t hex_len = strlen(hex);
-    if (hex_len % 2 != 0 || hex_len / 2 > 512) {
-      fprintf(stderr, "wlanctl: invalid hex string length\n");
-      return 1;
-    }
 
-    size_t byte_len = hex_len / 2;
-    uint8_t *buf = malloc(byte_len);
-    if (!buf) {
+    uint8_t buf[512];
+    ssize_t byte_len = eos_net_hex_to_bytes(hex, buf, sizeof(buf));
+    if (byte_len <= 0) {
+      fprintf(stderr, "wlanctl: invalid hex string (max 512 bytes)\n");
       return 1;
-    }
-    for (size_t i = 0; i < byte_len; i++) {
-      char byte_str[3] = {hex[i * 2], hex[i * 2 + 1], '\0'};
-      buf[i] = (uint8_t)strtoul(byte_str, NULL, 16);
     }
 
     int fd = open_wlan(dev);
     if (fd < 0) {
       perror("wlanctl: failed to open device");
-      free(buf);
       return 1;
     }
 
-    ssize_t sent = write(fd, buf, byte_len);
-    free(buf);
+    ssize_t sent = write(fd, buf, (size_t)byte_len);
     if (sent > 0) {
       printf("%s: transmitted %zd raw 802.11 bytes\n", dev, sent);
       close(fd);
@@ -350,12 +295,10 @@ int wlanctl_main(int argc, char **argv) {
       return 1;
     }
 
-    eos_wifi_scan_config_t scfg;
-    memset(&scfg, 0, sizeof(scfg));
-    scfg.mode = passive ? EOS_WIFI_SCAN_PASSIVE : EOS_WIFI_SCAN_ACTIVE;
-    scfg.channel = channel;
-    scfg.show_hidden = true;
-    scfg.dwell_time_ms = passive ? 200 : 120;
+    eos_wifi_scan_config_t scfg = {
+        .mode = passive ? EOS_WIFI_SCAN_PASSIVE : EOS_WIFI_SCAN_ACTIVE,
+        .channel = channel,
+    };
 
     printf("Scanning for WiFi networks (%s mode%s%d)...\n",
            passive ? "passive" : "active",
@@ -389,12 +332,12 @@ int wlanctl_main(int argc, char **argv) {
         printf("-----------------------------------------------------------------------\n");
         for (size_t i = 0; i < res.count; i++) {
           const char *ssid = res.aps[i].is_hidden ? "<hidden>" : res.aps[i].ssid;
-          printf("%-32s  %02x:%02x:%02x:%02x:%02x:%02x  %4d  %2u  %-12s\n",
-                 ssid,
-                 res.aps[i].bssid[0], res.aps[i].bssid[1], res.aps[i].bssid[2],
-                 res.aps[i].bssid[3], res.aps[i].bssid[4], res.aps[i].bssid[5],
+          char bssid_str[18];
+          eos_net_format_mac(res.aps[i].bssid, bssid_str, sizeof(bssid_str));
+          printf("%-32s  %-17s  %4d  %2u  %-12s\n",
+                 ssid, bssid_str,
                  res.aps[i].rssi, (unsigned)res.aps[i].channel,
-                 get_auth_name(res.aps[i].authmode));
+                 res.aps[i].auth_name[0] ? res.aps[i].auth_name : "UNKNOWN");
         }
         printf("\n");
         printf("SCAN_DONE:count=%zu\n", res.count);

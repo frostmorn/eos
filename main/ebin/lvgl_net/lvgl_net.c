@@ -746,9 +746,7 @@ static void net_render_active_tab(net_app_t *app) {
 
       for (int i = 0; i < app->ap_count; i++) {
         char badge[32];
-        const char *sec = (app->aps[i].authmode >= 4) ? "WPA3"
-                        : (app->aps[i].authmode >= 2 ? "WPA2"
-                        : (app->aps[i].authmode >= 1 ? "WEP" : "Open"));
+        const char *sec = eos_net_wifi_auth_name(app->aps[i].authmode);
         snprintf(badge, sizeof(badge), "%d dBm Ch%u %s",
                  (int)app->aps[i].rssi, (unsigned)app->aps[i].channel, sec);
         add_button_row(app, app->content_cont, app->aps[i].ssid, badge, COL_BG_CARD);

@@ -112,6 +112,7 @@ typedef struct {
   int8_t rssi;
   uint8_t channel;
   uint8_t authmode;
+  char auth_name[16];        // Authentication mode name populated by driver
   bool is_hidden;
 } eos_wifi_scan_ap_t;
 
@@ -129,6 +130,13 @@ typedef struct {
   uint8_t rate;             // PHY data rate
   uint8_t flags;            // Frame flags
   uint16_t length;          // Length of frame payload bytes
+  uint8_t frame_type;       // Decoded 802.11 frame type (0: MGMT, 1: CTRL, 2: DATA, 3: RESV)
+  uint8_t frame_subtype;    // Decoded 802.11 frame subtype
+  char type_name[8];        // Human-readable type ("MGMT", "CTRL", "DATA", "RESV")
+  uint8_t addr1[6];         // Destination / Receiver MAC address
+  uint8_t addr2[6];         // Source / Transmitter MAC address
+  uint8_t addr3[6];         // BSSID / Filtering MAC address
+  bool has_addrs;           // True if frame contains valid Addr1 and Addr2
   uint8_t payload[512];     // Raw 802.11 MAC frame (Frame Control, Addr1..4, body, etc.)
 } eos_wifi_raw_packet_t;
 
