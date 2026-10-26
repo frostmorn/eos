@@ -7,7 +7,7 @@
 #include <driver/gpio.h>
 #include <string.h>
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
 #if defined(__has_include)
@@ -33,12 +33,16 @@ static int s_chip_pu_pin = -1;
 
 void eos_net_wifi_set_chip_pu(int pin) {
   s_chip_pu_pin = pin;
+#if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
   if (pin >= 0) {
     gpio_reset_pin((gpio_num_t)pin);
     gpio_set_direction((gpio_num_t)pin, GPIO_MODE_OUTPUT);
     gpio_set_level((gpio_num_t)pin, 0); // Radio is OFF by default: keep external controller in reset
     EOS_LOGI("wifi: external controller (C6) chip_pu pin %d configured (LOW / reset)", pin);
   }
+#else
+  EOS_LOGI("wifi: external controller reset pin %d managed by esp_hosted", pin);
+#endif
 }
 
 int eos_net_wifi_get_chip_pu(void) {
@@ -57,7 +61,7 @@ static eos_sta_ap_info_t s_sta_ap_info = {0};
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data) {
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (event_base == WIFI_EVENT) {
     switch (event_id) {
       case WIFI_EVENT_STA_START:
@@ -97,6 +101,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         EOS_LOGI("wifi: station %02x:%02x:%02x:%02x:%02x:%02x left softAP (AID=%d)",
                  event->mac[0], event->mac[1], event->mac[2],
                  event->mac[3], event->mac[4], event->mac[5], event->aid);
+        break;
+      }
+      case WIFI_EVENT_SCAN_DONE: {
+        wifi_event_sta_scan_done_t *scan_evt = (wifi_event_sta_scan_done_t *)event_data;
+        EOS_LOGI("wifi: scan completed event received (status=%lu, ap_count=%u)",
+                 scan_evt ? scan_evt->status : 0, scan_evt ? scan_evt->number : 0);
+        if (s_wifi_event_group) {
+          xEventGroupSetBits(s_wifi_event_group, WIFI_SCAN_DONE_BIT);
+        }
         break;
       }
       default:
@@ -151,7 +164,7 @@ bool eos_net_ensure_init(void) {
     s_wifi_event_group = xEventGroupCreate();
   }
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   // 5. Register event handlers
   esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                       &wifi_event_handler, NULL, NULL);
@@ -168,7 +181,7 @@ bool eos_net_wifi_ensure_init(void) {
 
   if (!eos_net_ensure_init()) return false;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   esp_err_t ret = esp_wifi_init(&cfg);
   if (ret != ESP_OK) {
@@ -190,14 +203,20 @@ bool eos_net_wifi_is_radio_on(void) {
   return s_radio_on;
 }
 
+EventGroupHandle_t eos_net_get_wifi_event_group(void) {
+  return s_wifi_event_group;
+}
+
 int eos_net_wifi_radio_start(void) {
+#if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
   if (s_chip_pu_pin >= 0) {
     gpio_set_level((gpio_num_t)s_chip_pu_pin, 1);
     vTaskDelay(pdMS_TO_TICKS(10));
     EOS_LOGI("wifi: external controller (C6) powered ON (GPIO %d HIGH)", s_chip_pu_pin);
   }
+#endif
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (!eos_net_wifi_ensure_init()) return -1;
 
   if (!s_radio_on) {
@@ -217,12 +236,14 @@ int eos_net_wifi_radio_start(void) {
 }
 
 int eos_net_wifi_radio_stop(void) {
+#if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
   if (s_chip_pu_pin >= 0) {
     gpio_set_level((gpio_num_t)s_chip_pu_pin, 0);
     EOS_LOGI("wifi: external controller (C6) powered OFF (GPIO %d LOW)", s_chip_pu_pin);
   }
+#endif
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (s_radio_on) {
     esp_err_t err = esp_wifi_stop();
     if (err != ESP_OK) {
@@ -240,7 +261,7 @@ int eos_net_wifi_radio_stop(void) {
 }
 
 int eos_net_wifi_update_mode(void) {
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (!s_wifi_inited) return 0;
 
   wifi_mode_t target_mode = WIFI_MODE_NULL;
@@ -312,7 +333,7 @@ int eos_net_sta_wait_connect(uint32_t timeout_ms) {
 void eos_net_sta_get_connected_info(eos_sta_ap_info_t *out_info) {
   if (!out_info) return;
   *out_info = s_sta_ap_info;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (s_sta_connected) {
     wifi_ap_record_t rec;
     if (esp_wifi_sta_get_ap_info(&rec) == ESP_OK) {
@@ -356,7 +377,7 @@ bool eos_net_is_napt_enabled(void) {
 
 int eos_net_set_napt_enabled(bool enable) {
   s_napt_enabled = enable;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED && defined(IP_NAPT) && IP_NAPT
+#if EOS_HAVE_WIFI && defined(IP_NAPT) && IP_NAPT
   if (s_sta_netif) {
     esp_netif_ip_info_t ip_info;
     if (esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {

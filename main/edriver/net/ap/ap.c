@@ -12,7 +12,7 @@
 #include <esp_mac.h>
 #include <string.h>
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
 #endif
@@ -58,7 +58,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   // Initialize network stack
   eos_net_ensure_init();
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   // Create default WiFi softAP netif (do not start AP or DHCP server until brought UP)
   st->netif = esp_netif_create_default_wifi_ap();
   if (st->netif) {
@@ -99,7 +99,7 @@ void driver_net_ap_shutdown(eos_dev_t *dev) {
   if (!dev || !dev->state) return;
   ap_state_t *st = (ap_state_t *)dev->state;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   eos_net_ap_set_enabled(false);
   eos_net_wifi_update_mode();
   if (st->netif) {
@@ -171,7 +171,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
 
       if (st->is_up) {
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
         wifi_sta_list_t sta_list = {0};
         if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK && sta_list.num > 0) {
           info->flags |= EOS_NETIF_FLAG_LINK_UP;
@@ -197,7 +197,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       st->dhcps_enabled = true;
       eos_net_ap_set_enabled(true);
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       // Apply AP config before bringing interface up
       wifi_config_t wcfg = {0};
       strncpy((char *)wcfg.ap.ssid, st->ap_cfg.ssid, sizeof(wcfg.ap.ssid) - 1);
@@ -336,7 +336,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
       st->ap_cfg = *cfg;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       wifi_config_t wcfg = {0};
       strncpy((char *)wcfg.ap.ssid, cfg->ssid, sizeof(wcfg.ap.ssid) - 1);
       wcfg.ap.ssid_len = strlen(cfg->ssid);
@@ -373,7 +373,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (!list) return -1;
       memset(list, 0, sizeof(*list));
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       wifi_sta_list_t sta_list = {0};
       if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
         size_t count = (sta_list.num < 10) ? sta_list.num : 10;

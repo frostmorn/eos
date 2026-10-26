@@ -12,7 +12,7 @@
 #include <esp_mac.h>
 #include <string.h>
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
 #endif
@@ -51,7 +51,7 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   // Initialize network stack
   eos_net_ensure_init();
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   // Create default WiFi station netif
   st->netif = esp_netif_create_default_wifi_sta();
   if (st->netif) {
@@ -85,7 +85,7 @@ void driver_net_sta_shutdown(eos_dev_t *dev) {
   if (!dev || !dev->state) return;
   sta_state_t *st = (sta_state_t *)dev->state;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (eos_net_sta_is_connected()) {
     esp_wifi_disconnect();
   }
@@ -189,7 +189,7 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
 
     case EOS_NETIF_IOCTL_SET_DOWN: {
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (eos_net_sta_is_connected()) {
         esp_wifi_disconnect();
       }
@@ -332,7 +332,7 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       const eos_sta_connect_t *conn = va_arg(args, const eos_sta_connect_t *);
       if (!conn) return -1;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       // Bring up STA mode
       st->is_up = true;
       eos_net_sta_set_enabled(true);
@@ -403,7 +403,7 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
 
     case EOS_STA_IOCTL_DISCONNECT: {
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       esp_err_t err = esp_wifi_disconnect();
       return (err == ESP_OK) ? 0 : -1;
 #else

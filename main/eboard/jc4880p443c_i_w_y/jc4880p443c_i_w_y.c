@@ -68,14 +68,62 @@ void eos_board_init() {
 #endif
 #endif
 
+#ifdef EOS_DRV_BUS_SDIO_ENABLED
+  // ===================== SDIO Bus 0 (Slot 0 - MicroSD) =====================
+  // Slot 0 on ESP32-P4 uses IO MUX pins (CLK=43, CMD=44, D0=39, D1=40, D2=41, D3=42)
+  // Power is supplied via on-chip LDO channel 4 (ESP_LDO_VO4 -> TF_VCC)
+  eos_dev_t *sdio0 = eos_dev_alloc();
+  sdio0->driver = eos_drv_find("bus", "sdio");
+  sdio0->pins = (eos_pin_t[]){{"clk", 43},
+                              {"cmd", 44},
+                              {"d0", 39},
+                              {"d1", 40},
+                              {"d2", 41},
+                              {"d3", 42},
+                              {NULL, 0}};
+  sdio0->cfg = (eos_cfg_t[]){{"slot", EOS_CFG_INT, .val.i = 0},
+                             {"width", EOS_CFG_INT, .val.i = 4},
+                             {"freq_khz", EOS_CFG_INT, .val.i = 40000},
+                             {"ldo_chan", EOS_CFG_INT, .val.i = 4},
+                             {NULL}};
+  eos_dev_attach(sdio0, eos_devtree_root());
+
+#ifdef EOS_DRV_STORAGE_SD_ENABLED
+  // ===================== SD Card =====================
+  eos_dev_t *sd = eos_dev_alloc();
+  sd->driver = eos_drv_find("storage", "sd");
+  sd->cfg = (eos_cfg_t[]){{"clock_speed_hz", EOS_CFG_INT, .val.i = 40000000},
+                          {NULL}};
+  eos_dev_attach(sd, sdio0);
+#endif
+
+  // ===================== SDIO Bus 1 (Slot 1 - ESP32-C6 WiFi) =====================
+  // Slot 1 connects to the onboard ESP32-C6 wireless co-processor:
+  // CLK=18, CMD=19, D0=14, D1=15, D2=16, D3=17, C6_CHIP_PU=54
+  eos_dev_t *sdio1 = eos_dev_alloc();
+  sdio1->driver = eos_drv_find("bus", "sdio");
+  sdio1->pins = (eos_pin_t[]){{"clk", 18},
+                              {"cmd", 19},
+                              {"d0", 14},
+                              {"d1", 15},
+                              {"d2", 16},
+                              {"d3", 17},
+                              {"rst", 54},
+                              {NULL, 0}};
+  sdio1->cfg = (eos_cfg_t[]){{"slot", EOS_CFG_INT, .val.i = 1},
+                             {"width", EOS_CFG_INT, .val.i = 4},
+                             {"freq_khz", EOS_CFG_INT, .val.i = 40000},
+                             {"lazy_slot", EOS_CFG_INT, .val.i = 1},
+                             {NULL}};
+  eos_dev_attach(sdio1, eos_devtree_root());
+
 #ifdef EOS_DRV_NET_WIFI_ENABLED
   // ===================== WiFi Radio =====================
-  // Guition JC4880P443C uses an external ESP32-C6 coprocessor connected over
-  // SDIO (GPIO 14-19) with C6_CHIP_PU hardware reset control on GPIO 54.
+  // Guition JC4880P443C uses an external ESP32-C6 coprocessor connected over SDIO (Slot 1)
   eos_dev_t *wifi = eos_dev_alloc();
   wifi->driver = eos_drv_find("net", "wifi");
   wifi->pins = (eos_pin_t[]){{"chip_pu", 54}, {NULL, 0}};
-  eos_dev_attach(wifi, eos_devtree_root());
+  eos_dev_attach(wifi, sdio1);
 
 #ifdef EOS_DRV_NET_STA_ENABLED
   // ===================== WiFi Station ===================
@@ -91,6 +139,30 @@ void eos_board_init() {
   eos_dev_attach(ap, wifi);
 #endif
 #endif
+
+#else // !EOS_DRV_BUS_SDIO_ENABLED
+
+#ifdef EOS_DRV_NET_WIFI_ENABLED
+  // Fallback direct attach if SDIO driver disabled
+  eos_dev_t *wifi = eos_dev_alloc();
+  wifi->driver = eos_drv_find("net", "wifi");
+  wifi->pins = (eos_pin_t[]){{"chip_pu", 54}, {NULL, 0}};
+  eos_dev_attach(wifi, eos_devtree_root());
+
+#ifdef EOS_DRV_NET_STA_ENABLED
+  eos_dev_t *sta = eos_dev_alloc();
+  sta->driver = eos_drv_find("net", "sta");
+  eos_dev_attach(sta, wifi);
+#endif
+
+#ifdef EOS_DRV_NET_AP_ENABLED
+  eos_dev_t *ap = eos_dev_alloc();
+  ap->driver = eos_drv_find("net", "ap");
+  eos_dev_attach(ap, wifi);
+#endif
+#endif
+
+#endif // EOS_DRV_BUS_SDIO_ENABLED
 
   /*
   // ===================== I2C bus =====================

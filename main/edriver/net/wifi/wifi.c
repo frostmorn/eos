@@ -13,7 +13,7 @@
 #include <freertos/semphr.h>
 #include <string.h>
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
 #include <esp_wifi.h>
 #endif
 
@@ -38,7 +38,7 @@ typedef struct {
 
 static wifi_radio_state_t *s_radio_state = NULL;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
 static void IRAM_ATTR wifi_promisc_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
   if (!s_radio_state || !s_radio_state->promisc_enabled) return;
 
@@ -125,6 +125,9 @@ bool driver_net_wifi_init(eos_dev_t *dev) {
 
   int chip_pu = eos_pin_get_no(dev->pins, "chip_pu");
   if (chip_pu < 0) chip_pu = eos_pin_get_no(dev->pins, "rst");
+  if (chip_pu < 0 && dev->parent) {
+    chip_pu = eos_pin_get_no(dev->parent->pins, "rst");
+  }
   if (chip_pu >= 0) {
     st->chip_pu_pin = chip_pu;
     eos_net_wifi_set_chip_pu(chip_pu);
@@ -149,7 +152,7 @@ void driver_net_wifi_shutdown(eos_dev_t *dev) {
     eos_net_wifi_set_chip_pu(-1);
   }
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (st->promisc_enabled) {
     esp_wifi_set_promiscuous(false);
   }
@@ -232,7 +235,7 @@ ssize_t driver_net_wifi_write(eos_dev_t *dev, int fd, const void *data, size_t s
     return -1;
   }
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
   if (!eos_net_wifi_is_radio_on()) {
     eos_net_wifi_radio_start();
   }
@@ -274,7 +277,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       uint8_t ch = (uint8_t)va_arg(args, int);
       if (ch < 1 || ch > 14) return -1;
       st->channel = ch;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (eos_net_wifi_is_radio_on()) {
         esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
       }
@@ -284,7 +287,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_RADIO_IOCTL_GET_CHANNEL: {
       uint8_t *out_ch = va_arg(args, uint8_t *);
       if (!out_ch) return -1;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (eos_net_wifi_is_radio_on()) {
         wifi_second_chan_t second;
         esp_wifi_get_channel(out_ch, &second);
@@ -298,7 +301,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_RADIO_IOCTL_SET_TX_POWER: {
       int8_t pwr = (int8_t)va_arg(args, int);
       st->tx_power = pwr;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       // ESP-IDF takes power in 0.25 dBm units (e.g. 80 = 20 dBm)
       int8_t idf_power = pwr * 4;
       esp_wifi_set_max_tx_power(idf_power);
@@ -308,7 +311,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_RADIO_IOCTL_GET_TX_POWER: {
       int8_t *out_pwr = va_arg(args, int8_t *);
       if (!out_pwr) return -1;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       int8_t idf_pwr = 0;
       if (esp_wifi_get_max_tx_power(&idf_pwr) == ESP_OK) {
         *out_pwr = idf_pwr / 4;
@@ -324,7 +327,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (!cc) return -1;
       strncpy(st->country, cc, 2);
       st->country[2] = '\0';
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       wifi_country_t country = {0};
       memcpy(country.cc, st->country, 2);
       country.schan = 1;
@@ -343,7 +346,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
     case EOS_RADIO_IOCTL_SCAN_START: {
       const eos_wifi_scan_config_t *scan_cfg = va_arg(args, const eos_wifi_scan_config_t *);
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (!eos_net_wifi_ensure_init()) return -1;
 
       wifi_mode_t cur_mode = WIFI_MODE_NULL;
@@ -356,33 +359,48 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         eos_net_wifi_radio_start();
       }
 
+      wifi_scan_config_t *p_scfg = NULL;
       wifi_scan_config_t scfg = {0};
-      scfg.show_hidden = scan_cfg ? scan_cfg->show_hidden : true;
-      scfg.channel = scan_cfg ? scan_cfg->channel : 0;
-      scfg.scan_type = (scan_cfg && scan_cfg->mode == EOS_WIFI_SCAN_PASSIVE)
-                           ? WIFI_SCAN_TYPE_PASSIVE
-                           : WIFI_SCAN_TYPE_ACTIVE;
-
-      uint16_t dwell = (scan_cfg && scan_cfg->dwell_time_ms > 0) ? scan_cfg->dwell_time_ms : 120;
-      if (scfg.scan_type == WIFI_SCAN_TYPE_PASSIVE) {
-        scfg.scan_time.passive = dwell;
-      } else {
-        scfg.scan_time.active.min = dwell / 2;
-        scfg.scan_time.active.max = dwell;
+      if (scan_cfg && (scan_cfg->channel > 0 || scan_cfg->mode != 0)) {
+        scfg.show_hidden = scan_cfg->show_hidden;
+        scfg.channel = scan_cfg->channel;
+        scfg.scan_type = (scan_cfg->mode == EOS_WIFI_SCAN_PASSIVE)
+                             ? WIFI_SCAN_TYPE_PASSIVE
+                             : WIFI_SCAN_TYPE_ACTIVE;
+        uint16_t dwell = (scan_cfg->dwell_time_ms > 0) ? scan_cfg->dwell_time_ms : 120;
+        if (scfg.scan_type == WIFI_SCAN_TYPE_PASSIVE) {
+          scfg.scan_time.passive = dwell;
+        } else {
+          scfg.scan_time.active.min = dwell / 2;
+          scfg.scan_time.active.max = dwell;
+        }
+        p_scfg = &scfg;
       }
 
-      EOS_LOGI("wifi: starting %s WiFi scan (channel=%d, dwell=%dms)",
-               scfg.scan_type == WIFI_SCAN_TYPE_PASSIVE ? "passive" : "active",
-               scfg.channel, dwell);
+      EOS_LOGI("wifi: starting WiFi scan...");
 
-      esp_err_t err = esp_wifi_scan_start(&scfg, true); // Blocking scan
+      EventGroupHandle_t evg = eos_net_get_wifi_event_group();
+      if (evg) {
+        xEventGroupClearBits(evg, WIFI_SCAN_DONE_BIT);
+      }
+
+      esp_err_t err = esp_wifi_scan_start(p_scfg, false);
       if (err != ESP_OK) {
-        EOS_LOGE("wifi: scan start failed: %s", esp_err_to_name(err));
-        return -1;
+        EOS_LOGW("wifi: async scan start failed (%s), trying blocking scan...", esp_err_to_name(err));
+        err = esp_wifi_scan_start(p_scfg, true);
+        if (err != ESP_OK) {
+          EOS_LOGE("wifi: scan start failed: %s", esp_err_to_name(err));
+          return -1;
+        }
+      } else if (evg) {
+        EOS_LOGI("wifi: waiting for scan completion...");
+        xEventGroupWaitBits(evg, WIFI_SCAN_DONE_BIT, pdTRUE, pdFALSE, pdMS_TO_TICKS(10000));
       }
 
       uint16_t ap_count = 0;
-      esp_wifi_scan_get_ap_num(&ap_count);
+      esp_err_t num_err = esp_wifi_scan_get_ap_num(&ap_count);
+      EOS_LOGI("wifi: esp_wifi_scan_get_ap_num returned %s, ap_count=%u",
+               esp_err_to_name(num_err), (unsigned)ap_count);
 
       if (st->scan_results) {
         free(st->scan_results);
@@ -394,7 +412,8 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         wifi_ap_record_t *records = malloc(ap_count * sizeof(wifi_ap_record_t));
         if (records) {
           uint16_t fetched = ap_count;
-          if (esp_wifi_scan_get_ap_records(&fetched, records) == ESP_OK) {
+          esp_err_t rec_err = esp_wifi_scan_get_ap_records(&fetched, records);
+          if (rec_err == ESP_OK) {
             st->scan_results = malloc(fetched * sizeof(eos_wifi_scan_ap_t));
             if (st->scan_results) {
               st->scan_count = fetched;
@@ -411,6 +430,8 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
                         sizeof(st->scan_results[i].auth_name) - 1);
               }
             }
+          } else {
+            EOS_LOGE("wifi: esp_wifi_scan_get_ap_records failed: %s", esp_err_to_name(rec_err));
           }
           free(records);
         }
@@ -421,23 +442,12 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (!eos_net_wifi_is_radio_on()) {
         eos_net_wifi_radio_start();
       }
-      if (st->scan_results) free(st->scan_results);
-      st->scan_count = 2;
-      st->scan_results = calloc(st->scan_count, sizeof(eos_wifi_scan_ap_t));
       if (st->scan_results) {
-        strncpy(st->scan_results[0].ssid, "JC-C6-Gateway", sizeof(st->scan_results[0].ssid) - 1);
-        st->scan_results[0].rssi = -52;
-        st->scan_results[0].channel = 1;
-        st->scan_results[0].authmode = 3;
-        strncpy(st->scan_results[0].auth_name, "WPA2_PSK", sizeof(st->scan_results[0].auth_name) - 1);
-
-        strncpy(st->scan_results[1].ssid, "EOS-Testbed", sizeof(st->scan_results[1].ssid) - 1);
-        st->scan_results[1].rssi = -64;
-        st->scan_results[1].channel = 6;
-        st->scan_results[1].authmode = 3;
-        strncpy(st->scan_results[1].auth_name, "WPA2_PSK", sizeof(st->scan_results[1].auth_name) - 1);
+        free(st->scan_results);
+        st->scan_results = NULL;
       }
-      EOS_LOGI("wifi: scan complete (external C6 controller), %u APs found", (unsigned)st->scan_count);
+      st->scan_count = 0;
+      EOS_LOGI("wifi: scan complete, %u APs found", (unsigned)st->scan_count);
       return 0;
 #endif
     }
@@ -464,7 +474,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       st->promisc_cfg = *cfg;
       st->promisc_enabled = cfg->enable;
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (!eos_net_wifi_is_radio_on() && cfg->enable) {
         eos_net_wifi_radio_start();
       }
@@ -516,7 +526,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_GET_MAC: {
       uint8_t *out_mac = va_arg(args, uint8_t *);
       if (!out_mac) return -1;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       if (esp_wifi_get_mac(WIFI_IF_STA, out_mac) == ESP_OK) {
         if (out_mac[0] || out_mac[1] || out_mac[2] || out_mac[3] || out_mac[4] || out_mac[5]) {
           return 0;
@@ -534,7 +544,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_SET_MAC: {
       const uint8_t *mac = va_arg(args, const uint8_t *);
       if (!mac) return -1;
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if EOS_HAVE_WIFI
       return esp_wifi_set_mac(WIFI_IF_STA, (uint8_t *)mac) == ESP_OK ? 0 : -1;
 #else
       return -1;

@@ -6,14 +6,20 @@
 #include "ecore/netif.h"
 #include <esp_netif.h>
 
-#if defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED
+#if (defined(CONFIG_SOC_WIFI_SUPPORTED) && CONFIG_SOC_WIFI_SUPPORTED) || \
+    (defined(CONFIG_ESP_WIFI_REMOTE_ENABLED) && CONFIG_ESP_WIFI_REMOTE_ENABLED)
+#define EOS_HAVE_WIFI 1
 #include <esp_wifi.h>
 #include <esp_wifi_default.h>
+#else
+#define EOS_HAVE_WIFI 0
 #endif
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+#define WIFI_SCAN_DONE_BIT BIT2
+
+EventGroupHandle_t eos_net_get_wifi_event_group(void);
 
 // Initialize core TCP/IP stack (NVS, esp_netif, default event loop)
 bool eos_net_ensure_init(void);

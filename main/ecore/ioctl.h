@@ -30,6 +30,21 @@ typedef struct {
   int timeout_ms;         // Timeout per address probe in milliseconds
 } eos_i2c_scan_t;
 
+typedef struct {
+  uint32_t function;
+  uint32_t reg;
+  uint8_t write_val;
+  uint8_t read_val;
+} eos_sdio_cmd52_t;
+
+typedef struct {
+  uint32_t function;
+  uint32_t addr;
+  void *buf;
+  size_t len;
+  bool fixed_addr;
+} eos_sdio_cmd53_t;
+
 //=====================================================
 // ioctl call table
 // IOCTL CODE, ARGS
@@ -117,6 +132,21 @@ typedef enum {
   EOS_I2C_IOCTL_SET_SCL,          // int pinNo (-1 to release)
   EOS_I2C_IOCTL_SET_PINS,         // int sda_pin, int scl_pin (-1 to release)
   EOS_I2C_IOCTL_GET_PINS,         // int *out_sda, int *out_scl
+
+  //=====================================================
+  // edriver/bus/sdio
+  //=====================================================
+  EOS_SDIO_IOCTL_GET_HOST,        // void * (sdmmc_host_t *)
+  EOS_SDIO_IOCTL_GET_SLOT,        // int *slot
+  EOS_SDIO_IOCTL_SET_CLOCK_HZ,    // uint32_t freq_hz
+  EOS_SDIO_IOCTL_SET_BUS_WIDTH,   // uint32_t width (1, 4, 8)
+  EOS_SDIO_IOCTL_RESET,           // no args
+  EOS_SDIO_IOCTL_IO_READ_BYTE,    // eos_sdio_cmd52_t *cmd
+  EOS_SDIO_IOCTL_IO_WRITE_BYTE,   // eos_sdio_cmd52_t *cmd
+  EOS_SDIO_IOCTL_IO_READ_BYTES,   // eos_sdio_cmd53_t *cmd
+  EOS_SDIO_IOCTL_IO_WRITE_BYTES,  // eos_sdio_cmd53_t *cmd
+  EOS_SDIO_IOCTL_GET_CARD,        // void ** (sdmmc_card_t **)
+  EOS_SDIO_IOCTL_PROBE_CARD,      // void * (sdmmc_card_t *)
 
   //=====================================================
   // edriver/dispay

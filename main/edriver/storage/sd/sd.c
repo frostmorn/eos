@@ -9,6 +9,8 @@
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "ecore/log.h"
+#include "edriver/bus/sdio/sdio.h"
 
 #include <errno.h>
 
@@ -19,6 +21,7 @@
 typedef struct {
   sdmmc_card_t card;
   char *io_buff;
+  bool is_sdio;
   sdspi_dev_handle_t handle;
   spi_host_device_t host;
   eos_part_table_t part_table;
@@ -36,36 +39,75 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
   memset(state, 0, sizeof(sd_state_t));
   dev->state = state;
 
-  int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
-  if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
-    dev->state = NULL;
-    free(state);
-    return false;
+  bool is_sdio = false;
+  if (dev->parent && dev->parent->driver &&
+      strcmp(dev->parent->driver->scope, "bus") == 0 &&
+      strcmp(dev->parent->driver->name, "sdio") == 0) {
+    is_sdio = true;
   }
+  state->is_sdio = is_sdio;
 
-  state->host =
-      (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+  if (is_sdio) {
+#if SOC_SDMMC_HOST_SUPPORTED
+    sdmmc_host_t host_cfg = (sdmmc_host_t)SDMMC_HOST_DEFAULT();
+    int slot = eos_cfg_get_i(dev->parent->cfg, "slot", 0);
+    host_cfg.slot = slot;
 
-  int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_20M);
+    int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", 40000000);
+    if (freq > 0) {
+      host_cfg.max_freq_khz = freq / 1000;
+    }
 
-  // Add SD card as SPI device
-  sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
-  dev_cfg.host_id = state->host;
-  dev_cfg.gpio_cs = cs_pin;
+    if (dev->parent->state) {
+      sdio_state_t *sdio_st = (sdio_state_t *)dev->parent->state;
+      host_cfg = sdio_st->host_cfg;
+      if (freq > 0) {
+        host_cfg.max_freq_khz = freq / 1000;
+      }
+    }
 
-  if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
+    if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
+      EOS_LOGW("sd: card initialization over SDIO (slot %d) failed", slot);
+      driver_storage_sd_shutdown(dev);
+      return false;
+    }
+#else
+    EOS_LOGE("sd: SDMMC host not supported on this SoC");
     driver_storage_sd_shutdown(dev);
     return false;
-  }
+#endif
+  } else {
+    int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
+    if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
+      dev->state = NULL;
+      free(state);
+      return false;
+    }
 
-  // Probe card
-  sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
-  host_cfg.slot = state->handle;
-  host_cfg.max_freq_khz = freq / 1000;
+    state->host =
+        (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
 
-  if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
-    driver_storage_sd_shutdown(dev);
-    return false;
+    int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_20M);
+
+    // Add SD card as SPI device
+    sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+    dev_cfg.host_id = state->host;
+    dev_cfg.gpio_cs = cs_pin;
+
+    if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
+      driver_storage_sd_shutdown(dev);
+      return false;
+    }
+
+    // Probe card
+    sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
+    host_cfg.slot = state->handle;
+    host_cfg.max_freq_khz = freq / 1000;
+
+    if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
+      driver_storage_sd_shutdown(dev);
+      return false;
+    }
   }
 
   // Allocate file buffer
@@ -128,12 +170,14 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
   if (!state)
     return;
 
-  if (state->handle)
-    sdspi_host_remove_device(state->handle);
+  if (!state->is_sdio) {
+    if (state->handle)
+      sdspi_host_remove_device(state->handle);
 
-  int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
-  if (cs_pin >= 0)
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
+    if (cs_pin >= 0)
+      eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+  }
 
   // Cleanup
   if (state->io_buff)

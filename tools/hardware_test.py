@@ -110,8 +110,11 @@ class EOSTestHarness:
         self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+input[\s\S]+net[\s\S]+storage")
         self.check(suite, "Driver table headers", "cat /proc/drivers", r"SCOPE\s+NAME\s+DEVNAME\s+FLAGS")
         self.check(suite, "Net drivers in /proc/drivers", "cat /proc/drivers", r"net\s+ap[\s\S]+net\s+sta[\s\S]+net\s+wifi")
+        self.check(suite, "SDIO driver in /proc/drivers", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
+        self.check(suite, "SD driver in /proc/drivers", "cat /proc/drivers", r"storage\s+sd\s+sd")
         self.check(suite, "Virtual bridge driver in /proc/drivers", "cat /proc/drivers", r"net\s+bridge\s+br")
         self.check(suite, "Device tree /proc/devices has net interfaces", "cat /proc/devices", r"wifi0[\s\S]+sta0[\s\S]+ap0")
+        self.check(suite, "Device tree /proc/devices has SDIO and SD interfaces", "cat /proc/devices", r"sdio0[\s\S]+sd0[\s\S]+sdio1")
         self.check(suite, "Memory stats in /proc/meminfo", "cat /proc/meminfo", r"MemFree:\s+\d+\s+kB")
         self.check(suite, "SPIRAM stats in /proc/meminfo", "cat /proc/meminfo", r"(SPIRAMFree|MemFree):\s+\d+\s+kB")
         self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"(/proc|/dev|/spiffs)")
@@ -190,8 +193,12 @@ class EOSTestHarness:
         self.check(suite, "devctl usage / help", "devctl", r"Usage:\s+devctl\s+<command>")
         self.check(suite, "devctl scopes", "devctl scopes", r"Driver Scopes:[\s\S]+net")
         self.check(suite, "devctl drivers (all)", "devctl drivers", r"net\s+bridge")
+        self.check(suite, "devctl drivers bus filter has sdio", "devctl drivers bus", r"bus\s+sdio")
+        self.check(suite, "devctl drivers storage filter has sd", "devctl drivers storage", r"storage\s+sd")
         self.check(suite, "devctl drivers net (scoped filter)", "devctl drivers net", r"net\s+sta", not_pattern=r"storage\s+flash")
         self.check(suite, "devctl devices listing", "devctl devices", r"wifi0\s+net/wifi")
+        self.check(suite, "devctl devices lists sdio0 and sd0", "devctl devices", r"sdio0\s+bus/sdio[\s\S]+sd0\s+storage/sd")
+        self.check(suite, "devctl devices lists sdio1 and wifi0", "devctl devices", r"sdio1\s+bus/sdio[\s\S]+wifi0\s+net/wifi")
         self.check(suite, "devctl attach net bridge", "devctl attach net bridge", r"Attached net/bridge as /dev/br0")
         self.check(suite, "Verify br0 appears in /proc/devices", "cat /proc/devices", r"br0\s+net/bridge")
         self.check(suite, "devctl detach br0", "devctl detach br0", r"Detached /dev/br0")
@@ -210,7 +217,8 @@ class EOSTestHarness:
         self.check(suite, "wlanctl verify channel 6", "wlanctl channel", r"channel 6")
         self.check(suite, "wlanctl channel set 11", "wlanctl channel 11", r"channel set to 11")
         self.check(suite, "wlanctl verify channel 11", "wlanctl channel", r"channel 11")
-        self.check(suite, "wlanctl scan executes without error", "wlanctl scan", r"(SCAN_DONE|Found \d+ access point)", wait=3.0)
+        self.check(suite, "wlanctl scan executes without error", "wlanctl scan", r"(SCAN_DONE|Found \d+ access point)",
+                   wait=3.0, not_pattern=r"(JC-C6-Gateway|EOS-Testbed)")
         self.check(suite, "wlanctl sniffer on", "wlanctl sniffer on", r"sniffer mode enabled")
         self.check(suite, "wlanctl dump 3 captures frames or handles timeout", "wlanctl dump 3",
                    r"(Capturing 3 raw 802.11 frames|Timeout waiting for 802.11 packet|MGMT|DATA)", wait=2.5)
@@ -263,6 +271,21 @@ class EOSTestHarness:
         self.check(suite, "netctl br0 status shows no ports after del", "netctl br0 status", r"ports: \[none\]")
         self.check(suite, "devctl detach br0 cleanup", "devctl detach br0", r"Detached /dev/br0")
 
+    def test_sdio(self):
+        suite = "sdio"
+        print(f"\n{Colors.BOLD}=== 5. Generic SDIO Driver & Hardware Attachment Tests ==={Colors.RESET}")
+        self.check(suite, "SDIO bus driver registered", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
+        self.check(suite, "SD storage driver registered", "cat /proc/drivers", r"storage\s+sd\s+sd")
+        self.check(suite, "SDIO Slot 0 device node in /dev", "ls /dev", r"sdio0")
+        self.check(suite, "SDIO Slot 1 device node in /dev", "ls /dev", r"sdio1")
+        self.check(suite, "SD storage device node in /dev", "ls /dev", r"sd0")
+        self.check(suite, "SDIO Slot 0 in /proc/devices", "cat /proc/devices", r"sdio0\s+bus/sdio")
+        self.check(suite, "SDIO Slot 1 in /proc/devices", "cat /proc/devices", r"sdio1\s+bus/sdio")
+        self.check(suite, "SD card attached to sdio0 parent", "cat /proc/devices", r"sd0\s+storage/sd\s+sdio0")
+        self.check(suite, "WiFi radio attached to sdio1 parent", "cat /proc/devices", r"wifi0\s+net/wifi\s+sdio1")
+        self.check(suite, "devctl reports sdio0", "devctl devices", r"sdio0\s+bus/sdio")
+        self.check(suite, "devctl reports sdio1", "devctl devices", r"sdio1\s+bus/sdio")
+
     def test_gui_launcher(self):
         suite = "gui"
         print(f"\n{Colors.BOLD}=== 6. GUI Launcher & lvgl_net IPC Tests ==={Colors.RESET}")
@@ -301,7 +324,7 @@ def main():
     parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "gui"],
+    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui"],
                         default="all", help="Test suite to execute (default: all)")
     args = parser.parse_args()
 
@@ -318,6 +341,8 @@ def main():
             harness.test_wlanctl()
         if args.suite in ("all", "netctl"):
             harness.test_netctl()
+        if args.suite in ("all", "sdio"):
+            harness.test_sdio()
         if args.suite in ("all", "gui"):
             harness.test_gui_launcher()
         return harness.print_summary()

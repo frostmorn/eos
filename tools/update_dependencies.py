@@ -100,6 +100,34 @@ def collect_driver_dependencies(enabled_macros):
     return merged_deps
 
 
+def collect_board_dependencies(board):
+    if not board:
+        return {}
+    bdir = os.path.join(BOARD_ROOT, board)
+    if not os.path.isdir(bdir):
+        return {}
+
+    merged_deps = {}
+    manifest_candidates = [
+        os.path.join(bdir, "idf_component.yml"),
+        os.path.join(bdir, "dependencies.yml"),
+    ]
+    for mpath in manifest_candidates:
+        if os.path.exists(mpath):
+            try:
+                with open(mpath, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                if isinstance(data, dict) and "dependencies" in data:
+                    deps = data["dependencies"]
+                    if isinstance(deps, dict):
+                        for dep_name, dep_spec in deps.items():
+                            merged_deps[dep_name] = dep_spec
+            except Exception as e:
+                print(f"[update_dependencies] Warning: Failed to parse board manifest {mpath}: {e}")
+            break
+    return merged_deps
+
+
 def update_dependencies(board=None):
     if not board:
         sdkconfig_path = os.path.join(ROOT_DIR, "sdkconfig")
@@ -111,6 +139,9 @@ def update_dependencies(board=None):
 
     enabled_macros = get_enabled_driver_macros(board)
     merged_deps = collect_driver_dependencies(enabled_macros)
+    board_deps = collect_board_dependencies(board)
+    for dep_name, dep_spec in board_deps.items():
+        merged_deps[dep_name] = dep_spec
 
     if merged_deps:
         header = (
