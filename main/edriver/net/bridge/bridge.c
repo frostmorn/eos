@@ -1,14 +1,22 @@
 #include "includes.h"
 #ifdef EOS_DRV_NET_BRIDGE_ENABLED
 
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "ecore/net_common.h"
 
 #include <errno.h>
 #include <string.h>
+
+static int bridge_set_napt(bool enable) {
+  eos_dev_t *wdev = eos_dev_find_by_name("wifi0");
+  if (wdev) {
+    return eos_dev_ioctl_call(wdev, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_NAPT, enable);
+  }
+  return 0;
+}
 
 #define BRIDGE_MAX_PORTS 8
 
@@ -43,7 +51,7 @@ void driver_net_bridge_shutdown(eos_dev_t *dev) {
   bridge_state_t *st = (bridge_state_t *)dev->state;
 
   if (st->napt_enabled) {
-    eos_net_set_napt_enabled(false);
+    bridge_set_napt(false);
   }
 
   free(st);
@@ -96,7 +104,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_SET_UP: {
       st->is_up = true;
       if (st->napt_enabled) {
-        eos_net_set_napt_enabled(true);
+        bridge_set_napt(true);
       }
       EOS_LOGI("bridge: %s set to UP", dev->name[0] ? dev->name : "br0");
       return 0;
@@ -105,7 +113,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_SET_DOWN: {
       st->is_up = false;
       if (st->napt_enabled) {
-        eos_net_set_napt_enabled(false);
+        bridge_set_napt(false);
       }
       EOS_LOGI("bridge: %s set to DOWN", dev->name[0] ? dev->name : "br0");
       return 0;
@@ -157,7 +165,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
       if (has_uplink && has_downlink) {
         st->napt_enabled = true;
-        eos_net_set_napt_enabled(true);
+        bridge_set_napt(true);
       }
 
       EOS_LOGI("bridge: attached port \"%s\" to %s (total ports: %d)",
@@ -195,7 +203,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
       if (!has_uplink || !has_downlink) {
         st->napt_enabled = false;
-        eos_net_set_napt_enabled(false);
+        bridge_set_napt(false);
       }
 
       EOS_LOGI("bridge: removed port \"%s\" from %s",
@@ -220,7 +228,7 @@ int driver_net_bridge_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_BRIDGE_SET_NAPT: {
       bool enable = (bool)va_arg(args, int);
       st->napt_enabled = enable;
-      return eos_net_set_napt_enabled(enable);
+      return bridge_set_napt(enable);
     }
 
     default:

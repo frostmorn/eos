@@ -6,8 +6,6 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <esp_heap_caps.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
@@ -39,7 +37,7 @@ static void test_colors(int fd) {
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Red");
   }
-  vTaskDelay(pdMS_TO_TICKS(500));
+  usleep(500 * 1000);
 
   // Green
   for (int i = 0; i < w * h; i++)
@@ -47,7 +45,7 @@ static void test_colors(int fd) {
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Green");
   }
-  vTaskDelay(pdMS_TO_TICKS(500));
+  usleep(500 * 1000);
 
   // Blue
   for (int i = 0; i < w * h; i++)
@@ -55,7 +53,7 @@ static void test_colors(int fd) {
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Blue");
   }
-  vTaskDelay(pdMS_TO_TICKS(500));
+  usleep(500 * 1000);
 
   // Gradient
   for (int y = 0; y < h; y++)
@@ -64,7 +62,7 @@ static void test_colors(int fd) {
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Gradient");
   }
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  usleep(1000 * 1000);
 
   free(buf);
 }

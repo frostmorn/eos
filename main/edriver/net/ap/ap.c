@@ -1,15 +1,16 @@
 #include "includes.h"
 #ifdef EOS_DRV_NET_AP_ENABLED
 
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "ecore/net_common.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <esp_mac.h>
+#include <esp_netif.h>
 #include <string.h>
 
 #if EOS_HAVE_WIFI
@@ -53,10 +54,11 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   st->ap_cfg.ssid_hidden = false;
 
   dev->state = st;
-  eos_net_set_ap_dev(dev);
 
-  // Initialize network stack
-  eos_net_ensure_init();
+  // Initialize network stack via parent
+  if (dev->parent) {
+    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_ENSURE_INIT);
+  }
 
 #if EOS_HAVE_WIFI
   // Create default WiFi softAP netif (do not start AP or DHCP server until brought UP)
@@ -64,7 +66,6 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
     esp_netif_dhcps_stop(st->netif);
-    eos_net_set_ap_netif(st->netif);
   }
 #else
   esp_netif_ip_info_t ap_ip_info = {0};
@@ -87,7 +88,6 @@ bool driver_net_ap_init(eos_dev_t *dev) {
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
     esp_netif_dhcps_stop(st->netif);
-    eos_net_set_ap_netif(st->netif);
   }
 #endif
 
@@ -100,8 +100,9 @@ void driver_net_ap_shutdown(eos_dev_t *dev) {
   ap_state_t *st = (ap_state_t *)dev->state;
 
 #if EOS_HAVE_WIFI
-  eos_net_ap_set_enabled(false);
-  eos_net_wifi_update_mode();
+  if (dev->parent) {
+    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
+  }
   if (st->netif) {
     esp_netif_destroy_default_wifi(st->netif);
   }
@@ -109,8 +110,6 @@ void driver_net_ap_shutdown(eos_dev_t *dev) {
 
   free(st);
   dev->state = NULL;
-  eos_net_set_ap_netif(NULL);
-  eos_net_set_ap_dev(NULL);
 }
 
 int driver_net_ap_open(eos_dev_t *dev, const char *path, int flags, int mode) {
@@ -195,7 +194,6 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_SET_UP: {
       st->is_up = true;
       st->dhcps_enabled = true;
-      eos_net_ap_set_enabled(true);
 
 #if EOS_HAVE_WIFI
       // Apply AP config before bringing interface up
@@ -213,10 +211,16 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
 
       esp_wifi_set_config(WIFI_IF_AP, &wcfg);
-      eos_net_wifi_update_mode();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
+      }
 
       if (st->netif && st->dhcps_enabled) {
         esp_netif_dhcps_start(st->netif);
+      }
+#else
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
       }
 #endif
       EOS_LOGI("ap: interface set to UP (SSID: \"%s\")", st->ap_cfg.ssid);
@@ -225,8 +229,9 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
     case EOS_NETIF_IOCTL_SET_DOWN: {
       st->is_up = false;
-      eos_net_ap_set_enabled(false);
-      eos_net_wifi_update_mode();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
+      }
       if (st->netif) {
         esp_netif_dhcps_stop(st->netif);
       }

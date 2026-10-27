@@ -1,14 +1,18 @@
+#include "includes.h"
+
+#ifndef EOS_DRV_BUS_ROOT_ENABLED
+#define EOS_DRV_BUS_ROOT_ENABLED
+#endif
+
+#ifdef EOS_DRV_BUS_ROOT_ENABLED
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
-#include "includes.h"
-// This driver is always enabled,
-// and represents root bus which is an origin point of our device tree
 
-// Do I actually need that crap?
-
+// Root bus driver representing the origin point of our device tree
 EOS_DRV_ATTR eos_drv_t driver_bus_root = {
   EOS_DRV_INIT, 
   .flags = EOS_DRV_FLAG_NO_VFS,
   .scope = "bus",
   .name = "root"
 };
+#endif

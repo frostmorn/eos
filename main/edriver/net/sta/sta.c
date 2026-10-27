@@ -1,15 +1,16 @@
 #include "includes.h"
 #ifdef EOS_DRV_NET_STA_ENABLED
 
+#include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
-#include "ecore/net_common.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
 #include <esp_mac.h>
+#include <esp_netif.h>
 #include <string.h>
 
 #if EOS_HAVE_WIFI
@@ -27,6 +28,14 @@ typedef struct {
   char last_password[64];
   char hostname[32];
 } sta_state_t;
+
+static bool sta_is_connected(eos_dev_t *dev) {
+  bool conn = false;
+  if (dev && dev->parent) {
+    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_IS_CONNECTED, &conn);
+  }
+  return conn;
+}
 
 bool driver_net_sta_init(eos_dev_t *dev) {
   sta_state_t *st = calloc(1, sizeof(sta_state_t));
@@ -46,17 +55,17 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   }
 
   dev->state = st;
-  eos_net_set_sta_dev(dev);
 
-  // Initialize network stack
-  eos_net_ensure_init();
+  // Initialize parent Wi-Fi / network stack
+  if (dev->parent) {
+    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_ENSURE_INIT);
+  }
 
 #if EOS_HAVE_WIFI
   // Create default WiFi station netif
   st->netif = esp_netif_create_default_wifi_sta();
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
-    eos_net_set_sta_netif(st->netif);
   }
 #else
   // Platforms with external network controller (e.g. ESP32-P4)
@@ -73,7 +82,6 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   st->netif = esp_netif_new(&netif_cfg);
   if (st->netif) {
     esp_netif_set_hostname(st->netif, st->hostname);
-    eos_net_set_sta_netif(st->netif);
   }
 #endif
 
@@ -86,11 +94,12 @@ void driver_net_sta_shutdown(eos_dev_t *dev) {
   sta_state_t *st = (sta_state_t *)dev->state;
 
 #if EOS_HAVE_WIFI
-  if (eos_net_sta_is_connected()) {
+  if (sta_is_connected(dev)) {
     esp_wifi_disconnect();
   }
-  eos_net_sta_set_enabled(false);
-  eos_net_wifi_update_mode();
+  if (dev->parent) {
+    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 0, false);
+  }
   if (st->netif) {
     esp_netif_destroy_default_wifi(st->netif);
   }
@@ -98,8 +107,6 @@ void driver_net_sta_shutdown(eos_dev_t *dev) {
 
   free(st);
   dev->state = NULL;
-  eos_net_set_sta_netif(NULL);
-  eos_net_set_sta_dev(NULL);
 }
 
 int driver_net_sta_open(eos_dev_t *dev, const char *path, int flags, int mode) {
@@ -129,8 +136,9 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       strncpy(info->name, "sta0", sizeof(info->name) - 1);
       info->type = EOS_NETIF_TYPE_STA;
 
+      bool connected = sta_is_connected(dev);
       if (st->is_up) info->flags |= EOS_NETIF_FLAG_UP;
-      if (eos_net_sta_is_connected()) info->flags |= EOS_NETIF_FLAG_LINK_UP;
+      if (connected) info->flags |= EOS_NETIF_FLAG_LINK_UP;
       if (st->dhcp_enabled) info->flags |= EOS_NETIF_FLAG_DHCP_CLIENT;
 
       strncpy(info->hostname, st->hostname, sizeof(info->hostname) - 1);
@@ -165,9 +173,11 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         }
       }
 
-      if (eos_net_sta_is_connected()) {
-        eos_sta_ap_info_t ap_info;
-        eos_net_sta_get_connected_info(&ap_info);
+      if (connected) {
+        eos_sta_ap_info_t ap_info = {0};
+        if (dev->parent) {
+          eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_GET_CONNECTED_INFO, &ap_info);
+        }
         info->rssi = ap_info.rssi;
         snprintf(info->extra, sizeof(info->extra), "connected to \"%.24s\" (ch %u, RSSI %d dBm)",
                  ap_info.ssid, (unsigned)ap_info.channel, (int)ap_info.rssi);
@@ -179,8 +189,9 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
     case EOS_NETIF_IOCTL_SET_UP: {
       st->is_up = true;
-      eos_net_sta_set_enabled(true);
-      eos_net_wifi_update_mode();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 0, true);
+      }
       if (st->netif && st->dhcp_enabled) {
         esp_netif_dhcpc_start(st->netif);
       }
@@ -190,13 +201,14 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
     case EOS_NETIF_IOCTL_SET_DOWN: {
 #if EOS_HAVE_WIFI
-      if (eos_net_sta_is_connected()) {
+      if (sta_is_connected(dev)) {
         esp_wifi_disconnect();
       }
 #endif
       st->is_up = false;
-      eos_net_sta_set_enabled(false);
-      eos_net_wifi_update_mode();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 0, false);
+      }
       EOS_LOGI("sta: interface set to DOWN");
       return 0;
     }
@@ -325,7 +337,10 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
     case EOS_NETIF_IOCTL_BRIDGE_SET_NAPT: {
       bool enable = (bool)va_arg(args, int);
-      return eos_net_set_napt_enabled(enable);
+      if (dev->parent) {
+        return eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_NAPT, enable);
+      }
+      return -1;
     }
 
     case EOS_STA_IOCTL_CONNECT: {
@@ -335,8 +350,9 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 #if EOS_HAVE_WIFI
       // Bring up STA mode
       st->is_up = true;
-      eos_net_sta_set_enabled(true);
-      eos_net_wifi_update_mode();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 0, true);
+      }
 
       wifi_config_t wcfg = {0};
       strncpy((char *)wcfg.sta.ssid, conn->ssid, sizeof(wcfg.sta.ssid) - 1);
@@ -372,11 +388,16 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
 
       uint32_t timeout = conn->timeout_ms ? conn->timeout_ms : 10000;
-      return eos_net_sta_wait_connect(timeout);
+      if (dev->parent) {
+        return eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_WAIT_CONNECT, timeout);
+      }
+      return -1;
 #else
       st->is_up = true;
-      eos_net_sta_set_enabled(true);
-      eos_net_wifi_radio_start();
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 0, true);
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_NETIF_IOCTL_SET_UP);
+      }
       strncpy(st->last_ssid, conn->ssid, sizeof(st->last_ssid) - 1);
       strncpy(st->last_password, conn->password, sizeof(st->last_password) - 1);
 
@@ -386,7 +407,9 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       ap_info.rssi = -55;
       ap_info.authmode = 3;
       ap_info.connected = true;
-      eos_net_sta_set_connected_info(&ap_info);
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_CONNECTED_INFO, &ap_info);
+      }
 
       if (st->netif) {
         esp_netif_ip_info_t ip_info;
@@ -408,7 +431,9 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return (err == ESP_OK) ? 0 : -1;
 #else
       st->is_up = false;
-      eos_net_sta_set_connected_info(NULL);
+      if (dev->parent) {
+        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_CONNECTED_INFO, NULL);
+      }
       return 0;
 #endif
     }
@@ -416,8 +441,10 @@ int driver_net_sta_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_STA_IOCTL_GET_AP_INFO: {
       eos_sta_ap_info_t *out_ap = va_arg(args, eos_sta_ap_info_t *);
       if (!out_ap) return -1;
-      eos_net_sta_get_connected_info(out_ap);
-      return 0;
+      if (dev->parent) {
+        return eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_GET_CONNECTED_INFO, out_ap);
+      }
+      return -1;
     }
 
     case EOS_STA_IOCTL_SET_AUTOCONNECT: {

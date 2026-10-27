@@ -10,6 +10,7 @@ Automated static analysis tool to check adherence to EOS architectural rules:
 6. Linker scripts (.ld, .lf) must reside exclusively within main/eld/.
 7. All __wrap_* wrapper definitions must reside exclusively within main/ewrap/.
 8. All driver source files (.c) under main/edriver/ must be guarded by EOS_DRV_*_ENABLED preprocessor macros.
+9. Each driver folder under main/edriver/<scope>/<name>/ must contain an eos_drv_t / eos_driver_t structure definition, and no loose files may exist outside driver folders.
 """
 
 import os
@@ -286,6 +287,66 @@ def scan_driver_enable_guards(dir_path):
         print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} unguarded driver source file(s).")
     return violations
 
+def scan_driver_structures(dir_path):
+    violations = 0
+    desc = "Driver directories missing eos_drv_t / eos_driver_t definition"
+    print(f"\n{Colors.BOLD}=== Scanning {dir_path} for {desc} ==={Colors.RESET}")
+
+    if not os.path.exists(dir_path):
+        print(f"Directory {dir_path} not found.")
+        return 0
+
+    drv_struct_pat = re.compile(r"\b(eos_drv_t|eos_driver_t)\b\s+\w+\s*=")
+
+    # 1. Check for loose files directly under dir_path or dir_path/<scope>
+    for item in os.listdir(dir_path):
+        item_path = os.path.join(dir_path, item)
+        if os.path.isfile(item_path):
+            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Loose file outside driver folder: {item_path}")
+            violations += 1
+        elif os.path.isdir(item_path):
+            for sub_item in os.listdir(item_path):
+                sub_path = os.path.join(item_path, sub_item)
+                if os.path.isfile(sub_path):
+                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Loose file outside driver folder: {sub_path}")
+                    violations += 1
+
+    # 2. Check each driver directory for eos_drv_t / eos_driver_t definition
+    for scope in sorted(os.listdir(dir_path)):
+        scope_path = os.path.join(dir_path, scope)
+        if not os.path.isdir(scope_path):
+            continue
+        for drv_name in sorted(os.listdir(scope_path)):
+            drv_path = os.path.join(scope_path, drv_name)
+            if not os.path.isdir(drv_path):
+                continue
+
+            has_drv_struct = False
+            for root, _, files in os.walk(drv_path):
+                for file in files:
+                    if file.endswith(".c"):
+                        filepath = os.path.join(root, file)
+                        try:
+                            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read()
+                            if drv_struct_pat.search(content):
+                                has_drv_struct = True
+                                break
+                        except Exception as e:
+                            print(f"Error reading {filepath}: {e}")
+                if has_drv_struct:
+                    break
+
+            if not has_drv_struct:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Driver directory missing eos_drv_t structure: {drv_path}")
+                violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All driver folders contain an eos_drv_t / eos_driver_t structure and no loose files exist.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} driver structure violation(s).")
+    return violations
+
 def main():
     print(f"{Colors.CYAN}{Colors.BOLD}Running Fully Comprehensive EOS Layer Separation Audit...{Colors.RESET}")
     
@@ -295,6 +356,7 @@ def main():
     total_violations += scan_globals("main/edriver")
     total_violations += scan_printf_in_drivers("main/edriver")
     total_violations += scan_driver_enable_guards("main/edriver")
+    total_violations += scan_driver_structures("main/edriver")
     total_violations += scan_pragma_once("main")
     total_violations += scan_linker_scripts(".")
     total_violations += scan_wrappers("main")

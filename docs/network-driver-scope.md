@@ -4,11 +4,11 @@ EOS provides comprehensive networking support integrating Espressif's ESP-IDF TC
 
 ---
 
-## 1. Network Subsystem & Stack Initialization (`net_common.c`, `netif.h`)
+## 1. Network Subsystem & Stack Architecture (`edriver/net/wifi/`, `netif.h`)
 
-*   **Core Stack Initialization (`eos_net_ensure_init`):** Initializes NVS flash, the underlying lwIP TCP/IP stack, `esp_netif`, and the default system event loop.
-*   **Wi-Fi Initialization (`eos_net_wifi_ensure_init`):** Initializes Wi-Fi with default configurations (`WIFI_INIT_CONFIG_DEFAULT`) and allocates operational netif structures.
-*   **Netif & Device Tracking:** Maintains pointers for Station netif (`esp_netif_t`), AP netif (`esp_netif_t`), and respective driver devices (`eos_dev_t`) via `net_common.h`.
+*   **Parent Driver Encapsulation:** The Wi-Fi driver (`edriver/net/wifi`) encapsulates NVS flash, lwIP TCP/IP stack (`esp_netif`), the default system event loop, and physical Wi-Fi radio lifecycle in its `dev->state`.
+*   **Child Driver Delegation via IOCTL:** Child station (`sta0`) and access point (`ap0`) drivers coordinate Wi-Fi initialization, operational modes (`WIFI_MODE_STA`, `WIFI_MODE_AP`, `WIFI_MODE_APSTA`), and connection synchronization exclusively through `ioctl` calls on their parent (`dev->parent`, e.g. `EOS_WIFI_IOCTL_*`).
+*   **Decoupled State:** No global driver variables or loose cross-driver C functions are used; all cross-driver communication is strictly mediated by the Unified Device Model and IOCTL interfaces.
 
 ---
 

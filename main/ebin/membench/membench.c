@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // ── Config ────────────────────────────────────────────────────
 
@@ -78,7 +79,7 @@ static float bench_write(void *buf, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  vTaskDelay(pdMS_TO_TICKS(100));
+  usleep(100 * 1000);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }
@@ -123,7 +124,7 @@ static float bench_read(void *buf, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  vTaskDelay(pdMS_TO_TICKS(100));
+  usleep(100 * 1000);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }
@@ -149,7 +150,7 @@ static float bench_copy(void *dst, void *src, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  vTaskDelay(pdMS_TO_TICKS(100));
+  usleep(100 * 1000);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }

@@ -29,7 +29,7 @@ EOS provides board configurations under `main/eboard/`:
 *   **Input Drivers (`edriver/input/`):** Keyboard/keypad active-low polling and GT911 capacitive touchscreens.
 *   **Audio Drivers (`edriver/sound/`):** MAX98357 I2S audio codec.
 *   **Storage & Block Drivers (`edriver/storage/`):** SD/SDIO cards, flash storage, and partition management (`diskpart.c`).
-*   **Network Drivers & Subsystems (`edriver/net/`):** Wi-Fi STA mode, AP mode, network bridging, and TCP/IP stack initialization (`net_common.c`).
+*   **Network Drivers & Subsystems (`edriver/net/`):** Wi-Fi physical radio (`net/wifi`), STA mode (`net/sta`), AP mode (`net/ap`), and network bridging (`net/bridge`) with parent-child ioctl communication.
 *   **Filesystem Subsystems (`ecore/`):** Root `tmpfs`, hierarchical `devfs`, executable `binfs`, process filesystem `procfs`, and pipe ring-buffers `pipefs`.
 *   **Execution & Compatibility Layers:** Statically linked ELF binaries (`.eos_bins`), POSIX/FreeRTOS thread context wrappers with leak detection, and SDL 1.2 / 2.0 VFS compatibility layers.
 

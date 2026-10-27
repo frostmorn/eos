@@ -6,8 +6,6 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <esp_heap_caps.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
@@ -69,7 +67,7 @@ static void draw_bars(int fd) {
   }
 
   // Keep frame visible briefly before exiting
-  vTaskDelay(pdMS_TO_TICKS(2000));
+  usleep(2000 * 1000);
 
   free(buf);
 }

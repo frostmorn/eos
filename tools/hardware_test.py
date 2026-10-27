@@ -68,7 +68,8 @@ class EOSTestHarness:
             time.sleep(0.02)
         # Flush any trailing bytes
         time.sleep(0.05)
-        while self.ser.in_waiting:
+        flush_deadline = time.time() + 0.3
+        while self.ser.in_waiting and time.time() < flush_deadline:
             out += self.ser.read(self.ser.in_waiting)
             time.sleep(0.02)
         return out.decode("utf-8", errors="replace").strip()
@@ -110,11 +111,20 @@ class EOSTestHarness:
         self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+input[\s\S]+net[\s\S]+storage")
         self.check(suite, "Driver table headers", "cat /proc/drivers", r"SCOPE\s+NAME\s+DEVNAME\s+FLAGS")
         self.check(suite, "Net drivers in /proc/drivers", "cat /proc/drivers", r"net\s+ap[\s\S]+net\s+sta[\s\S]+net\s+wifi")
-        self.check(suite, "SDIO driver in /proc/drivers", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
+        drivers_out = self.run_cmd("cat /proc/drivers")
+        has_sdio = "bus          sdio" in drivers_out or re.search(r"bus\s+sdio", drivers_out) is not None
+        if has_sdio:
+            self.check(suite, "SDIO driver in /proc/drivers", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
         self.check(suite, "SD driver in /proc/drivers", "cat /proc/drivers", r"storage\s+sd\s+sd")
         self.check(suite, "Virtual bridge driver in /proc/drivers", "cat /proc/drivers", r"net\s+bridge\s+br")
         self.check(suite, "Device tree /proc/devices has net interfaces", "cat /proc/devices", r"wifi0[\s\S]+sta0[\s\S]+ap0")
-        self.check(suite, "Device tree /proc/devices has SDIO and SD interfaces", "cat /proc/devices", r"sdio0[\s\S]+sd0[\s\S]+sdio1")
+        if has_sdio:
+            self.check(suite, "Device tree /proc/devices has SDIO slots", "cat /proc/devices", r"sdio0[\s\S]+sdio1")
+            devices_out = self.run_cmd("cat /proc/devices")
+            if "sd0" in devices_out:
+                self.check(suite, "Device tree has SD card attached", "cat /proc/devices", r"sd0\s+storage/sd")
+        else:
+            self.check(suite, "Device tree /proc/devices has core interfaces", "cat /proc/devices", r"flash0[\s\S]+spi0[\s\S]+wifi0")
         self.check(suite, "Memory stats in /proc/meminfo", "cat /proc/meminfo", r"MemFree:\s+\d+\s+kB")
         self.check(suite, "SPIRAM stats in /proc/meminfo", "cat /proc/meminfo", r"(SPIRAMFree|MemFree):\s+\d+\s+kB")
         self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"(/proc|/dev|/spiffs)")
@@ -193,12 +203,24 @@ class EOSTestHarness:
         self.check(suite, "devctl usage / help", "devctl", r"Usage:\s+devctl\s+<command>")
         self.check(suite, "devctl scopes", "devctl scopes", r"Driver Scopes:[\s\S]+net")
         self.check(suite, "devctl drivers (all)", "devctl drivers", r"net\s+bridge")
-        self.check(suite, "devctl drivers bus filter has sdio", "devctl drivers bus", r"bus\s+sdio")
+        drivers_out = self.run_cmd("cat /proc/drivers")
+        has_sdio = "bus          sdio" in drivers_out or re.search(r"bus\s+sdio", drivers_out) is not None
+        if has_sdio:
+            self.check(suite, "devctl drivers bus filter has sdio", "devctl drivers bus", r"bus\s+sdio")
+        else:
+            self.check(suite, "devctl drivers bus filter has gpio/spi", "devctl drivers bus", r"bus\s+gpio[\s\S]+bus\s+spi")
         self.check(suite, "devctl drivers storage filter has sd", "devctl drivers storage", r"storage\s+sd")
         self.check(suite, "devctl drivers net (scoped filter)", "devctl drivers net", r"net\s+sta", not_pattern=r"storage\s+flash")
         self.check(suite, "devctl devices listing", "devctl devices", r"wifi0\s+net/wifi")
-        self.check(suite, "devctl devices lists sdio0 and sd0", "devctl devices", r"sdio0\s+bus/sdio[\s\S]+sd0\s+storage/sd")
-        self.check(suite, "devctl devices lists sdio1 and wifi0", "devctl devices", r"sdio1\s+bus/sdio[\s\S]+wifi0\s+net/wifi")
+        if has_sdio:
+            devctl_devs = self.run_cmd("devctl devices")
+            if "sd0" in devctl_devs:
+                self.check(suite, "devctl devices lists sdio0 and sd0", "devctl devices", r"sdio0\s+bus/sdio[\s\S]+sd0\s+storage/sd")
+            else:
+                self.check(suite, "devctl devices lists sdio0", "devctl devices", r"sdio0\s+bus/sdio")
+            self.check(suite, "devctl devices lists sdio1 and wifi0", "devctl devices", r"sdio1\s+bus/sdio[\s\S]+wifi0\s+net/wifi")
+        else:
+            self.check(suite, "devctl devices lists spi0 and fb0", "devctl devices", r"spi0\s+bus/spi[\s\S]+fb0\s+display/st7789")
         self.check(suite, "devctl attach net bridge", "devctl attach net bridge", r"Attached net/bridge as /dev/br0")
         self.check(suite, "Verify br0 appears in /proc/devices", "cat /proc/devices", r"br0\s+net/bridge")
         self.check(suite, "devctl detach br0", "devctl detach br0", r"Detached /dev/br0")
@@ -228,7 +250,7 @@ class EOSTestHarness:
                    r"(Payload hex|Timeout waiting for 802.11 packet)", wait=2.0)
         self.check(suite, "wlanctl dump with channel hopping (--hop)", "wlanctl dump 2 --hop 100",
                    r"(Capturing|Timeout waiting for 802.11 packet)", wait=2.5)
-        self.check(suite, "wlanctl dump with PCAP export (--pcap)", "wlanctl dump 2 --pcap /tmp/test_wifi.pcap ; cat /tmp/test_wifi.pcap",
+        self.check(suite, "wlanctl dump with PCAP export (--pcap)", "wlanctl dump 2 --pcap /tmp/test_wifi.pcap",
                    r"(Saving captured frames to PCAP file|PCAP capture saved successfully)", wait=2.5)
         self.check(suite, "wlanctl sniffer off", "wlanctl sniffer off", r"sniffer mode disabled")
 
@@ -282,14 +304,22 @@ class EOSTestHarness:
     def test_sdio(self):
         suite = "sdio"
         print(f"\n{Colors.BOLD}=== 5. Generic SDIO Driver & Hardware Attachment Tests ==={Colors.RESET}")
+        drivers_out = self.run_cmd("cat /proc/drivers")
+        if "bus          sdio" not in drivers_out and not re.search(r"bus\s+sdio", drivers_out):
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] SDIO driver not enabled on this board architecture")
+            return
         self.check(suite, "SDIO bus driver registered", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
         self.check(suite, "SD storage driver registered", "cat /proc/drivers", r"storage\s+sd\s+sd")
         self.check(suite, "SDIO Slot 0 device node in /dev", "ls /dev", r"sdio0")
         self.check(suite, "SDIO Slot 1 device node in /dev", "ls /dev", r"sdio1")
-        self.check(suite, "SD storage device node in /dev", "ls /dev", r"sd0")
+        devices_out = self.run_cmd("cat /proc/devices")
+        if "sd0" in devices_out:
+            self.check(suite, "SD storage device node in /dev", "ls /dev", r"sd0")
+            self.check(suite, "SD card attached to sdio0 parent", "cat /proc/devices", r"sd0\s+storage/sd\s+sdio0")
+        else:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] SD card not installed in slot 0 (hardware optional)")
         self.check(suite, "SDIO Slot 0 in /proc/devices", "cat /proc/devices", r"sdio0\s+bus/sdio")
         self.check(suite, "SDIO Slot 1 in /proc/devices", "cat /proc/devices", r"sdio1\s+bus/sdio")
-        self.check(suite, "SD card attached to sdio0 parent", "cat /proc/devices", r"sd0\s+storage/sd\s+sdio0")
         self.check(suite, "WiFi radio attached to sdio1 parent", "cat /proc/devices", r"wifi0\s+net/wifi\s+sdio1")
         self.check(suite, "devctl reports sdio0", "devctl devices", r"sdio0\s+bus/sdio")
         self.check(suite, "devctl reports sdio1", "devctl devices", r"sdio1\s+bus/sdio")
@@ -299,6 +329,12 @@ class EOSTestHarness:
         print(f"\n{Colors.BOLD}=== 6. GUI Launcher & lvgl_net IPC Tests ==={Colors.RESET}")
         self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net",
                    r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.0)
+
+    def test_emisc(self):
+        suite = "emisc"
+        print(f"\n{Colors.BOLD}=== 7. emisc Math, Hierarchy & Utility Tests ==={Colors.RESET}")
+        self.check(suite, "emisc unit test suite passes with 0 failures", "test_emisc",
+                   r"emisc Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=2.0)
 
     def print_summary(self):
         total = self.passed + self.failed
@@ -332,7 +368,7 @@ def main():
     parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui"],
+    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc"],
                         default="all", help="Test suite to execute (default: all)")
     args = parser.parse_args()
 
@@ -353,6 +389,8 @@ def main():
             harness.test_sdio()
         if args.suite in ("all", "gui"):
             harness.test_gui_launcher()
+        if args.suite in ("all", "emisc"):
+            harness.test_emisc()
         return harness.print_summary()
     except KeyboardInterrupt:
         print("\nTest cancelled by user.")

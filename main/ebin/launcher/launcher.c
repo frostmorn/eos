@@ -16,10 +16,8 @@
 #define LAUNCHER_DEFAULT_GROUP "System"
 #define LAUNCHER_TERM_OUT_FILE "/term.out"
 #define LAUNCHER_TERM_IN_FILE  "/term.in"
-
-static volatile bool s_launcher_active = false;
-static volatile bool s_launcher_exit_req = false;
-static char s_launcher_request[EOS_SMALL_STR_LEN] = {0};
+#define LAUNCHER_ACTIVE_FILE   "/tmp/launcher.active"
+#define LAUNCHER_CMD_FILE      "/tmp/launcher.cmd"
 
 typedef struct {
   char name[EOS_XSMALL_STR_LEN];
@@ -682,14 +680,23 @@ int launcher_main(int argc, char **argv) {
     }
   }
 
-  if (!list_only && s_launcher_active) {
+  bool launcher_is_active = (access(LAUNCHER_ACTIVE_FILE, F_OK) == 0);
+  if (!list_only && launcher_is_active) {
     if (app_to_launch) {
       if (strcmp(app_to_launch, "-q") == 0 || strcmp(app_to_launch, "--quit") == 0) {
-        s_launcher_exit_req = true;
+        FILE *fp = fopen(LAUNCHER_CMD_FILE, "w");
+        if (fp) {
+          fprintf(fp, "QUIT\n");
+          fclose(fp);
+        }
         printf("launcher: stopping...\n");
         return 0;
       }
-      snprintf(s_launcher_request, sizeof(s_launcher_request), "%s", app_to_launch);
+      FILE *fp = fopen(LAUNCHER_CMD_FILE, "w");
+      if (fp) {
+        fprintf(fp, "%s\n", app_to_launch);
+        fclose(fp);
+      }
       printf("launcher: requesting launch of '%s'...\n", app_to_launch);
       return 0;
     }
@@ -711,7 +718,8 @@ int launcher_main(int argc, char **argv) {
     return 0;
   }
 
-  s_launcher_active = true;
+  FILE *act = fopen(LAUNCHER_ACTIVE_FILE, "w");
+  if (act) fclose(act);
 
   eos_lvgl_cfg_t cfg = {
       .fb_path = fb_path,
@@ -726,7 +734,7 @@ int launcher_main(int argc, char **argv) {
     printf("launcher: LVGL init failed, printing ebin list instead:\n");
     launcher_print_grouped_list(st);
     free(st);
-    s_launcher_active = false;
+    unlink(LAUNCHER_ACTIVE_FILE);
     return -1;
   }
 
@@ -748,31 +756,47 @@ int launcher_main(int argc, char **argv) {
     }
   }
 
-  while (!st->should_exit && !s_launcher_exit_req) {
-    if (s_launcher_request[0] != '\0') {
-      char target_name[EOS_SMALL_STR_LEN];
-      strlcpy(target_name, s_launcher_request, sizeof(target_name));
-      s_launcher_request[0] = '\0';
+  while (!st->should_exit) {
+    if (access(LAUNCHER_CMD_FILE, F_OK) == 0) {
+      char target_name[EOS_SMALL_STR_LEN] = {0};
+      FILE *fp = fopen(LAUNCHER_CMD_FILE, "r");
+      if (fp) {
+        if (fgets(target_name, sizeof(target_name), fp)) {
+          size_t l = strlen(target_name);
+          while (l > 0 && (target_name[l - 1] == '\r' || target_name[l - 1] == '\n')) {
+            target_name[--l] = '\0';
+          }
+        }
+        fclose(fp);
+      }
+      unlink(LAUNCHER_CMD_FILE);
 
-      for (int i = 0; i < st->bin_count; i++) {
-        if (strcmp(st->bins[i]->filename, target_name) == 0) {
-          const char *grp = bin_effective_group(st->bins[i]);
-          for (int g = 0; g < st->group_count; g++) {
-            if (strcmp(st->groups[g].name, grp) == 0) {
-              st->selected_group = g;
-              launcher_populate_list(st);
-              break;
+      if (strcmp(target_name, "QUIT") == 0) {
+        st->should_exit = true;
+        break;
+      }
+
+      if (target_name[0] != '\0') {
+        for (int i = 0; i < st->bin_count; i++) {
+          if (strcmp(st->bins[i]->filename, target_name) == 0) {
+            const char *grp = bin_effective_group(st->bins[i]);
+            for (int g = 0; g < st->group_count; g++) {
+              if (strcmp(st->groups[g].name, grp) == 0) {
+                st->selected_group = g;
+                launcher_populate_list(st);
+                break;
+              }
             }
-          }
-          for (int j = 0; j < st->filtered_count; j++) {
-            if (strcmp(st->filtered[j]->filename, target_name) == 0) {
-              st->selected_item = j;
-              launcher_update_details(st);
-              st->trigger_launch = true;
-              break;
+            for (int j = 0; j < st->filtered_count; j++) {
+              if (strcmp(st->filtered[j]->filename, target_name) == 0) {
+                st->selected_item = j;
+                launcher_update_details(st);
+                st->trigger_launch = true;
+                break;
+              }
             }
+            break;
           }
-          break;
         }
       }
     }
@@ -797,8 +821,8 @@ int launcher_main(int argc, char **argv) {
 
   eos_lvgl_deinit();
   free(st);
-  s_launcher_active = false;
-  s_launcher_exit_req = false;
+  unlink(LAUNCHER_ACTIVE_FILE);
+  unlink(LAUNCHER_CMD_FILE);
   return 0;
 }
 

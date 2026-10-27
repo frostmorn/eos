@@ -27,7 +27,12 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32-S3 implementing a **Uni
 ## 3. Layering & Architecture Principles
 
 *   **`emisc/`**: Pure math, protocol algorithms, and reusable utilities (`kvec.h`, `netmisc.h`) with zero OS/hardware dependencies.
-*   **`edriver/`**: Low-level hardware drivers encapsulating vendor SDK calls, interrupts, RTOS primitives, and working buffers inside `dev->state`. **Must use EOS logging (`EOS_LOGI`, etc.) instead of raw `printf`/`puts`**. **All driver source files (.c) must be conditionally guarded by `EOS_DRV_*_ENABLED` preprocessor macros**.
+*   **`edriver/`**: Low-level hardware drivers encapsulating vendor SDK calls, interrupts, RTOS primitives, and working buffers inside `dev->state`.
+    *   **Logging:** Must use EOS logging (`EOS_LOGI`, etc.) instead of raw `printf`/`puts`.
+    *   **Build Guard:** All driver source files (`.c`) must be conditionally guarded by `EOS_DRV_*_ENABLED` preprocessor macros.
+    *   **Driver Structure:** Every driver directory under `main/edriver/<scope>/<name>/` must define an `eos_drv_t` structure registered in the `.eos_drivers` section (`EOS_DRV_ATTR eos_drv_t driver_<scope>_<name> = { ... };`).
+    *   **No Loose Driver Files:** No loose `.c` or `.h` files are permitted directly under `main/edriver/` or `main/edriver/<scope>/`.
+    *   **IOCTL-Only Driver Communication:** Drivers must pass and consume functionality strictly via standard VFS and `ioctl` interfaces (`eos_dev_ioctl_call` on parent/child/peer devices) rather than loose C helper functions or ad-hoc cross-driver exports.
 *   **`ecore/`**: Core kernel subsystems (VFS, devfs, binfs, pipefs, procfs, driver model).
 *   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables.
 *   **`eboard/`**: Board-specific pin mappings and hardware startup.

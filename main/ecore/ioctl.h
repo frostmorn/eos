@@ -225,6 +225,16 @@ typedef enum {
   EOS_RADIO_IOCTL_SCAN_GET_RESULTS,  // eos_wifi_scan_results_t *results
   EOS_RADIO_IOCTL_SET_PROMISC,       // const eos_wifi_promisc_cfg_t *cfg
   EOS_RADIO_IOCTL_GET_PROMISC,       // eos_wifi_promisc_cfg_t *cfg
+
+  // Wi-Fi core driver operations (called on wifi0 / dev->parent):
+  EOS_WIFI_IOCTL_ENSURE_INIT = 540,  // no args - initializes NVS, netif & Wi-Fi
+  EOS_WIFI_IOCTL_SET_MODE,           // int if_type (0=STA, 1=AP), bool enable
+  EOS_WIFI_IOCTL_IS_RADIO_ON,        // bool *out_on
+  EOS_WIFI_IOCTL_WAIT_CONNECT,       // uint32_t timeout_ms
+  EOS_WIFI_IOCTL_GET_CONNECTED_INFO, // eos_sta_ap_info_t *out_info
+  EOS_WIFI_IOCTL_SET_CONNECTED_INFO, // const eos_sta_ap_info_t *info
+  EOS_WIFI_IOCTL_IS_CONNECTED,       // bool *out_connected
+  EOS_WIFI_IOCTL_SET_NAPT,           // bool enable
 } eos_ioctl_t;
 
 // (^__^)==\~

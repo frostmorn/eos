@@ -1,7 +1,5 @@
 #include <errno.h>
 #include <fcntl.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -92,7 +90,7 @@ static void test_doom_fire(int fd) {
     if (write(fd, buf, frame_bytes) < 0)
       break;
 
-    vTaskDelay(pdMS_TO_TICKS(30));
+    usleep(30 * 1000);
   }
 
 cleanup:

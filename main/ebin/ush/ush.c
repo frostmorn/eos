@@ -6,8 +6,6 @@
 #include <driver/usb_serial_jtag.h>
 #include <driver/usb_serial_jtag_vfs.h>
 #include <errno.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +26,7 @@ static int ush_readline(char *buf, size_t size) {
     // instead of spinning on read() or returning -1 (which would exit ush
     // and cause eos_main to respawn init.sh / launcher in a loop).
     if (is_console && !eos_console_is_connected()) {
-      vTaskDelay(pdMS_TO_TICKS(50));
+      usleep(50 * 1000);
       continue;
     }
 
@@ -71,7 +69,7 @@ static int ush_readline(char *buf, size_t size) {
     if (n == 0) {
       if (is_console) {
         clearerr(stdin);
-        vTaskDelay(pdMS_TO_TICKS(20));
+        usleep(20 * 1000);
         continue;
       }
       return -1;
@@ -79,7 +77,7 @@ static int ush_readline(char *buf, size_t size) {
 
     if (errno == EAGAIN || errno == EWOULDBLOCK || is_console) {
       clearerr(stdin);
-      vTaskDelay(pdMS_TO_TICKS(10));
+      usleep(10 * 1000);
       continue;
     }
 

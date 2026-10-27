@@ -33,8 +33,6 @@ static const char *const s_preset_cmds[] = {
     "cat /proc/interrupts",
     "cat /proc/uptime",
     "pwd",
-    "test_pthread",
-    "test_rtos_tasks",
 };
 
 #define TERM_PRESET_COUNT (int)(sizeof(s_preset_cmds) / sizeof(s_preset_cmds[0]))

@@ -11,3 +11,5 @@ managed_components/
 main/idf_component.yml
 __pycache__/
 *.pyc
+*.patch
+*.diff

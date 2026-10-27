@@ -275,12 +275,13 @@ int wlanctl_main(int argc, char **argv) {
     int captured = 0;
     int displayed = 0;
     uint8_t current_channel = 1;
+    int timeouts = 0;
 
     while (infinite || displayed < count) {
       if (hop_interval_ms > 0) {
         current_channel++;
         if (current_channel > 13) current_channel = 1;
-        ioctl(fd, EOS_RADIO_IOCTL_SET_CHANNEL, &current_channel);
+        ioctl(fd, EOS_RADIO_IOCTL_SET_CHANNEL, (int)current_channel);
         usleep(hop_interval_ms * 1000);
       }
 
@@ -323,16 +324,19 @@ int wlanctl_main(int argc, char **argv) {
           fflush(pcap_file);
         }
       } else {
-        if (!infinite && hop_interval_ms == 0) {
-          printf("Timeout waiting for 802.11 packet\n");
-          break;
+        if (!infinite) {
+          timeouts++;
+          if (hop_interval_ms == 0 || timeouts >= 2) {
+            printf("Timeout waiting for 802.11 packet\n");
+            break;
+          }
         }
       }
     }
 
     if (pcap_file) {
       fclose(pcap_file);
-      printf("PCAP capture saved successfully.\n");
+      printf("PCAP capture saved successfully to %s\n", pcap_path);
     }
 
     close(fd);
