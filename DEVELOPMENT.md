@@ -144,12 +144,15 @@ EOS includes built-in interactive template generators (`tools/codegen.py`) for c
 
 ---
 
-## 7. Project Architecture Overview
+## 7. Project Architecture Overview & Layered Design Principles
+
+EOS enforces a strict **Layered Architecture** to guarantee clean separation of concerns, reusability, and maintainability:
 
 *   **`main/`**: Core OS implementation
-    *   **`ecore/`**: Core kernel subsystems (VFS, device management, binfs, devfs, pipefs, procfs, capsmgr, driver model, thread context, tmpfs, asset management, net_common).
-    *   **`edriver/`**: Hardware drivers categorized by scope (`bus/`, `display/`, `input/`, `net/`, `sound/`, `storage/`).
-    *   **`ebin/`**: Built-in system commands and applications (`ush`, `ls`, `cat`, `mkdir`, `mount`, network utilities `wlanctl`/`netctl`, UI apps, test utilities, etc.).
+    *   **`emisc/`**: Math, utilities, protocol formatting, and reusable algorithms (e.g., PCAP formatting, CIDR/IP math, MAC parsing) that can be shared across drivers and user-space binaries.
+    *   **`edriver/`**: Low-level hardware drivers categorized by scope (`bus/`, `display/`, `input/`, `net/`, `sound/`, `storage/`). Encapsulates hardware-specific callbacks, interrupts, and raw peripheral I/O.
+    *   **`ecore/`**: Core kernel subsystems (VFS, device management, binfs, devfs, pipefs, procfs, capsmgr, driver model, thread context, tmpfs, asset management, net_common, ioctl definitions).
+    *   **`ebin/`**: User-space system commands and applications (`ush`, `ls`, `cat`, `mkdir`, `mount`, network utilities `wlanctl`/`netctl`, UI apps, test utilities). Consumes kernel interfaces and low-level drivers via VFS and ioctl.
     *   **`eboard/`**: Board-specific definitions and configurations (`lilka_v23`, `esp32s3_qemu`, `jc4880p443c_i_w_y`).
     *   **`eld/`**: Linker scripts for compile-time driver and binary registration.
     *   **`ewrap/`**: ESP-IDF / FreeRTOS / POSIX syscall wrappers and hooks.
