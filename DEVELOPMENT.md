@@ -27,11 +27,12 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32-S3 implementing a **Uni
 ## 3. Layering & Architecture Principles
 
 *   **`emisc/`**: Pure math, protocol algorithms, and reusable utilities (`kvec.h`, `netmisc.h`) with zero OS/hardware dependencies.
-*   **`edriver/`**: Low-level hardware drivers encapsulating vendor SDK calls, interrupts, RTOS primitives, and working buffers inside `dev->state`. **Must use EOS logging (`EOS_LOGI`, etc.) instead of raw `printf`/`puts`**.
+*   **`edriver/`**: Low-level hardware drivers encapsulating vendor SDK calls, interrupts, RTOS primitives, and working buffers inside `dev->state`. **Must use EOS logging (`EOS_LOGI`, etc.) instead of raw `printf`/`puts`**. **All driver source files (.c) must be conditionally guarded by `EOS_DRV_*_ENABLED` preprocessor macros**.
 *   **`ecore/`**: Core kernel subsystems (VFS, devfs, binfs, pipefs, procfs, driver model).
 *   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables.
 *   **`eboard/`**: Board-specific pin mappings and hardware startup.
 *   **`eld/`**: Linker and link-fragment scripts (`.ld`, `.lf`). **All linker scripts must reside exclusively within `main/eld/`**.
+*   **`ewrap/`**: System call and library wrappers. **All `__wrap_*` wrapper function definitions must reside exclusively within `main/ewrap/`**.
 *   **Header Guards:** Every header file (`.h`) must include `#pragma once`.
 
 ---
