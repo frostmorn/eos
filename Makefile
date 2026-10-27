@@ -109,6 +109,6 @@ qemu: build
 	idf.py qemu
 
 refine-docs:
-	gemini --model gemini-3.1-flash-lite --approval-mode auto_edit -p "Load @DEVELOPMENT.md and refine documentation under docs/** specifically."
+	gemini --model gemini-3.5-flash-lite --approval-mode auto_edit -p "Load @DEVELOPMENT.md . Analyze current repository state. Update documentation located in @docs Be comprehensive"
 
 
