@@ -193,6 +193,64 @@ static inline int eos_net_rssi_to_quality(int8_t rssi) {
   return 2 * (rssi + 100);
 }
 
+// ── PCAP File Format & Packet Filtering Helpers ───────────────────────────
+
+typedef struct __attribute__((packed)) {
+  uint32_t magic_number;   /* magic number */
+  uint16_t version_major;  /* major version number */
+  uint16_t version_minor;  /* minor version number */
+  int32_t  thiszone;       /* GMT to local correction */
+  uint32_t sigfigs;        /* accuracy of timestamps */
+  uint32_t snaplen;        /* max length of captured packets, in octets */
+  uint32_t network;        /* data link type (80 = LINKTYPE_IEEE802_11) */
+} eos_pcap_hdr_t;
+
+typedef struct __attribute__((packed)) {
+  uint32_t ts_sec;         /* timestamp seconds */
+  uint32_t ts_usec;        /* timestamp microseconds */
+  uint32_t incl_len;       /* number of octets of packet saved in file */
+  uint32_t orig_len;       /* actual length of packet on the wire */
+} eos_pcap_packet_hdr_t;
+
+static inline size_t eos_net_pcap_write_global_header(uint8_t *buf, size_t max_len) {
+  if (!buf || max_len < sizeof(eos_pcap_hdr_t)) return 0;
+  eos_pcap_hdr_t *hdr = (eos_pcap_hdr_t *)buf;
+  hdr->magic_number = 0xa1b2c3d4;
+  hdr->version_major = 2;
+  hdr->version_minor = 4;
+  hdr->thiszone = 0;
+  hdr->sigfigs = 0;
+  hdr->snaplen = 65535;
+  hdr->network = 80; // LINKTYPE_IEEE802_11
+  return sizeof(eos_pcap_hdr_t);
+}
+
+static inline size_t eos_net_pcap_write_packet_header(uint8_t *buf, size_t max_len,
+                                                      uint32_t sec, uint32_t usec,
+                                                      uint32_t incl_len, uint32_t orig_len) {
+  if (!buf || max_len < sizeof(eos_pcap_packet_hdr_t)) return 0;
+  eos_pcap_packet_hdr_t *phdr = (eos_pcap_packet_hdr_t *)buf;
+  phdr->ts_sec = sec;
+  phdr->ts_usec = usec;
+  phdr->incl_len = incl_len;
+  phdr->orig_len = orig_len;
+  return sizeof(eos_pcap_packet_hdr_t);
+}
+
+static inline bool eos_net_wifi_match_mac(const uint8_t pkt_mac[6], const uint8_t filter_mac[6]) {
+  if (!pkt_mac || !filter_mac) return false;
+  for (int i = 0; i < 6; i++) {
+    if (pkt_mac[i] != filter_mac[i]) return false;
+  }
+  return true;
+}
+
+static inline bool eos_net_wifi_match_type(const char *type_name, const char *filter_type) {
+  if (!type_name || !filter_type) return true;
+  if (strcasecmp(filter_type, "all") == 0 || filter_type[0] == '\0') return true;
+  return (strcasecmp(type_name, filter_type) == 0);
+}
+
 #ifdef __cplusplus
 }
 #endif

@@ -222,6 +222,14 @@ class EOSTestHarness:
         self.check(suite, "wlanctl sniffer on", "wlanctl sniffer on", r"sniffer mode enabled")
         self.check(suite, "wlanctl dump 3 captures frames or handles timeout", "wlanctl dump 3",
                    r"(Capturing 3 raw 802.11 frames|Timeout waiting for 802.11 packet|MGMT|DATA)", wait=2.5)
+        self.check(suite, "wlanctl dump with type filter (--type mgmt)", "wlanctl dump 2 --type mgmt",
+                   r"(Capturing.*type=mgmt|Timeout waiting for 802.11 packet|MGMT)", wait=2.5)
+        self.check(suite, "wlanctl dump with verbose output (--verbose)", "wlanctl dump 1 --verbose",
+                   r"(Payload hex|Timeout waiting for 802.11 packet)", wait=2.0)
+        self.check(suite, "wlanctl dump with channel hopping (--hop)", "wlanctl dump 2 --hop 100",
+                   r"(Capturing|Timeout waiting for 802.11 packet)", wait=2.5)
+        self.check(suite, "wlanctl dump with PCAP export (--pcap)", "wlanctl dump 2 --pcap /tmp/test_wifi.pcap ; cat /tmp/test_wifi.pcap",
+                   r"(Saving captured frames to PCAP file|PCAP capture saved successfully)", wait=2.5)
         self.check(suite, "wlanctl sniffer off", "wlanctl sniffer off", r"sniffer mode disabled")
 
     def test_netctl(self):

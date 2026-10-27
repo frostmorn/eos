@@ -2,6 +2,7 @@
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
 #include "ecore/netif.h"
+#include "emisc/netmisc.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -29,14 +30,15 @@ static int open_wlan(const char *name) {
 static void print_usage(void) {
   printf("Usage: wlanctl <command> [args...] [interface]\n\n"
          "Commands:\n"
-         "  radio on|off|status       Turn physical WLAN radio power on or off, or query status\n"
-         "  getmac [dev]              Display hardware/assigned MAC address\n"
-         "  setmac <mac> [dev]        Set MAC address (format: XX:XX:XX:XX:XX:XX)\n"
-         "  channel <1-13> [dev]      Set physical RF channel\n"
-         "  sniffer on|off [dev]      Enable or disable 802.11 sniffer (promiscuous) mode\n"
-         "  dump [count] [dev]        Capture and display raw 802.11 frames\n"
-         "  send <hex-bytes> [dev]    Inject raw 802.11 packet frame\n"
-         "  scan [-p|--passive] [ch]  Scan for 802.11 wireless networks\n\n"
+         "  radio on|off|status          Turn physical WLAN radio power on or off, or query status\n"
+         "  getmac [dev]                 Display hardware/assigned MAC address\n"
+         "  setmac <mac> [dev]           Set MAC address (format: XX:XX:XX:XX:XX:XX)\n"
+         "  channel <1-13> [dev]         Set physical RF channel\n"
+         "  sniffer on|off [dev]         Enable or disable 802.11 sniffer (promiscuous) mode\n"
+         "  dump [count] [dev] [opts]    Capture 802.11 frames (0=infinite, opts: --type <t>, --bssid <m>,\n"
+         "                               --src <m>, --dst <m>, --hop <ms>, --verbose, --pcap <file>)\n"
+         "  send <hex-bytes> [dev]       Inject raw 802.11 packet frame\n"
+         "  scan [-p|--passive] [ch]     Scan for 802.11 wireless networks\n\n"
          "Default interface: wifi0\n");
 }
 
@@ -206,8 +208,42 @@ int wlanctl_main(int argc, char **argv) {
   }
 
   if (strcmp(cmd, "dump") == 0) {
-    int count = (argc > 2 && atoi(argv[2]) > 0) ? atoi(argv[2]) : 10;
-    const char *dev = (argc > 3) ? argv[3] : "wifi0";
+    int count = 10;
+    const char *dev = "wifi0";
+    const char *type_filter = NULL;
+    uint8_t bssid_filter[6];
+    bool has_bssid = false;
+    uint8_t src_filter[6];
+    bool has_src = false;
+    uint8_t dst_filter[6];
+    bool has_dst = false;
+    uint32_t hop_interval_ms = 0;
+    bool verbose = false;
+    const char *pcap_path = NULL;
+
+    for (int i = 2; i < argc; i++) {
+      if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
+        type_filter = argv[++i];
+      } else if (strcmp(argv[i], "--bssid") == 0 && i + 1 < argc) {
+        has_bssid = eos_net_parse_mac(argv[++i], bssid_filter);
+      } else if (strcmp(argv[i], "--src") == 0 && i + 1 < argc) {
+        has_src = eos_net_parse_mac(argv[++i], src_filter);
+      } else if (strcmp(argv[i], "--dst") == 0 && i + 1 < argc) {
+        has_dst = eos_net_parse_mac(argv[++i], dst_filter);
+      } else if (strcmp(argv[i], "--hop") == 0 && i + 1 < argc) {
+        hop_interval_ms = (uint32_t)atoi(argv[++i]);
+      } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
+        verbose = true;
+      } else if (strcmp(argv[i], "--pcap") == 0 && i + 1 < argc) {
+        pcap_path = argv[++i];
+      } else if (argv[i][0] != '-') {
+        if (atoi(argv[i]) > 0 || strcmp(argv[i], "0") == 0) {
+          count = atoi(argv[i]);
+        } else if (strncmp(argv[i], "wifi", 4) == 0 || argv[i][0] == '/') {
+          dev = argv[i];
+        }
+      }
+    }
 
     int fd = open_wlan(dev);
     if (fd < 0) {
@@ -218,25 +254,87 @@ int wlanctl_main(int argc, char **argv) {
     eos_wifi_promisc_cfg_t pcfg = {.enable = true};
     ioctl(fd, EOS_RADIO_IOCTL_SET_PROMISC, &pcfg);
 
-    printf("Capturing %d raw 802.11 frames from %s...\n\n", count, dev);
-    for (int i = 0; i < count; i++) {
+    FILE *pcap_file = NULL;
+    if (pcap_path) {
+      pcap_file = fopen(pcap_path, "wb");
+      if (pcap_file) {
+        uint8_t hdr_buf[32];
+        size_t hdr_len = eos_net_pcap_write_global_header(hdr_buf, sizeof(hdr_buf));
+        fwrite(hdr_buf, 1, hdr_len, pcap_file);
+        printf("Saving captured frames to PCAP file: %s\n", pcap_path);
+      } else {
+        perror("wlanctl: failed to open PCAP file for writing");
+      }
+    }
+
+    bool infinite = (count <= 0);
+    printf("Capturing %s 802.11 frames from %s%s%s%s...\n\n",
+           infinite ? "infinite" : "", dev,
+           type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+
+    int captured = 0;
+    int displayed = 0;
+    uint8_t current_channel = 1;
+
+    while (infinite || displayed < count) {
+      if (hop_interval_ms > 0) {
+        current_channel++;
+        if (current_channel > 13) current_channel = 1;
+        ioctl(fd, EOS_RADIO_IOCTL_SET_CHANNEL, &current_channel);
+        usleep(hop_interval_ms * 1000);
+      }
+
       eos_wifi_raw_packet_t pkt;
       ssize_t n = read(fd, &pkt, sizeof(pkt));
       if (n > 0) {
-        printf("[%2d] CH %2u | RSSI %4d dBm | Len %4u | %s (sub %u)\n",
-               i + 1, pkt.channel, pkt.rssi, pkt.length,
+        captured++;
+        if (!eos_net_wifi_match_type(pkt.type_name, type_filter)) continue;
+        if (has_bssid && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr3, bssid_filter))) continue;
+        if (has_src && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr2, src_filter))) continue;
+        if (has_dst && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr1, dst_filter))) continue;
+
+        displayed++;
+        printf("[%3d] CH %2u | RSSI %4d dBm | Len %4u | %s (sub %u)\n",
+               displayed, pkt.channel, pkt.rssi, pkt.length,
                pkt.type_name[0] ? pkt.type_name : "UNKNOWN",
                pkt.frame_subtype);
         if (pkt.has_addrs) {
-          char a1[18], a2[18];
+          char a1[18], a2[18], a3[18];
           eos_net_format_mac(pkt.addr1, a1, sizeof(a1));
           eos_net_format_mac(pkt.addr2, a2, sizeof(a2));
-          printf("     Addr1: %s  Addr2: %s\n", a1, a2);
+          eos_net_format_mac(pkt.addr3, a3, sizeof(a3));
+          printf("      DA (Addr1): %s  SA (Addr2): %s  BSSID (Addr3): %s\n", a1, a2, a3);
+        }
+        if (verbose && pkt.length > 0) {
+          printf("      Payload hex (%u bytes):\n      ", pkt.length);
+          for (uint16_t j = 0; j < pkt.length && j < 64; j++) {
+            printf("%02x ", pkt.payload[j]);
+            if ((j + 1) % 16 == 0) printf("\n      ");
+          }
+          printf("\n");
+        }
+
+        if (pcap_file) {
+          uint8_t phdr_buf[16];
+          size_t phdr_len = eos_net_pcap_write_packet_header(phdr_buf, sizeof(phdr_buf),
+                                                             0, 0, pkt.length, pkt.length);
+          fwrite(phdr_buf, 1, phdr_len, pcap_file);
+          fwrite(pkt.payload, 1, pkt.length, pcap_file);
+          fflush(pcap_file);
         }
       } else {
-        printf("[%2d] Timeout waiting for 802.11 packet\n", i + 1);
+        if (!infinite && hop_interval_ms == 0) {
+          printf("Timeout waiting for 802.11 packet\n");
+          break;
+        }
       }
     }
+
+    if (pcap_file) {
+      fclose(pcap_file);
+      printf("PCAP capture saved successfully.\n");
+    }
+
     close(fd);
     return 0;
   }
