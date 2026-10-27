@@ -17,6 +17,7 @@ Welcome to the **EOS (ESP Operating System)** documentation center. Below is the
 *   [BinFS, Native Binaries & Execution](./binfs-and-binaries-scope.md) — Statically linked ELF linker sections (`.eos_bins`), process execution (`exec.c`), microshell (`ush.c`), system call interception, and code generation (`make bin`).
 *   [POSIX, FreeRTOS & ESP-IDF Wrappers](./wrappers-architecture.md) — Linker-wrapped syscalls (`-Wl,--wrap`), heap allocation leak tracking (`heap_caps.c`), path remapping, and SDL 1.2/2.0 compatibility layers.
 *   [Board Porting & Hardware Targets](./board-porting-scope.md) — Target board configurations (`lilka_v23`, `esp32s3_qemu`, `jc4880p443c_i_w_y`), board initialization (`eos_board_init`), and setup scripts (`tools/setboard.py`, `tools/codegen.py`).
+*   [JC4880P4 (ESP32-P4 + C6) Co-Processor Guide](./jc4880p4-coprocessor-guide.md) — ESP-Hosted SDIO architecture, firmware version resolution, JP1 header pinout, and ESP32-C6 flashing guide.
 *   [Development & Build Guide](../DEVELOPMENT.md) — Environment prerequisites, ESP-IDF export, compilation commands (`make build`, `make flash`, `make qemu`), analysis tools, and workspace memory & skill guidelines.
 
 ---

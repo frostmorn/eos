@@ -268,9 +268,15 @@ int wlanctl_main(int argc, char **argv) {
     }
 
     bool infinite = (count <= 0);
-    printf("Capturing %s 802.11 frames from %s%s%s%s...\n\n",
-           infinite ? "infinite" : "", dev,
-           type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+    if (infinite) {
+      printf("Capturing infinite 802.11 frames from %s%s%s%s...\n\n",
+             dev,
+             type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+    } else {
+      printf("Capturing %d raw 802.11 frames from %s%s%s%s...\n\n",
+             count, dev,
+             type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+    }
 
     int captured = 0;
     int displayed = 0;

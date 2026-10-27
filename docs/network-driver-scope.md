@@ -30,4 +30,4 @@ EOS exposes network control through built-in binaries:
 *   **`lvgl_net`:** Provides an interactive graphical interface for monitoring and configuring network connections.
 
 ---
-[Back to Documentation Index](./Readme.md) | [See Storage Drivers](./storage-driver-scope.md)
+[Back to Documentation Index](./Readme.md) | [See Storage Drivers](./storage-driver-scope.md) | [JC4880P4 Co-Processor Guide](./jc4880p4-coprocessor-guide.md)

@@ -269,6 +269,11 @@ static bool wifi_ensure_wifi_init(wifi_radio_state_t *st) {
   }
 
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
+#if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
+  if (st->tx_power > 0) {
+    esp_wifi_set_max_tx_power(st->tx_power * 4);
+  }
+#endif
   st->wifi_inited = true;
   return true;
 #else
@@ -296,6 +301,11 @@ static int wifi_radio_start(wifi_radio_state_t *st) {
       return -1;
     }
     st->radio_on = true;
+#if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
+    if (st->tx_power > 0) {
+      esp_wifi_set_max_tx_power(st->tx_power * 4);
+    }
+#endif
     EOS_LOGI("wifi: radio transceiver started");
   }
   return 0;
@@ -393,7 +403,7 @@ bool driver_net_wifi_init(eos_dev_t *dev) {
   st->mutex = xSemaphoreCreateMutex();
   st->sem_rx = xSemaphoreCreateBinary();
   st->channel = 1;
-  st->tx_power = 20;
+  st->tx_power = (int8_t)eos_cfg_get_i(dev->cfg, "tx_power", 14);
   memcpy(st->country, "US", 2);
   st->chip_pu_pin = -1;
 

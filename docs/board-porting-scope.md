@@ -26,7 +26,7 @@ Every board defines a `void eos_board_init()` function called during early OS bo
 
 *   **`lilka_v23` (ESP32-S3):** Target board for Lilka V2 handheld consoles. Configures SPI bus 2, ST7789 display controller (`/dev/fb0`), SD card storage (`/dev/sd`), and GPIO input keyboard (`/dev/keyboard0`).
 *   **`esp32s3_qemu`:** Emulator target running ESP32-S3 in QEMU. Initializes root flash storage and GPIO bus.
-*   **`jc4880p443c_i_w_y` (ESP32-P4):** Advanced target board configuration featuring MIPI-DSI display controllers, touch controllers, audio codecs, and SDMMC storage.
+*   **`jc4880p443c_i_w_y` (ESP32-P4):** Advanced target board configuration featuring MIPI-DSI display controllers, touch controllers, audio codecs, and SDMMC storage. Wireless connectivity is routed through a secondary ESP32-C6 co-processor via SDIO (see [JC4880P4 Co-Processor Guide](./jc4880p4-coprocessor-guide.md)).
 
 ---
 
