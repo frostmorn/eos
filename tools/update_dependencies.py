@@ -130,6 +130,17 @@ def collect_board_dependencies(board):
 
 def update_dependencies(board=None):
     if not board:
+        active_board_file = os.path.join(ROOT_DIR, ".active_board")
+        if os.path.exists(active_board_file):
+            try:
+                with open(active_board_file, "r", encoding="utf-8") as f:
+                    b = f.read().strip()
+                    if b and os.path.isdir(os.path.join(BOARD_ROOT, b)):
+                        board = b
+            except Exception:
+                pass
+
+    if not board:
         sdkconfig_path = os.path.join(ROOT_DIR, "sdkconfig")
         board = detect_board_from_sdkconfig(sdkconfig_path)
 
@@ -165,11 +176,6 @@ def update_dependencies(board=None):
         if os.path.exists(TARGET_MANIFEST):
             os.remove(TARGET_MANIFEST)
             print(f"[update_dependencies] Removed {TARGET_MANIFEST} (no driver dependencies for board '{board}').")
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
-        if os.path.isdir(MANAGED_COMPONENTS_DIR):
-            shutil.rmtree(MANAGED_COMPONENTS_DIR)
-            print(f"[update_dependencies] Cleaned up managed_components/ for clean build of board '{board}'.")
 
     return 0
 

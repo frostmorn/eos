@@ -9,6 +9,7 @@ Display drivers expose a standard VFS interface under `/dev` (typically `/dev/fb
 EOS includes drivers for popular display panels:
 *   **`st7789`:** Standard SPI/parallel TFT LCD controller for general embedded displays.
 *   **`st7701s`:** Advanced MIPI-DSI / RGB parallel display controller supporting high-resolution panels (e.g., JC4880P443C boards).
+*   **`qemu_rgb`:** Virtual RGB display driver for Espressif QEMU emulation (`esp_lcd_qemu_rgb` v1.0.2). Supports dedicated virtual framebuffer rendering (RGB565 16-bit / ARGB8888 32-bit) with windowed partial strip updates and full-screen blits for the `esp32s3_qemu` target.
 
 ---
 

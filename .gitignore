@@ -13,3 +13,5 @@ __pycache__/
 *.pyc
 *.patch
 *.diff
+.board_cache/
+.active_board

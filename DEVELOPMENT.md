@@ -9,7 +9,7 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32-S3 implementing a **Uni
 *   **ESP-IDF Setup:** `source /opt/esp-idf/export.sh`
 *   **Select Board:** `make setboard` (or `python tools/setboard.py esp32s3_qemu`)
 *   **Build / Reconfigure / Clean:** `make build`, `make reconfigure`, `make clean`
-*   **Flash / Monitor / QEMU / Debug:** `make flash`, `make monitor`, `make qemu`, `make debug`
+*   **Flash / Monitor / QEMU / Debug:** `make flash`, `make monitor`, `make qemu`, `make qemu_graphics`, `make debug`
 *   **Code Generation:** `make driver` (`edriver`), `make bin` (`ebin`) via `tools/codegen.py`
 *   **Audit & Analysis:** `make symbols`, `python tools/layer_audit.py`
 
