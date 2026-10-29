@@ -6,7 +6,7 @@ Storage drivers (such as SD Cards via SPI/SDIO or raw flash storage) manage pers
 
 ## Key Responsibilities & Integration
 
-*   **Bus Dependency:** Storage peripherals attach as child nodes to SPI, SDIO, or memory bus drivers.
+*   **Bus Dependency:** Storage peripherals attach as child nodes to SPI (`storage/sd` over `spi0`), SDIO (`storage/sd` over `sdio0`), or root (`storage/flash` over `root`).
 *   **Block-Level Access:** Drivers handle sector-level and block-level read/write operations.
 *   **Filesystem Integration:** Works in tandem with partitioning layers (`diskpart.c`) and VFS mounting to provide filesystem access (e.g., FATFS) over persistent storage media.
 
@@ -20,4 +20,4 @@ Storage drivers (such as SD Cards via SPI/SDIO or raw flash storage) manage pers
     *   `EOS_STORAGE_IOCTL_GET_CAPACITY`
 
 ---
-[Back to EOS Project Index](../Readme.md) | [See Filesystem Drivers](./filesystem-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Filesystem Drivers](./filesystem-driver-scope.md) | [See Bus Drivers](./bus-driver-scope.md)

@@ -84,8 +84,13 @@ static devfs_fdmap_t *devfs_fd_to_fdmap(devfs_state_t *dstate, int fd) {
   for (size_t i = 0; i < kv_size(dstate->fds); ++i) {
     devfs_fdmap_t *fdmap = &kv_A(dstate->fds, i);
 
-    if (fdmap->fd == fd)
+    if (fdmap->fd == fd) {
+      if (!fdmap->dev || !fdmap->dev->in_use) {
+        errno = ENODEV;
+        return NULL;
+      }
       return fdmap;
+    }
   }
 
   errno = EBADF;

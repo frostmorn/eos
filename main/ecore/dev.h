@@ -38,6 +38,10 @@ struct eos_dev_t {
   // devfs
   int fd;
 
+  // Indicates whether pins/cfg were dynamically allocated (e.g. via devctl)
+  bool dynamic_pins;
+  bool dynamic_cfg;
+
   EOS_TREE_FIELDS(eos_dev_t);
 };
 

@@ -21,9 +21,10 @@ The EOS Virtual Filesystem provides a unified, standardized POSIX-compliant inte
 
 ## 3. binfs (Binary Filesystem)
 
-`binfs` (`binfs.c`) provides an in-memory execution environment for statically linked system commands and native applications residing under `/bin/`.
+`binfs` (`binfs.c`) provides an in-memory execution environment for statically linked system commands, native applications, and embedded scripts residing under `/bin/`.
 *   **Statically Linked Binaries:** Applications are registered at compile-time into the `.eos_bins` linker section using `EOS_BIN_INITIALIZER` macros.
-*   **Execution Flow:** The user shell or execution engine locates binary apps within `binfs`, resolves metadata (name, entry point function pointer), and spawns them within isolated thread contexts (`threadctx.c`).
+*   **Embedded Script Assets:** Shell scripts such as `init.sh` are embedded as text assets and registered in `binfs`, exposed as executable files under `/bin/`.
+*   **Execution Flow:** The user shell or execution engine locates binary apps or scripts within `binfs`, resolves metadata (entry point function pointer or text script payload), and spawns or runs them sequentially.
 
 ---
 
@@ -33,9 +34,16 @@ The EOS Virtual Filesystem provides a unified, standardized POSIX-compliant inte
 
 ---
 
-## 5. procfs (Process Filesystem)
+## 5. procfs (Process & System Diagnostic Filesystem)
 
-`procfs` (`procfs.c`) mounts at `/proc` to expose live process status, thread execution contexts, and system diagnostics as virtual files.
+`procfs` (`procfs.c`) mounts at `/proc` to expose live process status, thread execution contexts, and device tree diagnostics as virtual files:
+*   `/proc/scopes`: Enumerates available driver scopes (`bus`, `display`, `storage`, `net`, `input`, `sound`).
+*   `/proc/drivers`: Lists registered drivers, their scopes, and priorities.
+*   `/proc/devices`: Lists active devices attached to the device tree.
+*   `/proc/mounts`: Displays active VFS filesystem mount points.
+*   `/proc/meminfo`, `/proc/tasks`: Displays runtime memory usage and active thread contexts.
+
+These virtual diagnostic files are queried by user utilities such as `devctl`, `ps`, and `df`.
 
 ---
-[Back to EOS Project Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md)
+[Back to EOS Project Index](../Readme.md) | [See Bus Drivers](./bus-driver-scope.md) | [See BinFS Architecture](./binfs-and-binaries-scope.md)

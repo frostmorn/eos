@@ -373,12 +373,6 @@ bool driver_bus_i2c_detach_req(eos_dev_t *dev, eos_dev_t *child) {
     st->attached_count--;
   }
 
-  if (st->attached_count == 0 &&
-      (dev->child == NULL || dev->child == child || dev->child->next == NULL) &&
-      st->open_refcount == 0) {
-    bus_deactivate_locked(dev, st);
-  }
-
   xSemaphoreGive(st->mutex);
   return true;
 }

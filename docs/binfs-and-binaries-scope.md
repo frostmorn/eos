@@ -1,6 +1,6 @@
 # BinFS, Native Binaries & Execution Architecture
 
-EOS features an in-memory execution environment (`binfs` and `ecore/exec.c`) for running statically linked native applications and system commands under `/bin/`.
+EOS features an in-memory execution environment (`binfs` and `ecore/exec.c`) for running statically linked native applications, system commands, and embedded shell scripts under `/bin/`.
 
 ---
 
@@ -25,20 +25,32 @@ typedef struct {
 
 ---
 
-## 2. BinFS VFS Integration (`binfs.c`, `binfs.h`)
+## 2. Embedded Script Assets (`asset.h`, `init.sh`)
 
-`binfs` mounts at `/bin` via ESP-IDF's VFS layer, presenting registered binaries as executable files:
-*   **Directory Enumeration:** `binfs_readdir` iterates through the `.eos_bins` array, exposing each binary as a regular file entry under `/bin/`.
-*   **Read-Only Manifest Access:** Opening a binary file (`binfs_open`, `binfs_read`) provides access to the binary's `eos_bin_t` manifest structure.
+In addition to compiled ELF binaries, `binfs` integrates embedded text assets into `/bin/`:
+*   **Asset Embedding:** Scripts like `init.sh` are linked into the firmware binary via CMake:
+    ```cmake
+    target_add_binary_data(eos.elf "init.sh" TEXT)
+    ```
+*   **Asset Manifest (`asset.h`):** The embedded data is referenced via linker symbols `_binary_init_sh_start` and `_binary_init_sh_end` encapsulated in an `eos_asset_t` structure.
+*   **Filesystem Visibility:** `binfs` surfaces these assets directly under `/bin/` (e.g. `/bin/init.sh`), allowing standard file read and shell script execution.
 
 ---
 
-## 3. Process Execution & Shell (`exec.c`, `ush.c`, `syscalls.c`)
+## 3. BinFS VFS Integration (`binfs.c`, `binfs.h`)
+
+`binfs` mounts at `/bin` via ESP-IDF's VFS layer, presenting registered binaries and assets as executable files:
+*   **Directory Enumeration:** `binfs_readdir` iterates through both `.eos_bins` manifests and registered assets, exposing each entry under `/bin/`.
+*   **Read-Only Manifest Access:** Opening a native binary file (`binfs_open`, `binfs_read`) provides access to the binary's `eos_bin_t` manifest structure; opening an asset provides direct access to its text payload.
+
+---
+
+## 4. Process Execution & Shell (`exec.c`, `ush.c`, `syscalls.c`)
 
 *   **POSIX Execution Wrappers (`exec.c`):** Implements POSIX process spawning functions (`execve`, `execv`, `execl`, etc.) by creating joinable pthreads that execute the binary's entry point function.
 *   **Synchronous Wait (`eos_wait`):** Tracks child thread execution handles, allowing shell processes to wait for child completion and retrieve exit status codes.
-*   **MicroShell (`ush.c`):** The default EOS command-line interpreter (`ush`) reads user input over serial (USB Serial/JTAG), parses command arguments, and executes binaries via `execv()` or `system()`.
-*   **System Call Interception (`syscalls.c`):** `__wrap_system()` inspects command binaries for the `EOS_BIN_MAGIC` signature and executes native app entry points directly in-process or via thread spawning.
+*   **MicroShell (`ush.c`):** The default EOS command-line interpreter (`ush`) reads user input over serial (USB Serial/JTAG), parses command arguments, and executes binaries via `execv()` or `system()`. When executing shell scripts, it parses and executes commands sequentially line-by-line.
+*   **System Call Interception (`syscalls.c`):** `__wrap_system()` inspects command targets for scripts or native binaries and handles dispatching them in-process or via thread spawning. At boot, `main/eos.c` calls `system("init.sh")` to process declarative board startup.
 
 ---
-[Back to Documentation Index](./Readme.md)
+[Back to Documentation Index](./Readme.md) | [See Board Porting Scope](./board-porting-scope.md) | [See Kernel Core Scope](./kernel-core-scope.md)

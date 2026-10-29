@@ -30,7 +30,7 @@ bool driver_storage_flash_init(eos_dev_t *dev) {
   memset(state, 0, sizeof(flash_state_t));
   dev->state = state;
 
-  state->chip = eos_cfg_get_ptr(dev->cfg, "chip", NULL);
+  state->chip = eos_cfg_get_ptr(dev->cfg, "chip", esp_flash_default_chip);
 
   if (state->chip == NULL) {
     free(state);

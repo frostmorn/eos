@@ -63,6 +63,10 @@ typedef struct {
   bool napt_enabled;
   EventGroupHandle_t wifi_event_group;
   eos_sta_ap_info_t sta_ap_info;
+#if EOS_HAVE_WIFI
+  esp_event_handler_instance_t wifi_event_instance;
+  esp_event_handler_instance_t ip_event_instance;
+#endif
 } wifi_radio_state_t;
 
 static wifi_radio_state_t *s_radio_state = NULL;
@@ -247,9 +251,9 @@ static bool wifi_ensure_net_init(wifi_radio_state_t *st) {
 
 #if EOS_HAVE_WIFI
   esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                      &wifi_event_handler, st, NULL);
+                                      &wifi_event_handler, st, &st->wifi_event_instance);
   esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
-                                      &wifi_event_handler, st, NULL);
+                                      &wifi_event_handler, st, &st->ip_event_instance);
 #endif
 
   st->net_inited = true;
@@ -264,8 +268,12 @@ static bool wifi_ensure_wifi_init(wifi_radio_state_t *st) {
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   esp_err_t ret = esp_wifi_init(&cfg);
   if (ret != ESP_OK) {
-    EOS_LOGE("wifi: esp_wifi_init failed: %s", esp_err_to_name(ret));
-    return false;
+    if (ret == ESP_ERR_INVALID_STATE) {
+      st->wifi_inited = true;
+    } else {
+      EOS_LOGE("wifi: esp_wifi_init failed: %s", esp_err_to_name(ret));
+      return false;
+    }
   }
 
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
@@ -444,10 +452,21 @@ void driver_net_wifi_shutdown(eos_dev_t *dev) {
   }
 
 #if EOS_HAVE_WIFI
+  if (st->wifi_event_instance) {
+    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, st->wifi_event_instance);
+    st->wifi_event_instance = NULL;
+  }
+  if (st->ip_event_instance) {
+    esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, st->ip_event_instance);
+    st->ip_event_instance = NULL;
+  }
   if (st->promisc_enabled) {
     esp_wifi_set_promiscuous(false);
   }
   wifi_radio_stop(st);
+  if (st->wifi_inited) {
+    esp_wifi_deinit();
+  }
 #endif
 
   if (st->wifi_event_group) {

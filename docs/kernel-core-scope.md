@@ -10,7 +10,7 @@ EOS organizes all hardware and virtual devices into a hierarchical **Device Tree
 *   **Root Anchor (`root`):** The root node (`eos_devtree_root()`) represents the logical top of the device tree, managed by the root bus driver (`edriver/bus/root/root.c`).
 *   **Parent-Child Attachment:** Devices attach hierarchically via `eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent)`. Before attachment, EOS verifies that the parent driver has `is_bus == true` (or validates via `attach_req`) and queries the parent bus using ioctl attachment protocols (`EOS_BUS_IOCTL_KID_ATTACH`).
 *   **Dynamic Indexing & Naming:** Upon successful attachment, EOS automatically assigns a per-scope stable device ID (`eos_dev_assign_id`) and constructs a canonical device name (`eos_dev_assign_name`, e.g., `fb0`, `gpio`, `sd0`) used by `devfs`.
-*   **Recursive Detachment:** Detaching a device (`eos_dev_detach`) recursively detaches all child nodes, shuts down drivers, reporphans orphaned child nodes if permitted, and zeroes device slots for reuse.
+*   **Dynamic Attachment & Detachment via `devctl`:** Devices can be dynamically attached (`devctl attach`) or detached (`devctl detach`) at runtime. Detaching a device recursively detaches all child nodes, shuts down drivers, releases claimed hardware capabilities, and zeroes device slots for reuse.
 
 ---
 
@@ -29,7 +29,7 @@ Every driver in EOS (`eos_drv_t`) is statically registered at compile-time into 
 Hardware resources on ESP32 chips (such as GPIO pins, I2C ports, SPI hosts, UART channels, and LEDC PWM channels) are governed by the **Capability Manager (`capsmgr`)**.
 *   **Conflict Prevention:** `eos_cap_claim(eos_cap_type_t type, int32_t no, eos_dev_t *dev)` checks and records resource ownership. Attempting to claim an already-claimed resource returns `false`, preventing driver misconfiguration or pin conflicts.
 *   **Reserved Hardware Protection:** At initialization (`eos_capsmgr_init()`), system-reserved pins (strapping pins, flash/PSRAM pins, UART console pins, USB pins) are automatically claimed with a `NULL` owner to block accidental peripheral assignment.
-*   **Ownership Transfer:** Claims made by `NULL` (system reserved) can be transferred to specific device drivers when explicitly overridden by board initialization routines.
+*   **Ownership Transfer:** Claims made by `NULL` (system reserved) can be transferred to specific device drivers when explicitly overridden during device initialization or attachment.
 
 ---
 
@@ -53,7 +53,7 @@ The File API helper module (`fapi`) provides robust path normalization and resol
 
 ## 6. Asset Management (`asset.c`, `asset.h`)
 
-EOS provides lightweight asset management (`eos_asset_t`) for accessing compiled-in static assets (such as fonts, images, or configuration payloads).
+EOS provides lightweight asset management (`eos_asset_t`) for accessing compiled-in static assets (such as fonts, images, or configuration payloads, and executable scripts like `init.sh`).
 
 ---
-[Back to Documentation Index](./Readme.md) | [Development Guide](../DEVELOPMENT.md)
+[Back to Documentation Index](./Readme.md) | [Development Guide](../DEVELOPMENT.md) | [Board Porting Scope](./board-porting-scope.md)

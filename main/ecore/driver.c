@@ -280,17 +280,23 @@ int eos_drv_rmdir(eos_dev_t *dev, const char *name) {
 }
 
 int eos_drv_fcntl(eos_dev_t *dev, int fd, int cmd, int arg) {
-  // RESEARCH: how does that differ from ioctl?
-  if (dev && dev->driver && dev->driver->fcntl)
-    return dev->driver->fcntl(dev, fd, cmd, arg);
+  if (!dev || !dev->in_use || !dev->driver) {
+    errno = ENODEV;
+    return -1;
+  }
 
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+  if (dev->driver->fcntl)
+    return dev->driver->fcntl(dev, fd, cmd, arg);
 
   errno = ENOSYS;
   return -1;
 }
 
 int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
+  if (!dev || !dev->in_use || !dev->driver) {
+    errno = ENODEV;
+    return -1;
+  }
 
   // Provide cross driver ioctl functionality
   switch (cmd) {
@@ -301,12 +307,10 @@ int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   }
 
   // Still not handled, check driver implementation
-  if (dev && dev->driver && dev->driver->ioctl)
+  if (dev->driver->ioctl)
     return dev->driver->ioctl(dev, fd, cmd, args);
 
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
-
-  errno = ENOSYS;
+  errno = ENOTTY;
   return -1;
 }
 

@@ -1,17 +1,17 @@
 # EOS (ESP Operating System) Development Guide
 
-EOS is a lightweight RTOS/OS abstraction layer for ESP32-S3 implementing a **Unified Device Model** (Everything is a file via `/dev` VFS).
+EOS is a lightweight RTOS/OS abstraction layer for ESP32 microcontrollers (ESP32-S3 and ESP32-P4) implementing a **Unified Device Model** (Everything is a file via `/dev` VFS).
 
 ---
 
 ## 1. Quick Start & Build Commands
 
 *   **ESP-IDF Setup:** `source /opt/esp-idf/export.sh`
-*   **Select Board:** `make setboard` (or `python tools/setboard.py esp32s3_qemu`)
+*   **Select Board:** `make setboard` (or `python3 tools/setboard.py esp32s3_qemu`)
 *   **Build / Reconfigure / Clean:** `make build`, `make reconfigure`, `make clean`
 *   **Flash / Monitor / QEMU / Debug:** `make flash`, `make monitor`, `make qemu`, `make qemu_graphics`, `make debug`
 *   **Code Generation:** `make driver` (`edriver`), `make bin` (`ebin`) via `tools/codegen.py`
-*   **Audit & Analysis:** `make symbols`, `python tools/layer_audit.py`
+*   **Audit & Analysis:** `make symbols`, `python3 tools/layer_audit.py`
 
 ---
 
@@ -35,7 +35,7 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32-S3 implementing a **Uni
     *   **IOCTL-Only Driver Communication:** Drivers must pass and consume functionality strictly via standard VFS and `ioctl` interfaces (`eos_dev_ioctl_call` on parent/child/peer devices) rather than loose C helper functions or ad-hoc cross-driver exports.
 *   **`ecore/`**: Core kernel subsystems (VFS, devfs, binfs, pipefs, procfs, driver model).
 *   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables.
-*   **`eboard/`**: Board-specific pin mappings and hardware startup.
+*   **`eboard/`**: Board configurations and declarative startup scripts (`init.sh`, `sdkconfig`). Peripheral attachments are declared via `devctl attach` rather than hardcoded C initialization files.
 *   **`eld/`**: Linker and link-fragment scripts (`.ld`, `.lf`). **All linker scripts must reside exclusively within `main/eld/`**.
 *   **`ewrap/`**: System call and library wrappers. **All `__wrap_*` wrapper function definitions must reside exclusively within `main/ewrap/`**.
 *   **Header Guards:** Every header file (`.h`) must include `#pragma once`.

@@ -120,8 +120,10 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   if (st->wp_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->wp_pin, dev);
   if (st->rst_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->rst_pin, dev);
 
-  // If reset pin is present, pulse reset
-  if (st->rst_pin >= 0) {
+  bool lazy_slot = (bool)eos_cfg_get_i(dev->cfg, "lazy_slot", 0);
+
+  // If reset pin is present and slot is not lazy/external, pulse reset
+  if (!lazy_slot && st->rst_pin >= 0) {
     gpio_config_t rst_conf = {
         .pin_bit_mask = (1ULL << st->rst_pin),
         .mode = GPIO_MODE_OUTPUT,
@@ -163,11 +165,16 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   }
 #endif
 
-  esp_err_t host_err = sdmmc_host_init();
-  if (host_err != ESP_OK && host_err != ESP_ERR_INVALID_STATE) {
-    EOS_LOGE("sdio: sdmmc_host_init failed: %s", esp_err_to_name(host_err));
-  } else {
+  sdmmc_host_state_t hstate = {0};
+  if (sdmmc_host_get_state(&hstate) == ESP_OK && hstate.host_initialized) {
     st->host_initialized = true;
+  } else {
+    esp_err_t host_err = sdmmc_host_init();
+    if (host_err != ESP_OK && host_err != ESP_ERR_INVALID_STATE && host_err != ESP_ERR_NOT_FOUND) {
+      EOS_LOGE("sdio: sdmmc_host_init failed: %s", esp_err_to_name(host_err));
+    } else {
+      st->host_initialized = true;
+    }
   }
 
   st->slot_cfg = (sdmmc_slot_config_t)SDMMC_SLOT_CONFIG_DEFAULT();
@@ -181,7 +188,6 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   if (st->cd_pin >= 0) st->slot_cfg.cd = (gpio_num_t)st->cd_pin;
   if (st->wp_pin >= 0) st->slot_cfg.wp = (gpio_num_t)st->wp_pin;
 
-  bool lazy_slot = (bool)eos_cfg_get_i(dev->cfg, "lazy_slot", 0);
   if (!lazy_slot) {
     esp_err_t slot_err = sdmmc_host_init_slot(st->slot, &st->slot_cfg);
     if (slot_err != ESP_OK && slot_err != ESP_ERR_INVALID_STATE) {
@@ -205,6 +211,10 @@ void driver_bus_sdio_shutdown(eos_dev_t *dev) {
   sdio_state_t *st = (sdio_state_t *)dev->state;
 
 #if SOC_SDMMC_HOST_SUPPORTED
+  if (st->slot_initialized) {
+    sdmmc_host_deinit_slot(st->slot);
+    st->slot_initialized = false;
+  }
 #if defined(SOC_SDMMC_IO_POWER_EXTERNAL) && SOC_SDMMC_IO_POWER_EXTERNAL
   if (st->pwr_ctrl_handle) {
     sd_pwr_ctrl_del_on_chip_ldo(st->pwr_ctrl_handle);

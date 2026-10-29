@@ -39,7 +39,10 @@ class EOSTestHarness:
 
     def connect(self):
         print(f"{Colors.CYAN}Connecting to EOS on {self.port} at {self.baudrate} baud...{Colors.RESET}")
-        self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+        if hasattr(serial, "serial_for_url"):
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
+        else:
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
         time.sleep(1.0)
         self.ser.reset_input_buffer()
         self.ser.write(b"\n")
@@ -59,7 +62,10 @@ class EOSTestHarness:
         out = b""
         while time.time() < deadline:
             if self.ser.in_waiting:
-                chunk = self.ser.read(self.ser.in_waiting)
+                if hasattr(self.ser, "_socket"):
+                    chunk = self.ser._socket.recv(4096)
+                else:
+                    chunk = self.ser.read(self.ser.in_waiting)
                 if chunk:
                     out += chunk
                     # Check if shell prompt has returned after executing command
@@ -70,7 +76,10 @@ class EOSTestHarness:
         time.sleep(0.05)
         flush_deadline = time.time() + 0.3
         while self.ser.in_waiting and time.time() < flush_deadline:
-            out += self.ser.read(self.ser.in_waiting)
+            if hasattr(self.ser, "_socket"):
+                out += self.ser._socket.recv(4096)
+            else:
+                out += self.ser.read(self.ser.in_waiting)
             time.sleep(0.02)
         return out.decode("utf-8", errors="replace").strip()
 
@@ -108,29 +117,36 @@ class EOSTestHarness:
         print(f"\n{Colors.BOLD}=== 1. Virtual /proc Filesystem Tests ==={Colors.RESET}")
         self.check(suite, "Kernel version format", "cat /proc/version", r"EOS\s+\d+\.\d+\.\d+")
         self.check(suite, "IDF build version in /proc/version", "cat /proc/version", r"IDF\s+v[0-9\.]+")
-        self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+input[\s\S]+net[\s\S]+storage")
+        self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+(input[\s\S]+)?net[\s\S]+storage")
         self.check(suite, "Driver table headers", "cat /proc/drivers", r"SCOPE\s+NAME\s+DEVNAME\s+FLAGS")
         self.check(suite, "Net drivers in /proc/drivers", "cat /proc/drivers", r"net\s+ap[\s\S]+net\s+sta[\s\S]+net\s+wifi")
         drivers_out = self.run_cmd("cat /proc/drivers")
         has_sdio = "bus          sdio" in drivers_out or re.search(r"bus\s+sdio", drivers_out) is not None
         if has_sdio:
             self.check(suite, "SDIO driver in /proc/drivers", "cat /proc/drivers", r"bus\s+sdio\s+sdio")
-        self.check(suite, "SD driver in /proc/drivers", "cat /proc/drivers", r"storage\s+sd\s+sd")
+        has_sd = "storage      sd" in drivers_out or re.search(r"storage\s+sd", drivers_out) is not None
+        if has_sd:
+            self.check(suite, "SD driver in /proc/drivers", "cat /proc/drivers", r"storage\s+sd\s+sd")
+        else:
+            self.check(suite, "Flash driver in /proc/drivers", "cat /proc/drivers", r"storage\s+flash\s+flash")
         self.check(suite, "Virtual bridge driver in /proc/drivers", "cat /proc/drivers", r"net\s+bridge\s+br")
-        self.check(suite, "Device tree /proc/devices has net interfaces", "cat /proc/devices", r"wifi0[\s\S]+sta0[\s\S]+ap0")
+        devices_out = self.run_cmd("cat /proc/devices")
+        if "wifi0" in devices_out:
+            self.check(suite, "Device tree /proc/devices has net interfaces", "cat /proc/devices", r"(wifi0[\s\S]+(sta0|ap0)|(sta0|ap0)[\s\S]+wifi0)")
         if has_sdio:
             self.check(suite, "Device tree /proc/devices has SDIO slots", "cat /proc/devices", r"sdio0[\s\S]+sdio1")
-            devices_out = self.run_cmd("cat /proc/devices")
             if "sd0" in devices_out:
                 self.check(suite, "Device tree has SD card attached", "cat /proc/devices", r"sd0\s+storage/sd")
+        elif "spi0" in devices_out:
+            self.check(suite, "Device tree /proc/devices has core interfaces", "cat /proc/devices", r"(flash0[\s\S]+spi0|spi0[\s\S]+flash0)")
         else:
-            self.check(suite, "Device tree /proc/devices has core interfaces", "cat /proc/devices", r"flash0[\s\S]+spi0[\s\S]+wifi0")
+            self.check(suite, "Device tree /proc/devices has core interfaces", "cat /proc/devices", r"flash0[\s\S]+fb0")
         self.check(suite, "Memory stats in /proc/meminfo", "cat /proc/meminfo", r"MemFree:\s+\d+\s+kB")
         self.check(suite, "SPIRAM stats in /proc/meminfo", "cat /proc/meminfo", r"(SPIRAMFree|MemFree):\s+\d+\s+kB")
         self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"(/proc|/dev|/spiffs)")
         self.check(suite, "Interrupt allocation in /proc/interrupts", "cat /proc/interrupts", r"(CPU|intr|alloc|Level|Edge)")
         self.check(suite, "File descriptors in /proc/fds", "cat /proc/fds", r"(VFS|fd|File|Handle|Driver)")
-        self.check(suite, "GPIO pin matrix in /proc/gpio", "cat /proc/gpio", r"(GPIO|io|pin|input|output|direction)", wait=2.0)
+        self.check(suite, "GPIO pin matrix in /proc/gpio", "cat /proc/gpio", r"(GPIO|IO|pin|input|output|Pullup|direction)", wait=2.0)
         self.check(suite, "Heap memory summary in /proc/heapinfo", "cat /proc/heapinfo", r"== HEAP SUMMARY ==[\s\S]+INTERNAL[\s\S]+DMA")
         self.check(suite, "SoC and core info in /proc/cpuinfo", "cat /proc/cpuinfo", r"model name[\s\S]+cpu cores\s+:\s+\d+")
         self.check(suite, "System uptime in /proc/uptime", "cat /proc/uptime", r"uptime:\s+\d+s[\s\S]+reset reason:")
@@ -209,22 +225,151 @@ class EOSTestHarness:
             self.check(suite, "devctl drivers bus filter has sdio", "devctl drivers bus", r"bus\s+sdio")
         else:
             self.check(suite, "devctl drivers bus filter has gpio/spi", "devctl drivers bus", r"bus\s+gpio[\s\S]+bus\s+spi")
-        self.check(suite, "devctl drivers storage filter has sd", "devctl drivers storage", r"storage\s+sd")
+        has_sd = "storage      sd" in drivers_out or re.search(r"storage\s+sd", drivers_out) is not None
+        if has_sd:
+            self.check(suite, "devctl drivers storage filter has sd", "devctl drivers storage", r"storage\s+sd")
+        else:
+            self.check(suite, "devctl drivers storage filter has flash", "devctl drivers storage", r"storage\s+flash")
         self.check(suite, "devctl drivers net (scoped filter)", "devctl drivers net", r"net\s+sta", not_pattern=r"storage\s+flash")
-        self.check(suite, "devctl devices listing", "devctl devices", r"wifi0\s+net/wifi")
+        self.check(suite, "devctl devices listing", "devctl devices", r"(root\s+bus/root|flash0\s+storage/flash|wifi0\s+net/wifi)")
+        devctl_devs = self.run_cmd("devctl devices")
         if has_sdio:
-            devctl_devs = self.run_cmd("devctl devices")
             if "sd0" in devctl_devs:
                 self.check(suite, "devctl devices lists sdio0 and sd0", "devctl devices", r"sdio0\s+bus/sdio[\s\S]+sd0\s+storage/sd")
             else:
                 self.check(suite, "devctl devices lists sdio0", "devctl devices", r"sdio0\s+bus/sdio")
             self.check(suite, "devctl devices lists sdio1 and wifi0", "devctl devices", r"sdio1\s+bus/sdio[\s\S]+wifi0\s+net/wifi")
-        else:
+        elif "spi0" in devctl_devs:
             self.check(suite, "devctl devices lists spi0 and fb0", "devctl devices", r"spi0\s+bus/spi[\s\S]+fb0\s+display/st7789")
+        else:
+            self.check(suite, "devctl devices lists fb0", "devctl devices", r"fb0\s+display/qemu_rgb")
         self.check(suite, "devctl attach net bridge", "devctl attach net bridge", r"Attached net/bridge as /dev/br0")
         self.check(suite, "Verify br0 appears in /proc/devices", "cat /proc/devices", r"br0\s+net/bridge")
+        self.check(suite, "devctl info br0 basic", "devctl info br0", r"Device:\s+/dev/br0[\s\S]+Driver:\s+net/bridge")
         self.check(suite, "devctl detach br0", "devctl detach br0", r"Detached /dev/br0")
-        self.check(suite, "Verify br0 is removed from /proc/devices", "cat /proc/devices", r"sta0", not_pattern=r"br0\s+net/bridge")
+        self.check(suite, "Verify br0 is removed from /proc/devices", "cat /proc/devices", r"bus/root", not_pattern=r"br0\s+net/bridge")
+
+        # Option A syntax: attach with --cfg and verify info
+        self.check(suite, "devctl attach with --cfg flags",
+                   "devctl attach net bridge root --cfg mtu=1500,debug=1",
+                   r"Attached net/bridge as /dev/br0")
+        self.check(suite, "devctl info br0 verifies config output", "devctl info br0",
+                   r"Config:.*mtu=1500.*debug=1")
+        self.check(suite, "devctl detach br0 configured device", "devctl detach br0", r"Detached /dev/br0")
+
+        # Comprehensive lifecycle test: detach all present devices and reattach them back
+        self.test_devtree_detach_reattach_cycle()
+
+    def test_devtree_detach_reattach_cycle(self):
+        suite = "devctl"
+        print(f"\n{Colors.BOLD}--- DevTree Detach & Reattach Lifecycle Validation ---{Colors.RESET}")
+
+        # Step 1: Discover currently present devices from /proc/devices
+        out = self.run_cmd("cat /proc/devices")
+        lines = [line.strip() for line in out.splitlines() if line.strip()]
+
+        devices = []
+        for line in lines:
+            parts = line.split()
+            if not parts or parts[0] == "ID":
+                continue
+            if len(parts) >= 4 and parts[0].isdigit():
+                dev_id, dev_name, driver, parent = parts[0], parts[1], parts[2], parts[3]
+                if "/" in driver and driver != "bus/root" and not dev_name.startswith("("):
+                    devices.append({
+                        "name": dev_name,
+                        "driver": driver,
+                        "parent": parent,
+                    })
+
+        if not devices:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] No non-root devices discovered to cycle.")
+            return
+
+        print(f"  Discovered {len(devices)} active non-root devices: {[d['name'] for d in devices]}")
+
+        # Step 2: Query devctl info for each device to capture pins, config, and children
+        for d in devices:
+            info_out = self.run_cmd(f"devctl info {d['name']}")
+            d["pins"] = None
+            d["cfg"] = None
+            d["children"] = []
+
+            for iline in info_out.splitlines():
+                iline = iline.strip()
+                if iline.startswith("Driver:"):
+                    d["driver"] = iline.split("Driver:")[1].strip()
+                elif iline.startswith("Parent:"):
+                    d["parent"] = iline.split("Parent:")[1].strip()
+                elif iline.startswith("Pins:"):
+                    raw_pins = iline.split("Pins:")[1].strip()
+                    if raw_pins and raw_pins != "(none)":
+                        d["pins"] = raw_pins.replace(" ", "")
+                elif iline.startswith("Config:"):
+                    raw_cfg = iline.split("Config:")[1].strip()
+                    if raw_cfg and raw_cfg != "(none)":
+                        cfg_items = [item.strip() for item in raw_cfg.split(",")]
+                        filtered_cfg = [item for item in cfg_items if "=0x" not in item and "=(nil)" not in item]
+                        if filtered_cfg:
+                            d["cfg"] = ",".join(filtered_cfg).replace(" ", "")
+                elif iline.startswith("Children:"):
+                    raw_ch = iline.split("Children:")[1].strip()
+                    if raw_ch and raw_ch != "(none)":
+                        d["children"] = [c.strip() for c in raw_ch.split(",") if c.strip()]
+
+        # Step 3: Topologically sort for attachment and detachment
+        # Attach order: parents before children, preserving original order from devices list.
+        attach_order = []
+        attached = set(["root", "none", "-"])
+        remaining = list(devices)
+        while remaining:
+            candidates = [d for d in remaining if d["parent"] in attached]
+            if not candidates:
+                candidates = remaining
+            d = candidates[0]
+            remaining.remove(d)
+            attached.add(d["name"])
+            attach_order.append(d)
+
+        # Detach order is the exact reverse of attach order (children before parents)
+        detach_order = list(reversed(attach_order))
+
+        for d in detach_order:
+            name = d["name"]
+            self.check(suite, f"Detach leaf device {name} ({d['driver']})",
+                       f"devctl detach {name}", rf"Detached /dev/{name}")
+
+        # Step 4: Verify tree is bare (only bus/root remains)
+        self.check(suite, "Verify all peripheral devices detached (/proc/devices bare)",
+                   "cat /proc/devices", r"bus/root", not_pattern=r"display/|storage/|net/|bus/spi|bus/gpio")
+
+        # Step 5: Re-attach in attach_order (parents before children, preserving deterministic naming)
+        for d in attach_order:
+            scope, drv = d["driver"].split("/", 1)
+            parent = d["parent"] if d["parent"] != "none" else "root"
+            cmd = f"devctl attach {scope} {drv} {parent}"
+            if d.get("pins"):
+                cmd += f" --pin {d['pins']}"
+            if d.get("cfg"):
+                cmd += f" --cfg {d['cfg']}"
+
+            self.check(suite, f"Reattach {d['name']} ({d['driver']}) under {parent}",
+                       cmd, rf"Attached {scope}/{drv} as /dev/{d['name']}")
+
+        # Step 6: Verify all original devices are back in /proc/devices
+        proc_devs = self.run_cmd("cat /proc/devices")
+        all_back = True
+        for d in devices:
+            if d["name"] not in proc_devs:
+                all_back = False
+                print(f"  [{Colors.RED}FAIL{Colors.RESET}] Device {d['name']} missing from /proc/devices after reattach")
+        if all_back:
+            print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All {len(devices)} devices verified active in /proc/devices after lifecycle cycle")
+            self.passed += 1
+            self.suite_counts[suite]["pass"] += 1
+        else:
+            self.failed += 1
+            self.suite_counts[suite]["fail"] += 1
 
     def test_wlanctl(self):
         suite = "wlanctl"
@@ -259,7 +404,8 @@ class EOSTestHarness:
         print(f"\n{Colors.BOLD}=== 4. Network Interface Management (netctl - ip vibe) Tests ==={Colors.RESET}")
         # Default display and interface discovery
         self.check(suite, "netctl default displays interfaces and IPs", "netctl", r"\d+:\s+sta0:\s+<")
-        self.check(suite, "netctl link show lists interfaces", "netctl link", r"\d+:\s+sta0:\s+<[\s\S]+\d+:\s+ap0:\s+<")
+        self.check(suite, "netctl link show lists interfaces", "netctl link",
+                   r"(\d+:\s+sta0:\s+<[\s\S]+\d+:\s+ap0:\s+<|\d+:\s+ap0:\s+<[\s\S]+\d+:\s+sta0:\s+<)")
         self.check(suite, "netctl link show ap0 specifies DOWN state", "netctl link show ap0", r"state DOWN")
 
         # Link state control (ip link set)

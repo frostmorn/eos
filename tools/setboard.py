@@ -120,6 +120,16 @@ def save_board_state(board):
     if os.path.exists("sdkconfig.old"):
         os.remove("sdkconfig.old")
 
+    # 6. init.sh
+    dest_init = os.path.join(cache_dir, "init.sh")
+    if os.path.exists("init.sh"):
+        if os.path.exists(dest_init):
+            os.remove(dest_init)
+        try:
+            shutil.move("init.sh", dest_init)
+        except Exception as e:
+            print(f"[setboard] Warning: Failed to cache init.sh for '{board}': {e}")
+
 
 def restore_board_state(board, clean=False):
     if not board:
@@ -127,6 +137,8 @@ def restore_board_state(board, clean=False):
     cache_dir = os.path.join(BOARD_CACHE_DIR, board)
     eboard_sdkconfig = os.path.join(BOARD_PATH, board, "sdkconfig")
     cached_sdkconfig = os.path.join(cache_dir, "sdkconfig")
+    eboard_init = os.path.join(BOARD_PATH, board, "init.sh")
+    cached_init = os.path.join(cache_dir, "init.sh")
 
     if clean and os.path.exists(cache_dir):
         print(f"[setboard] Discarding cache for '{board}' (--clean requested).")
@@ -136,7 +148,7 @@ def restore_board_state(board, clean=False):
     for d in ["build", "managed_components"]:
         if os.path.exists(d):
             shutil.rmtree(d)
-    for f in ["dependencies.lock", "main/idf_component.yml", "sdkconfig", "sdkconfig.old"]:
+    for f in ["dependencies.lock", "main/idf_component.yml", "sdkconfig", "sdkconfig.old", "init.sh"]:
         if os.path.exists(f):
             os.remove(f)
 
@@ -185,10 +197,22 @@ def restore_board_state(board, clean=False):
                 shutil.move(cached_sdkconfig, "sdkconfig")
         elif os.path.exists(eboard_sdkconfig):
             shutil.copy2(eboard_sdkconfig, "sdkconfig")
+
+        # 6. Restore init.sh
+        if os.path.exists(cached_init):
+            if os.path.exists(eboard_init) and os.path.getmtime(eboard_init) > os.path.getmtime(cached_init):
+                shutil.copy2(eboard_init, "init.sh")
+                os.remove(cached_init)
+            else:
+                shutil.move(cached_init, "init.sh")
+        elif os.path.exists(eboard_init):
+            shutil.copy2(eboard_init, "init.sh")
     else:
         # First time configuring this board
         if os.path.exists(eboard_sdkconfig):
             shutil.copy2(eboard_sdkconfig, "sdkconfig")
+        if os.path.exists(eboard_init):
+            shutil.copy2(eboard_init, "init.sh")
 
     # Safety check on target chip in restored build directory
     cache_path = os.path.join("build", "CMakeCache.txt")
@@ -222,6 +246,10 @@ def setboard(board, clean=False):
     if current_board == board and not clean:
         print(f"Board '{board}' is already active.")
         update_dependencies(board)
+        if not os.path.exists("init.sh"):
+            eboard_init = os.path.join(BOARD_PATH, board, "init.sh")
+            if os.path.exists(eboard_init):
+                shutil.copy2(eboard_init, "init.sh")
         with open(ACTIVE_BOARD_FILE, "w", encoding="utf-8") as f:
             f.write(board + "\n")
         return

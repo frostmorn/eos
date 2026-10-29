@@ -1,4 +1,3 @@
-#include "eboard/board.h"
 #include "ecore/binfs.h"
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
@@ -25,7 +24,6 @@ void *eos_main(void *data) {
   eos_devtree_init();
   eos_devfs_init();
   eos_procfs_init();
-  eos_board_init();
   eos_binfs_init();
 
   while (1) {

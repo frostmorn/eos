@@ -199,14 +199,14 @@ Once rebooted, connect to the serial console on `/dev/ttyACM0` (or `/dev/ttyACM1
     W (3560) transport: Version mismatch: Host [2.13.0] > Co-proc [2.12.0] ==> Upgrade co-proc to avoid RPC timeouts
     I (4435) RPC_WRAP: Coprocessor Boot-up
     ```
-2.  **Verify Interface MAC Sync:**
+2.  **Verify Interface Hardware Address Sync:**
     ```text
     ~/==(^_^) / > netctl
     1: wifi0: <UP,LOWER_UP,BROADCAST,MULTICAST> mtu 1500 qdisc noqueue state UP
-        link/ieee802.11 00:00:00:00:00:00 brd ff:ff:ff:ff:ff:ff
+        link/ieee802.11 <radio-mac> brd <broadcast-mac>
         /* ext C6 (PU GPIO 54), ch 1, 20 dBm */
     2: sta0: <BROADCAST,MULTICAST> mtu 1500 qdisc noqueue state DOWN
-        link/ether 12:34:56:78:9a:bc brd ff:ff:ff:ff:ff:ff
+        link/ether <station-mac> brd <broadcast-mac>
     ```
 3.  **Verify Scanning via `wlanctl`:**
     ```text
@@ -217,7 +217,7 @@ Once rebooted, connect to the serial console on `/dev/ttyACM0` (or `/dev/ttyACM1
     Found 1 access point(s):
     SSID                              BSSID              RSSI  CH  AUTH        
     -----------------------------------------------------------------------
-    Example-Network                   12:34:56:78:9a:bc   -43   1  WPA2_PSK    
+    Example-Network                   <bssid-address>    -43   1  WPA2_PSK    
 
     SCAN_DONE:count=1
     ```

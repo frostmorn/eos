@@ -1,6 +1,7 @@
 #include "dev.h"
 #include "ecore/driver.h"
 #include <errno.h>
+#include <stdlib.h>
 
 // Generates eos_dev_t_tree_attach/detach/detach_subtree/walk,
 // operating on this struct's parent/child/next fields (see
@@ -172,6 +173,24 @@ int eos_dev_detach(eos_dev_t *dev) {
   // instead of being left with a dangling pointer into dev's slot,
   // which is about to be zeroed and made available for reuse.
   eos_dev_t_tree_detach(dev);
+
+  // Free dynamically allocated pin and config arrays
+  if (dev->dynamic_pins && dev->pins) {
+    for (eos_pin_t *p = dev->pins; p->key != NULL; p++) {
+      if (p->key) free(p->key);
+    }
+    free(dev->pins);
+  }
+
+  if (dev->dynamic_cfg && dev->cfg) {
+    for (eos_cfg_t *c = dev->cfg; c->key != NULL; c++) {
+      if (c->key) free((void *)c->key);
+      if (c->type == EOS_CFG_STR && c->val.s) {
+        free(c->val.s);
+      }
+    }
+    free(dev->cfg);
+  }
 
   // Cleanup
   bzero(dev, sizeof(eos_dev_t));
