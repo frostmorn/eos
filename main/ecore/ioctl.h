@@ -45,6 +45,14 @@ typedef struct {
   bool fixed_addr;
 } eos_sdio_cmd53_t;
 
+typedef struct {
+  uint32_t sample_rate;    // e.g. 44100
+  uint8_t bits_per_sample; // e.g. 16, 24, 32
+  uint8_t channels;        // 1 (mono) or 2 (stereo)
+  uint8_t volume;          // 0 - 100
+  uint8_t mult;            // 1 - 100 (multiplier %, default 10 for earplugs mode)
+} eos_sound_config_t;
+
 //=====================================================
 // ioctl call table
 // IOCTL CODE, ARGS
@@ -175,6 +183,24 @@ typedef enum {
   EOS_TOUCH_IOCTL_POLL,              // eos_input_event_t *ev
   EOS_TOUCH_IOCTL_GET_COORDS,        // uint16_t *x, uint16_t *y, bool *pressed
   EOS_TOUCH_IOCTL_GET_PRESSURE,      // uint16_t *pressure
+
+  //=====================================================
+  // edriver/sound
+  //=====================================================
+  EOS_SOUND_IOCTL_GET_CONFIG = 400,     // eos_sound_config_t *out_cfg
+  EOS_SOUND_IOCTL_SET_CONFIG,          // const eos_sound_config_t *cfg
+  EOS_SOUND_IOCTL_SET_SAMPLE_RATE,     // uint32_t rate_hz
+  EOS_SOUND_IOCTL_GET_SAMPLE_RATE,     // uint32_t *out_rate_hz
+  EOS_SOUND_IOCTL_SET_BITS_PER_SAMPLE, // uint32_t bits
+  EOS_SOUND_IOCTL_GET_BITS_PER_SAMPLE, // uint32_t *out_bits
+  EOS_SOUND_IOCTL_SET_CHANNELS,        // uint32_t channels
+  EOS_SOUND_IOCTL_GET_CHANNELS,        // uint32_t *out_channels
+  EOS_SOUND_IOCTL_SET_VOLUME,          // uint32_t volume (0 - 100)
+  EOS_SOUND_IOCTL_GET_VOLUME,          // uint32_t *out_volume
+  EOS_SOUND_IOCTL_SET_MULT,            // uint32_t mult (1 - 100, 10 = earplugs 10% limit)
+  EOS_SOUND_IOCTL_GET_MULT,            // uint32_t *out_mult
+  EOS_SOUND_IOCTL_START,               // no args
+  EOS_SOUND_IOCTL_STOP,                // no args
 
   //=====================================================
   // edriver/net

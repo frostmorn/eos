@@ -268,6 +268,11 @@ class EOSTestHarness:
             self.run_cmd("echo up > /dev/keyboard0")
             self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)")
 
+        if "sound0" in devctl_devs:
+            self.check(suite, "devctl devices lists sound0", "devctl devices", r"sound0\s+sound/max98357")
+            self.check(suite, "devctl info sound0", "devctl info sound0", r"Driver:\s+sound/max98357")
+            self.check(suite, "Play test tone via test_sound", "test_sound 440 200 30", r"playback complete")
+
         # Comprehensive lifecycle test: detach all present devices and reattach them back
         self.test_devtree_detach_reattach_cycle()
 
