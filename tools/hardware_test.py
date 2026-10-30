@@ -273,6 +273,14 @@ class EOSTestHarness:
             self.check(suite, "devctl info sound0", "devctl info sound0", r"Driver:\s+sound/max98357")
             self.check(suite, "Play test tone via test_sound", "test_sound 440 200 30", r"playback complete")
 
+        if "adc0" in devctl_devs:
+            self.check(suite, "devctl devices lists adc0", "devctl devices", r"adc0\s+bus/adc")
+            self.check(suite, "devctl info adc0", "devctl info adc0", r"Driver:\s+bus/adc")
+
+        if "battery0" in devctl_devs:
+            self.check(suite, "devctl devices lists battery0", "devctl devices", r"battery0\s+power/battery")
+            self.check(suite, "devctl info battery0", "devctl info battery0", r"Driver:\s+power/battery")
+            self.check(suite, "Query battery status via battery CLI", "battery", r"Battery:")
         # Comprehensive lifecycle test: detach all present devices and reattach them back
         self.test_devtree_detach_reattach_cycle()
 

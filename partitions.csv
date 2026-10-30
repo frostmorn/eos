@@ -1,0 +1,5 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: offset is automatically calculated after partition table (0x8000 + 0x1000 = 0x9000)
+nvs,      data, nvs,     ,        0x6000,
+phy_init, data, phy,     ,        0x1000,
+factory,  app,  factory, ,        3M,

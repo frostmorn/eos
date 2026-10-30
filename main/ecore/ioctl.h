@@ -53,6 +53,29 @@ typedef struct {
   uint8_t mult;            // 1 - 100 (multiplier %, default 10 for earplugs mode)
 } eos_sound_config_t;
 
+// ADC reading structure for EOS_ADC_IOCTL_READ_RAW / READ_VOLTAGE
+typedef struct {
+  uint32_t pin;         // GPIO pin number (e.g. 3)
+  int32_t  raw;         // Raw 12-bit ADC conversion value (0 - 4095)
+  int32_t  voltage_mv;  // Factory-calibrated voltage in millivolts
+} eos_adc_reading_t;
+
+// Battery status enumeration
+typedef enum {
+  EOS_BATTERY_STATUS_NOT_PRESENT = 0,
+  EOS_BATTERY_STATUS_DISCHARGING = 1,
+  EOS_BATTERY_STATUS_CHARGING    = 2,
+  EOS_BATTERY_STATUS_FULL        = 3
+} eos_battery_status_t;
+
+// Battery information structure for EOS_POWER_IOCTL_GET_BATTERY_INFO
+typedef struct {
+  uint32_t voltage_mv;         // Measured/smoothed battery cell voltage in mV
+  int32_t  soc_percent;        // State of Charge (0 - 100%, or -1 if not connected)
+  eos_battery_status_t status; // Battery operational status
+  uint32_t v_empty_mv;         // Nominal empty threshold in mV (e.g. 3200)
+  uint32_t v_full_mv;          // Nominal full threshold in mV (e.g. 4200)
+} eos_battery_info_t;
 //=====================================================
 // ioctl call table
 // IOCTL CODE, ARGS
@@ -261,6 +284,17 @@ typedef enum {
   EOS_WIFI_IOCTL_SET_CONNECTED_INFO, // const eos_sta_ap_info_t *info
   EOS_WIFI_IOCTL_IS_CONNECTED,       // bool *out_connected
   EOS_WIFI_IOCTL_SET_NAPT,           // bool enable
+
+  //=====================================================
+  // edriver/bus/adc
+  //=====================================================
+  EOS_ADC_IOCTL_READ_RAW = 600,       // eos_adc_reading_t *reading (in: pin, out: raw)
+  EOS_ADC_IOCTL_READ_VOLTAGE,        // eos_adc_reading_t *reading (in: pin, out: raw, voltage_mv)
+
+  //=====================================================
+  // edriver/power/battery
+  //=====================================================
+  EOS_POWER_IOCTL_GET_BATTERY_INFO = 650, // eos_battery_info_t *out_info
 } eos_ioctl_t;
 
 // (^__^)==\~

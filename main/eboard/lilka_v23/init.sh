@@ -8,6 +8,8 @@ devctl attach display st7789 spi0 --pin cs=7,dc=15,en=46 --cfg clock_speed_hz=80
 devctl attach storage sd spi0 --pin cs=16 --cfg clock_speed_hz=20000000
 devctl attach input gpio_keyboard gpio --pin up=38,down=41,left=39,right=40,select=0,start=4,a=5,b=6,c=10,d=9 --cfg mode=1,pull=1
 devctl attach sound max98357 root --pin bclk=42,ws=1,dout=2 --cfg rate=44100,bits=16,channels=1,vol=100,mult=10
+devctl attach bus adc root
+devctl attach power battery adc0 --pin adc=3 --cfg r_top=33,r_bottom=100
 devctl attach net wifi root
 devctl attach net sta wifi0
 devctl attach net ap wifi0
