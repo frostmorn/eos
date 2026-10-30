@@ -3,6 +3,18 @@ FIRMWARE_ELF=build/eos.elf
 WIDTH ?= 280
 HEIGHT ?= 240
 QEMU_DISPLAY_FLAGS = -D EOS_QEMU_DISPLAY_WIDTH=$(WIDTH) -D EOS_QEMU_DISPLAY_HEIGHT=$(HEIGHT)
+QEMU_EXTRA_ARGS ?=
+GDB ?= 0
+QEMU_RUN_ARGS = $(if $(QEMU_EXTRA_ARGS),--qemu-extra-args "$(QEMU_EXTRA_ARGS)") $(if $(filter 1 true,$(GDB)),--gdb)
+
+# Standalone QEMU hardware configuration (ESP32-S3)
+QEMU_BIN ?= $(shell if qemu-system-xtensa -M esp32s3 -version >/dev/null 2>&1; then which qemu-system-xtensa; else find $$HOME/.espressif/tools/qemu-xtensa -name qemu-system-xtensa 2>/dev/null | head -n1; fi)
+QEMU_MACHINE ?= esp32s3
+QEMU_RAM ?= 32M
+QEMU_HW_FLAGS ?= -global driver=timer.esp32s3.timg,property=wdt_disable,value=true \
+                 -global driver=ssi_psram,property=is_octal,value=true \
+                 -nic user,model=open_eth \
+                 -serial mon:stdio
 IDF_TOOLS_PY ?= $(shell if [ -n "$$IDF_PATH" ] && [ -f "$$IDF_PATH/tools/idf_tools.py" ]; then echo "$$IDF_PATH/tools/idf_tools.py"; elif [ -f "/opt/esp-idf/tools/idf_tools.py" ]; then echo "/opt/esp-idf/tools/idf_tools.py"; elif [ -f "$$HOME/esp/esp-idf/tools/idf_tools.py" ]; then echo "$$HOME/esp/esp-idf/tools/idf_tools.py"; else echo "idf_tools.py"; fi)
 
 .PHONY: clean clean-all reconfigure build flash monitor symbols debug killdebug qemu qemu_graphics \
@@ -33,8 +45,8 @@ help:
 	@echo "  monitor     - Serial monitor"
 	@echo "  debug       - Launch gdb via builtin jtag"
 	@echo "  killdebug   - Kill OpenOCD Server"
-	@echo "  qemu                  - Run firmware in QEMU (qemu-system-xtensa)"
-	@echo "  qemu_graphics         - Run in QEMU with graphics window (WIDTH/HEIGHT, default 280x240)"
+	@echo "  qemu                  - Run firmware in QEMU (optional: QEMU_EXTRA_ARGS=\"...\", GDB=1)"
+	@echo "  qemu_graphics         - Run in QEMU with graphics window (WIDTH/HEIGHT, default 280x240, QEMU_EXTRA_ARGS=\"...\", GDB=1)"
 	@echo "  qemu_graphics_800x480 - Run in QEMU with 800x480 virtual display"
 	@echo "  qemu_graphics_480x320 - Run in QEMU with 480x320 virtual display"
 	@echo "  qemu_graphics_320x240 - Run in QEMU with 320x240 virtual display"
@@ -130,27 +142,28 @@ qemu:
 		echo "Switching board to esp32s3_qemu..."; \
 		python3 tools/setboard.py esp32s3_qemu; \
 	fi
-	@if ! which qemu-system-xtensa >/dev/null 2>&1; then \
-		echo "WARNING: qemu-system-xtensa not found in PATH."; \
+	@if ! which qemu-system-xtensa >/dev/null 2>&1 || ! qemu-system-xtensa -M esp32s3 -version >/dev/null 2>&1; then \
+		echo "WARNING: Espressif qemu-system-xtensa (with esp32s3 support) not found in PATH."; \
 		echo "Run 'make install-qemu' to install it, or 'source \$${IDF_PATH:-/opt/esp-idf}/export.sh' if already installed."; \
 	fi
-	@$(MAKE) build
+	@echo "Building EOS for QEMU ($(WIDTH)x$(HEIGHT))..."
+	idf.py $(QEMU_DISPLAY_FLAGS) build
 	@echo "Running QEMU..."
-	idf.py qemu
+	idf.py qemu $(QEMU_RUN_ARGS)
 
 qemu_graphics:
 	@if [ "$$(cat .active_board 2>/dev/null)" != "esp32s3_qemu" ]; then \
 		echo "Switching board to esp32s3_qemu..."; \
 		python3 tools/setboard.py esp32s3_qemu; \
 	fi
-	@if ! which qemu-system-xtensa >/dev/null 2>&1; then \
-		echo "WARNING: qemu-system-xtensa not found in PATH."; \
+	@if ! which qemu-system-xtensa >/dev/null 2>&1 || ! qemu-system-xtensa -M esp32s3 -version >/dev/null 2>&1; then \
+		echo "WARNING: Espressif qemu-system-xtensa (with esp32s3 support) not found in PATH."; \
 		echo "Run 'make install-qemu' to install it, or 'source \$${IDF_PATH:-/opt/esp-idf}/export.sh' if already installed."; \
 	fi
 	@echo "Building EOS for QEMU graphics ($(WIDTH)x$(HEIGHT))..."
 	idf.py $(QEMU_DISPLAY_FLAGS) build
 	@echo "Running QEMU with graphics window ($(WIDTH)x$(HEIGHT))..."
-	idf.py qemu --graphics
+	idf.py qemu --graphics $(QEMU_RUN_ARGS)
 
 qemu_graphics_800x480:
 	@$(MAKE) qemu_graphics WIDTH=800 HEIGHT=480

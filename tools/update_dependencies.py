@@ -10,6 +10,7 @@ Only drivers enabled for the active board in main/eboard/<board>/board_pregen.h
 will have their component dependencies aggregated into main/idf_component.yml.
 """
 
+import filecmp
 import os
 import shutil
 import sys
@@ -128,6 +129,26 @@ def collect_board_dependencies(board):
     return merged_deps
 
 
+def sync_board_init(board):
+    if not board:
+        return
+    eboard_init = os.path.join(BOARD_ROOT, board, "init.sh")
+    root_init = os.path.join(ROOT_DIR, "init.sh")
+    if os.path.exists(eboard_init):
+        need_copy = False
+        if not os.path.exists(root_init):
+            need_copy = True
+        else:
+            try:
+                if not filecmp.cmp(eboard_init, root_init, shallow=False):
+                    need_copy = True
+            except Exception:
+                need_copy = True
+        if need_copy:
+            shutil.copy2(eboard_init, root_init)
+            print(f"[update_dependencies] Synchronized init.sh from main/eboard/{board}/init.sh")
+
+
 def update_dependencies(board=None):
     if not board:
         active_board_file = os.path.join(ROOT_DIR, ".active_board")
@@ -147,6 +168,8 @@ def update_dependencies(board=None):
     if not board:
         print("[update_dependencies] No active board detected, skipping dependency resolution.")
         return 0
+
+    sync_board_init(board)
 
     enabled_macros = get_enabled_driver_macros(board)
     merged_deps = collect_driver_dependencies(enabled_macros)

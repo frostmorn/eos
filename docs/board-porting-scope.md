@@ -46,7 +46,7 @@ Devices are attached dynamically via `devctl attach`:
 devctl attach <scope> <driver> [parent] [--pin key=val,...] [--cfg key=val,...]
 ```
 *   **`<scope>`**: Subsystem driver scope (`bus`, `display`, `input`, `sound`, `storage`, `net`).
-*   **`<driver>`**: Registered driver name (e.g., `spi`, `i2c`, `sdio`, `st7789`, `st7701s`, `gt911`, `keyboard`, `flash`, `sd`, `wifi`, `sta`, `ap`).
+*   **`<driver>`**: Registered driver name (e.g., `spi`, `i2c`, `sdio`, `st7789`, `st7701s`, `gt911`, `gpio_keyboard`, `flash`, `sd`, `wifi`, `sta`, `ap`).
 *   **`[parent]`**: Parent device node name in the device tree (defaults to `root` if omitted).
 *   **`--pin key=val,...`**: Hardware pin assignments (e.g., `--pin sclk=18,mosi=17,miso=8` or `--pin cs=7,dc=15,en=46`).
 *   **`--cfg key=val,...`**: Peripheral configuration parameters (e.g., `--cfg host=1,dma=3,clock_speed_hz=80000000`).
@@ -57,13 +57,13 @@ devctl attach <scope> <driver> [parent] [--pin key=val,...] [--cfg key=val,...]
 
 *   **`lilka_v23` (ESP32-S3):**
     *   Target handheld console for Lilka v2.
-    *   Peripherals: SPI host 1, ST7789 display controller (`/dev/fb0`), SD card storage (`/dev/sd0`), I2C bus 0, GPIO keyboard (`/dev/keyboard0`), and onboard Wi-Fi radio (`wifi0`, `sta0`, `ap0`).
+    *   Peripherals: SPI host 1, ST7789 display controller (`/dev/fb0`), SD card storage (`/dev/sd0`), I2C bus 0, GPIO keyboard (`/dev/keyboard0` via `gpio_keyboard`), and onboard Wi-Fi radio (`wifi0`, `sta0`, `ap0`).
 *   **`esp32s3_qemu`:**
     *   Emulator target running ESP32-S3 in Espressif QEMU.
-    *   Peripherals: Root flash storage (`/dev/flash0`), GPIO bus, and virtual QEMU RGB display controller (`/dev/fb0`, `esp_lcd_qemu_rgb`).
+    *   Peripherals: Root flash storage (`/dev/flash0`), GPIO bus, virtual keyboard (`/dev/keyboard0` via `gpio_keyboard`), and virtual QEMU RGB display controller (`/dev/fb0`, `esp_lcd_qemu_rgb`).
 *   **`jc4880p443c_i_w_y` (ESP32-P4):**
     *   Dual-core RISC-V @ 400 MHz with 32 MB PSRAM.
-    *   Peripherals: MIPI-DSI ST7701S display controller (`/dev/fb0`), GT911 capacitive touch (`/dev/input0` over I2C), GPIO bus, SDMMC slot 0 for SD card storage (`/dev/sd0`), and SDMMC slot 1 (lazy mode) hosting the external ESP32-C6 Wi-Fi co-processor via ESP-Hosted SDIO (see [JC4880P4 Co-Processor Guide](./jc4880p4-coprocessor-guide.md)).
+    *   Peripherals: MIPI-DSI ST7701S display controller (`/dev/fb0`), GT911 capacitive touch (`/dev/input0` over I2C), GPIO bus, GPIO button keyboard (`/dev/keyboard0` via `gpio_keyboard`), SDMMC slot 0 for SD card storage (`/dev/sd0`), and SDMMC slot 1 (lazy mode) hosting the external ESP32-C6 Wi-Fi co-processor via ESP-Hosted SDIO (see [JC4880P4 Co-Processor Guide](./jc4880p4-coprocessor-guide.md)).
 
 ---
 

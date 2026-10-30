@@ -199,14 +199,10 @@ def restore_board_state(board, clean=False):
             shutil.copy2(eboard_sdkconfig, "sdkconfig")
 
         # 6. Restore init.sh
-        if os.path.exists(cached_init):
-            if os.path.exists(eboard_init) and os.path.getmtime(eboard_init) > os.path.getmtime(cached_init):
-                shutil.copy2(eboard_init, "init.sh")
-                os.remove(cached_init)
-            else:
-                shutil.move(cached_init, "init.sh")
-        elif os.path.exists(eboard_init):
+        if os.path.exists(eboard_init):
             shutil.copy2(eboard_init, "init.sh")
+        if os.path.exists(cached_init):
+            os.remove(cached_init)
     else:
         # First time configuring this board
         if os.path.exists(eboard_sdkconfig):
@@ -246,10 +242,9 @@ def setboard(board, clean=False):
     if current_board == board and not clean:
         print(f"Board '{board}' is already active.")
         update_dependencies(board)
-        if not os.path.exists("init.sh"):
-            eboard_init = os.path.join(BOARD_PATH, board, "init.sh")
-            if os.path.exists(eboard_init):
-                shutil.copy2(eboard_init, "init.sh")
+        eboard_init = os.path.join(BOARD_PATH, board, "init.sh")
+        if os.path.exists(eboard_init):
+            shutil.copy2(eboard_init, "init.sh")
         with open(ACTIVE_BOARD_FILE, "w", encoding="utf-8") as f:
             f.write(board + "\n")
         return

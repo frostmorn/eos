@@ -33,8 +33,8 @@ typedef struct {
 
 ## 2. Implemented Input Drivers (`edriver/input/`)
 
-*   **Keyboard & Keypad (`keyboard/`):** Attaches as a child node to the GPIO bus, monitoring configured input pins with active-low polling and pull-ups enabled.
-*   **GT911 Touchscreen (`gt911/`):** Capacitive touch controller driver communicating over I2C to report multi-touch absolute coordinates (`EOS_INPUT_EVENT_TOUCH`).
+*   **GPIO Keyboard (`gpio_keyboard/`):** Unified keyboard driver supporting both discrete hardware button monitoring and synthetic event injection (`devctl attach input gpio_keyboard gpio [--pin ...] [--cfg ...]`). When `--pin` is provided, it monitors configured input pins with active-low polling and pull-ups enabled; when attached without pins (e.g. on `esp32s3_qemu`), it operates as a virtual event FIFO keyboard. Supports synthetic event injection via `write()` (binary `eos_input_event_t` or key names like `"up"`, `"a"`, `"esc"`), FreeRTOS counting semaphore synchronization, blocking `read()`, and non-blocking `EOS_KEYBOARD_IOCTL_POLL`. Exposes `/dev/keyboard0`.
+*   **GT911 Touchscreen (`gt911/`):** Capacitive touch controller driver communicating over I2C to report multi-touch absolute coordinates (`EOS_INPUT_EVENT_TOUCH`). Exposes `/dev/input0` (with `/dev/touch0` compatibility symlink).
 
 ---
 

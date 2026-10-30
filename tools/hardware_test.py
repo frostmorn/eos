@@ -69,7 +69,7 @@ class EOSTestHarness:
                 if chunk:
                     out += chunk
                     # Check if shell prompt has returned after executing command
-                    if b">" in out[-6:]:
+                    if b"\n" in out and b">" in out[-6:]:
                         break
             time.sleep(0.02)
         # Flush any trailing bytes
@@ -117,7 +117,7 @@ class EOSTestHarness:
         print(f"\n{Colors.BOLD}=== 1. Virtual /proc Filesystem Tests ==={Colors.RESET}")
         self.check(suite, "Kernel version format", "cat /proc/version", r"EOS\s+\d+\.\d+\.\d+")
         self.check(suite, "IDF build version in /proc/version", "cat /proc/version", r"IDF\s+v[0-9\.]+")
-        self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+(input[\s\S]+)?net[\s\S]+storage")
+        self.check(suite, "All driver scopes present", "cat /proc/scopes", r"bus[\s\S]+display[\s\S]+input[\s\S]+net[\s\S]+storage")
         self.check(suite, "Driver table headers", "cat /proc/drivers", r"SCOPE\s+NAME\s+DEVNAME\s+FLAGS")
         self.check(suite, "Net drivers in /proc/drivers", "cat /proc/drivers", r"net\s+ap[\s\S]+net\s+sta[\s\S]+net\s+wifi")
         drivers_out = self.run_cmd("cat /proc/drivers")
@@ -257,8 +257,23 @@ class EOSTestHarness:
                    r"Config:.*mtu=1500.*debug=1")
         self.check(suite, "devctl detach br0 configured device", "devctl detach br0", r"Detached /dev/br0")
 
+        has_launcher = "launcher.active" in self.run_cmd("ls /tmp")
+        if has_launcher:
+            self.run_cmd("echo QUIT > /tmp/launcher.cmd")
+            time.sleep(0.3)
+
+        if "keyboard0" in devctl_devs:
+            self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard")
+            self.check(suite, "devctl info keyboard0", "devctl info keyboard0", r"Driver:\s+input/gpio_keyboard")
+            self.run_cmd("echo up > /dev/keyboard0")
+            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)")
+
         # Comprehensive lifecycle test: detach all present devices and reattach them back
         self.test_devtree_detach_reattach_cycle()
+
+        if has_launcher:
+            self.run_cmd("launcher &")
+            time.sleep(0.5)
 
     def test_devtree_detach_reattach_cycle(self):
         suite = "devctl"
