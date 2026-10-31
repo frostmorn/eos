@@ -453,7 +453,7 @@ class EOSTestHarness:
             print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] WiFi radio device (wifi0) not present on this board architecture")
             return
         self.check(suite, "wlanctl usage / help", "wlanctl", r"Commands:[\s\S]+radio[\s\S]+getmac[\s\S]+sniffer")
-        self.check(suite, "wlanctl radio on", "wlanctl radio on", r"radio turned ON")
+        self.check(suite, "wlanctl radio on", "wlanctl radio on", r"radio turned ON", wait=3.0)
         self.check(suite, "wlanctl radio status is ON", "wlanctl radio status", r"radio turned ON")
         self.check(suite, "wlanctl getmac returns valid non-zero MAC", "wlanctl getmac",
                    r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", not_pattern=r"00:00:00:00:00:00")

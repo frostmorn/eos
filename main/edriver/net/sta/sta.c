@@ -47,10 +47,12 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   strncpy(st->hostname, "eos-sta", sizeof(st->hostname) - 1);
 
   // Initialize hardware MAC address (from efuse or base MAC)
-  if (esp_base_mac_addr_get(st->mac) != ESP_OK) {
-    if (esp_efuse_mac_get_default(st->mac) != ESP_OK) {
-      st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
-      st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x01;
+  if (esp_read_mac(st->mac, ESP_MAC_WIFI_STA) != ESP_OK) {
+    if (esp_base_mac_addr_get(st->mac) != ESP_OK) {
+      if (esp_efuse_mac_get_default(st->mac) != ESP_OK) {
+        st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
+        st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x01;
+      }
     }
   }
 

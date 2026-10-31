@@ -38,7 +38,7 @@
 #define WIFI_SCAN_DONE_BIT    BIT2
 
 typedef struct {
-  eos_wifi_raw_packet_t packets[RAW_PACKET_QUEUE_SIZE];
+  eos_wifi_raw_packet_t *packets;
   uint16_t head;
   uint16_t tail;
   uint16_t count;
@@ -73,7 +73,7 @@ static wifi_radio_state_t *s_radio_state = NULL;
 
 #if EOS_HAVE_WIFI
 static void IRAM_ATTR wifi_promisc_rx_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
-  if (!s_radio_state || !s_radio_state->promisc_enabled) return;
+  if (!s_radio_state || !s_radio_state->promisc_enabled || !s_radio_state->packets) return;
 
   const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
   if (!pkt || pkt->rx_ctrl.sig_len == 0) return;
@@ -260,6 +260,50 @@ static bool wifi_ensure_net_init(wifi_radio_state_t *st) {
   return true;
 }
 
+static void wifi_ensure_wifi_deinit(wifi_radio_state_t *st) {
+#if EOS_HAVE_WIFI
+  if (!st->wifi_inited) return;
+
+  if (st->promisc_enabled) {
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    st->promisc_enabled = false;
+  }
+  if (st->packets) {
+    free(st->packets);
+    st->packets = NULL;
+    st->head = 0;
+    st->tail = 0;
+    st->count = 0;
+  }
+  if (st->radio_on) {
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) {
+      EOS_LOGW("wifi: esp_wifi_stop: %s", esp_err_to_name(err));
+    }
+    st->radio_on = false;
+    st->sta_connected = false;
+  }
+  esp_err_t ret = esp_wifi_deinit();
+  if (ret != ESP_OK && ret != ESP_ERR_WIFI_NOT_INIT) {
+    EOS_LOGW("wifi: esp_wifi_deinit failed: %s", esp_err_to_name(ret));
+  } else {
+    EOS_LOGI("wifi: wifi driver deinitialized (static buffers released)");
+  }
+  st->wifi_inited = false;
+#else
+  if (st->packets) {
+    free(st->packets);
+    st->packets = NULL;
+    st->head = 0;
+    st->tail = 0;
+    st->count = 0;
+  }
+  st->wifi_inited = false;
+  st->radio_on = false;
+#endif
+}
+
 static bool wifi_ensure_wifi_init(wifi_radio_state_t *st) {
   if (st->wifi_inited) return true;
   if (!wifi_ensure_net_init(st)) return false;
@@ -277,12 +321,21 @@ static bool wifi_ensure_wifi_init(wifi_radio_state_t *st) {
   }
 
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
+  if (st->country[0]) {
+    wifi_country_t country = {0};
+    strncpy(country.cc, st->country, 3);
+    country.schan = 1;
+    country.nchan = 13;
+    country.policy = WIFI_COUNTRY_POLICY_MANUAL;
+    esp_wifi_set_country(&country);
+  }
 #if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
   if (st->tx_power > 0) {
     esp_wifi_set_max_tx_power(st->tx_power * 4);
   }
 #endif
   st->wifi_inited = true;
+  EOS_LOGI("wifi: wifi driver initialized (static buffers allocated)");
   return true;
 #else
   st->wifi_inited = true;
@@ -303,12 +356,29 @@ static int wifi_radio_start(wifi_radio_state_t *st) {
   if (!wifi_ensure_wifi_init(st)) return -1;
 
   if (!st->radio_on) {
+    wifi_mode_t cur_mode = WIFI_MODE_NULL;
+    esp_wifi_get_mode(&cur_mode);
+    if (cur_mode == WIFI_MODE_NULL) {
+      wifi_mode_t target_mode = WIFI_MODE_STA;
+      if (st->sta_enabled && st->ap_enabled) {
+        target_mode = WIFI_MODE_APSTA;
+      } else if (st->sta_enabled) {
+        target_mode = WIFI_MODE_STA;
+      } else if (st->ap_enabled) {
+        target_mode = WIFI_MODE_AP;
+      }
+      esp_wifi_set_mode(target_mode);
+    }
+
     esp_err_t err = esp_wifi_start();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STOPPED) {
       EOS_LOGE("wifi: esp_wifi_start failed: %s", esp_err_to_name(err));
       return -1;
     }
     st->radio_on = true;
+    if (st->channel > 0) {
+      esp_wifi_set_channel(st->channel, WIFI_SECOND_CHAN_NONE);
+    }
 #if !defined(CONFIG_ESP_HOSTED_ENABLED) || !CONFIG_ESP_HOSTED_ENABLED
     if (st->tx_power > 0) {
       esp_wifi_set_max_tx_power(st->tx_power * 4);
@@ -334,15 +404,40 @@ static int wifi_radio_stop(wifi_radio_state_t *st) {
 #if EOS_HAVE_WIFI
   if (st->radio_on) {
     esp_err_t err = esp_wifi_stop();
-    if (err != ESP_OK) {
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_INIT) {
       EOS_LOGW("wifi: esp_wifi_stop: %s", esp_err_to_name(err));
     }
     st->radio_on = false;
     st->sta_connected = false;
     EOS_LOGI("wifi: radio transceiver powered down");
   }
+
+  if (st->promisc_enabled) {
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_promiscuous_rx_cb(NULL);
+    st->promisc_enabled = false;
+  }
+  if (st->packets) {
+    free(st->packets);
+    st->packets = NULL;
+    st->head = 0;
+    st->tail = 0;
+    st->count = 0;
+  }
+
+  // Release static buffers if neither STA nor AP is enabled
+  if (!st->sta_enabled && !st->ap_enabled && st->wifi_inited) {
+    wifi_ensure_wifi_deinit(st);
+  }
   return 0;
 #else
+  if (st->packets) {
+    free(st->packets);
+    st->packets = NULL;
+    st->head = 0;
+    st->tail = 0;
+    st->count = 0;
+  }
   st->radio_on = false;
   return 0;
 #endif
@@ -350,8 +445,6 @@ static int wifi_radio_stop(wifi_radio_state_t *st) {
 
 static int wifi_update_mode(wifi_radio_state_t *st) {
 #if EOS_HAVE_WIFI
-  if (!st->wifi_inited) return 0;
-
   wifi_mode_t target_mode = WIFI_MODE_NULL;
   if (st->sta_enabled && st->ap_enabled) {
     target_mode = WIFI_MODE_APSTA;
@@ -362,6 +455,7 @@ static int wifi_update_mode(wifi_radio_state_t *st) {
   }
 
   if (target_mode != WIFI_MODE_NULL) {
+    if (!wifi_ensure_wifi_init(st)) return -1;
     esp_err_t err = esp_wifi_set_mode(target_mode);
     if (err != ESP_OK) {
       EOS_LOGE("wifi: esp_wifi_set_mode(%d) failed: %s", (int)target_mode, esp_err_to_name(err));
@@ -374,7 +468,12 @@ static int wifi_update_mode(wifi_radio_state_t *st) {
     if (st->radio_on) {
       wifi_radio_stop(st);
     }
-    esp_wifi_set_mode(WIFI_MODE_NULL);
+    if (st->wifi_inited) {
+      esp_wifi_set_mode(WIFI_MODE_NULL);
+      if (!st->promisc_enabled) {
+        wifi_ensure_wifi_deinit(st);
+      }
+    }
   }
   return 0;
 #else
@@ -435,9 +534,9 @@ bool driver_net_wifi_init(eos_dev_t *dev) {
   dev->state = st;
   s_radio_state = st;
 
-  wifi_ensure_wifi_init(st);
+  wifi_ensure_net_init(st);
 
-  EOS_LOGI("wifi: radio device initialized (/dev/wifi0)");
+  EOS_LOGI("wifi: radio device initialized (/dev/wifi0, radio OFF)");
   return true;
 }
 
@@ -460,12 +559,8 @@ void driver_net_wifi_shutdown(eos_dev_t *dev) {
     esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, st->ip_event_instance);
     st->ip_event_instance = NULL;
   }
-  if (st->promisc_enabled) {
-    esp_wifi_set_promiscuous(false);
-  }
-  wifi_radio_stop(st);
   if (st->wifi_inited) {
-    esp_wifi_deinit();
+    wifi_ensure_wifi_deinit(st);
   }
 #endif
 
@@ -475,6 +570,11 @@ void driver_net_wifi_shutdown(eos_dev_t *dev) {
   }
   if (st->scan_results) {
     free(st->scan_results);
+    st->scan_results = NULL;
+  }
+  if (st->packets) {
+    free(st->packets);
+    st->packets = NULL;
   }
   if (st->mutex) vSemaphoreDelete(st->mutex);
   if (st->sem_rx) vSemaphoreDelete(st->sem_rx);
@@ -510,7 +610,7 @@ ssize_t driver_net_wifi_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   }
 
   wifi_radio_state_t *st = (wifi_radio_state_t *)dev->state;
-  if (!st->promisc_enabled) {
+  if (!st->promisc_enabled || !st->packets) {
     errno = ENODATA;
     return -1;
   }
@@ -573,7 +673,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   switch (cmd) {
     case EOS_WIFI_IOCTL_ENSURE_INIT: {
-      return wifi_ensure_wifi_init(st) ? 0 : -1;
+      return wifi_ensure_net_init(st) ? 0 : -1;
     }
     case EOS_WIFI_IOCTL_SET_MODE: {
       int if_type = va_arg(args, int); // 0 = STA, 1 = AP
@@ -658,7 +758,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       if (ch < 1 || ch > 14) return -1;
       st->channel = (uint8_t)ch;
 #if EOS_HAVE_WIFI
-      if (st->radio_on) {
+      if (st->radio_on && st->wifi_inited) {
         esp_wifi_set_channel((uint8_t)ch, WIFI_SECOND_CHAN_NONE);
       }
 #endif
@@ -668,7 +768,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       uint8_t *out_ch = va_arg(args, uint8_t *);
       if (!out_ch) return -1;
 #if EOS_HAVE_WIFI
-      if (st->radio_on) {
+      if (st->radio_on && st->wifi_inited) {
         uint8_t ch = 0;
         wifi_second_chan_t second;
         if (esp_wifi_get_channel(&ch, &second) == ESP_OK && ch != 0) {
@@ -683,8 +783,10 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       int power = va_arg(args, int);
       st->tx_power = (int8_t)power;
 #if EOS_HAVE_WIFI
-      int8_t max_p = (int8_t)(power * 4);
-      esp_wifi_set_max_tx_power(max_p);
+      if (st->wifi_inited) {
+        int8_t max_p = (int8_t)(power * 4);
+        esp_wifi_set_max_tx_power(max_p);
+      }
 #endif
       return 0;
     }
@@ -692,9 +794,11 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       int8_t *out_power = va_arg(args, int8_t *);
       if (!out_power) return -1;
 #if EOS_HAVE_WIFI
-      int8_t max_p = 0;
-      if (esp_wifi_get_max_tx_power(&max_p) == ESP_OK) {
-        st->tx_power = max_p / 4;
+      if (st->wifi_inited) {
+        int8_t max_p = 0;
+        if (esp_wifi_get_max_tx_power(&max_p) == ESP_OK) {
+          st->tx_power = max_p / 4;
+        }
       }
 #endif
       *out_power = st->tx_power;
@@ -706,12 +810,14 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       strncpy(st->country, cc, 2);
       st->country[2] = '\0';
 #if EOS_HAVE_WIFI
-      wifi_country_t country = {0};
-      strncpy(country.cc, st->country, 3);
-      country.schan = 1;
-      country.nchan = 13;
-      country.policy = WIFI_COUNTRY_POLICY_MANUAL;
-      esp_wifi_set_country(&country);
+      if (st->wifi_inited) {
+        wifi_country_t country = {0};
+        strncpy(country.cc, st->country, 3);
+        country.schan = 1;
+        country.nchan = 13;
+        country.policy = WIFI_COUNTRY_POLICY_MANUAL;
+        esp_wifi_set_country(&country);
+      }
 #endif
       return 0;
     }
@@ -852,9 +958,35 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       st->promisc_cfg = *cfg;
       st->promisc_enabled = cfg->enable;
 
+      if (cfg->enable) {
+        if (!st->packets) {
+          st->packets = calloc(RAW_PACKET_QUEUE_SIZE, sizeof(eos_wifi_raw_packet_t));
+          if (!st->packets) {
+            EOS_LOGE("wifi: failed to allocate raw packet queue (%u bytes)",
+                     (unsigned)(RAW_PACKET_QUEUE_SIZE * sizeof(eos_wifi_raw_packet_t)));
+            st->promisc_enabled = false;
+            return -1;
+          }
+        }
+        st->head = 0;
+        st->tail = 0;
+        st->count = 0;
+      } else {
+        if (st->packets) {
+          free(st->packets);
+          st->packets = NULL;
+        }
+        st->head = 0;
+        st->tail = 0;
+        st->count = 0;
+      }
+
 #if EOS_HAVE_WIFI
       if (!st->radio_on && cfg->enable) {
-        wifi_radio_start(st);
+        if (wifi_radio_start(st) != 0) {
+          st->promisc_enabled = false;
+          return -1;
+        }
       }
 
       wifi_promiscuous_filter_t filt = {0};
@@ -905,7 +1037,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       uint8_t *out_mac = va_arg(args, uint8_t *);
       if (!out_mac) return -1;
 #if EOS_HAVE_WIFI
-      if (esp_wifi_get_mac(WIFI_IF_STA, out_mac) == ESP_OK) {
+      if (st->wifi_inited && esp_wifi_get_mac(WIFI_IF_STA, out_mac) == ESP_OK) {
         if (out_mac[0] || out_mac[1] || out_mac[2] || out_mac[3] || out_mac[4] || out_mac[5]) {
           return 0;
         }

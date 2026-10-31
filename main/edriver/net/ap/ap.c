@@ -37,11 +37,13 @@ bool driver_net_ap_init(eos_dev_t *dev) {
 
   // Initialize hardware MAC address for SoftAP
   uint8_t base[6] = {0};
-  if (esp_base_mac_addr_get(base) == ESP_OK || esp_efuse_mac_get_default(base) == ESP_OK) {
-    esp_derive_local_mac(st->mac, base);
-  } else {
-    st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
-    st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x02;
+  if (esp_read_mac(st->mac, ESP_MAC_WIFI_SOFTAP) != ESP_OK) {
+    if (esp_base_mac_addr_get(base) == ESP_OK || esp_efuse_mac_get_default(base) == ESP_OK) {
+      esp_derive_local_mac(st->mac, base);
+    } else {
+      st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
+      st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x02;
+    }
   }
 
   // Default SoftAP configuration using last 3 MAC octets for unique SSID
