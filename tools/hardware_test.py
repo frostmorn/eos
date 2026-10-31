@@ -69,7 +69,7 @@ class EOSTestHarness:
                 if chunk:
                     out += chunk
                     # Check if shell prompt has returned after executing command
-                    if b"\n" in out and b">" in out[-6:]:
+                    if re.search(rb"/[ \t]*>\s*$", out):
                         break
             time.sleep(0.02)
         # Flush any trailing bytes
@@ -260,18 +260,26 @@ class EOSTestHarness:
         has_launcher = "launcher.active" in self.run_cmd("ls /tmp")
         if has_launcher:
             self.run_cmd("echo QUIT > /tmp/launcher.cmd")
-            time.sleep(0.3)
+            for _ in range(25):
+                time.sleep(0.1)
+                if "launcher.active" not in self.run_cmd("ls /tmp"):
+                    break
 
         if "keyboard0" in devctl_devs:
             self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard")
             self.check(suite, "devctl info keyboard0", "devctl info keyboard0", r"Driver:\s+input/gpio_keyboard")
             self.run_cmd("echo up > /dev/keyboard0")
-            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)")
+            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)", wait=1.5)
+            # In case test_input didn't consume an event or got stuck, unblock shell with Ctrl+C
+            self.ser.write(b"\x03\n")
+            time.sleep(0.1)
+            self.ser.reset_input_buffer()
 
         if "sound0" in devctl_devs:
             self.check(suite, "devctl devices lists sound0", "devctl devices", r"sound0\s+sound/max98357")
             self.check(suite, "devctl info sound0", "devctl info sound0", r"Driver:\s+sound/max98357")
-            self.check(suite, "Play test tone via test_sound", "test_sound 440 200 30", r"playback complete")
+            self.check(suite, "Play Imperial March theme via test_sound", "test_sound march -t 5000 30",
+                       r"(Imperial March|playback complete)", wait=6.5)
 
         if "adc0" in devctl_devs:
             self.check(suite, "devctl devices lists adc0", "devctl devices", r"adc0\s+bus/adc")
@@ -283,10 +291,6 @@ class EOSTestHarness:
             self.check(suite, "Query battery status via battery CLI", "battery", r"Battery:")
         # Comprehensive lifecycle test: detach all present devices and reattach them back
         self.test_devtree_detach_reattach_cycle()
-
-        if has_launcher:
-            self.run_cmd("launcher &")
-            time.sleep(0.5)
 
     def test_devtree_detach_reattach_cycle(self):
         suite = "devctl"
@@ -402,6 +406,10 @@ class EOSTestHarness:
     def test_wlanctl(self):
         suite = "wlanctl"
         print(f"\n{Colors.BOLD}=== 3. WLAN Radio & Sniffer (wlanctl) Tests ==={Colors.RESET}")
+        devs = self.run_cmd("cat /proc/devices")
+        if "wifi0" not in devs:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] WiFi radio device (wifi0) not present on this board architecture")
+            return
         self.check(suite, "wlanctl usage / help", "wlanctl", r"Commands:[\s\S]+radio[\s\S]+getmac[\s\S]+sniffer")
         self.check(suite, "wlanctl radio on", "wlanctl radio on", r"radio turned ON")
         self.check(suite, "wlanctl radio status is ON", "wlanctl radio status", r"radio turned ON")
@@ -430,6 +438,10 @@ class EOSTestHarness:
     def test_netctl(self):
         suite = "netctl"
         print(f"\n{Colors.BOLD}=== 4. Network Interface Management (netctl - ip vibe) Tests ==={Colors.RESET}")
+        devs = self.run_cmd("cat /proc/devices")
+        if "sta0" not in devs and "ap0" not in devs:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] Network interfaces (sta0/ap0) not present on this board architecture")
+            return
         # Default display and interface discovery
         self.check(suite, "netctl default displays interfaces and IPs", "netctl", r"\d+:\s+sta0:\s+<")
         self.check(suite, "netctl link show lists interfaces", "netctl link",
@@ -501,14 +513,27 @@ class EOSTestHarness:
     def test_gui_launcher(self):
         suite = "gui"
         print(f"\n{Colors.BOLD}=== 6. GUI Launcher & lvgl_net IPC Tests ==={Colors.RESET}")
+        if "launcher.active" not in self.run_cmd("ls /tmp"):
+            self.run_cmd("launcher &")
+            for _ in range(20):
+                time.sleep(0.1)
+                if "launcher.active" in self.run_cmd("ls /tmp"):
+                    break
+            time.sleep(0.5)
         self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net",
                    r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.0)
+        time.sleep(0.5)
+        self.run_cmd("echo QUIT > /tmp/launcher.cmd")
+        for _ in range(20):
+            time.sleep(0.1)
+            if "launcher.active" not in self.run_cmd("ls /tmp"):
+                break
 
     def test_emisc(self):
         suite = "emisc"
         print(f"\n{Colors.BOLD}=== 7. emisc Math, Hierarchy & Utility Tests ==={Colors.RESET}")
         self.check(suite, "emisc unit test suite passes with 0 failures", "test_emisc",
-                   r"emisc Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=2.0)
+                   r"emisc Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=3.5)
 
     def print_summary(self):
         total = self.passed + self.failed

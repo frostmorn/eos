@@ -51,7 +51,29 @@ typedef struct {
   uint8_t channels;        // 1 (mono) or 2 (stereo)
   uint8_t volume;          // 0 - 100
   uint8_t mult;            // 1 - 100 (multiplier %, default 10 for earplugs mode)
+  uint16_t delay_ms;       // Buffer delay/latency in milliseconds (default 60 ms)
 } eos_sound_config_t;
+
+// Sound driver performance and time shift statistics
+typedef struct {
+  uint32_t total_writes;       // Total number of write calls in stream
+  uint64_t total_bytes;        // Total audio payload bytes written
+  uint64_t total_samples;      // Total audio samples written
+  uint32_t underruns;          // Number of buffer underruns detected
+  int64_t stream_start_us;     // Microsecond timestamp of stream start
+  int64_t last_write_us;       // Microsecond timestamp of most recent write
+  int64_t stream_audio_us;     // Total theoretical audio duration in microseconds
+  int64_t stream_wall_us;      // Wall-clock microseconds elapsed since stream start
+  int64_t total_lock_us;       // Total microseconds spent waiting for driver lock
+  int64_t total_proc_us;       // Total microseconds spent doing volume/math processing
+  int64_t total_i2s_wait_us;   // Total microseconds spent blocked inside i2s_channel_write
+  int32_t min_i2s_wait_us;     // Minimum single i2s_channel_write blocking duration (us)
+  int32_t max_i2s_wait_us;     // Maximum single i2s_channel_write blocking duration (us)
+  int32_t last_lead_us;        // Instantaneous pipeline lead / time shift (stream_audio - stream_wall)
+  uint32_t bclk_actual_hz;     // Actual hardware BCLK frequency reported by I2S controller
+  uint32_t dma_desc_num;       // Number of DMA descriptors
+  uint32_t dma_frame_num;      // Frames per DMA descriptor
+} eos_sound_stats_t;
 
 // ADC reading structure for EOS_ADC_IOCTL_READ_RAW / READ_VOLTAGE
 typedef struct {
@@ -224,6 +246,9 @@ typedef enum {
   EOS_SOUND_IOCTL_GET_MULT,            // uint32_t *out_mult
   EOS_SOUND_IOCTL_START,               // no args
   EOS_SOUND_IOCTL_STOP,                // no args
+  EOS_SOUND_IOCTL_GET_DELAY,           // uint32_t *out_delay_ms
+  EOS_SOUND_IOCTL_SET_DELAY,           // uint32_t delay_ms
+  EOS_SOUND_IOCTL_GET_STATS,           // eos_sound_stats_t *out_stats
 
   //=====================================================
   // edriver/net
