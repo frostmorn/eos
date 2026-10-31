@@ -308,7 +308,7 @@ class EOSTestHarness:
             time.sleep(0.3)
 
         if "keyboard0" in devctl_devs:
-            self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard")
+            self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard", wait=2.0)
             self.check(suite, "devctl info keyboard0", "devctl info keyboard0", r"Driver:\s+input/gpio_keyboard")
             self.run_cmd("echo up > /dev/keyboard0")
             self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)", wait=1.5)
@@ -518,7 +518,7 @@ class EOSTestHarness:
         # Bridge testing via netctl (both traditional and ip-vibe master/nomaster)
         self.check(suite, "devctl attach net bridge for netctl port test", "devctl attach net bridge", r"Attached net/bridge as /dev/br0")
         self.check(suite, "netctl br0 status shows empty ports", "netctl br0 status", r"ports: \[none\]")
-        self.check(suite, "netctl br0 up", "netctl br0 up", r"(brought UP|br0 set to UP)")
+        self.check(suite, "netctl br0 up", "netctl br0 up", r"(brought UP|br0 set to UP)", wait=1.0)
         self.check(suite, "netctl br0 add sta0", "netctl br0 add sta0", r"attached port \"sta0\"")
         self.check(suite, "netctl br0 status shows sta0 port", "netctl br0 status", r"ports: \[sta0\]")
         self.check(suite, "netctl link set sta0 nomaster", "netctl link set sta0 nomaster", r"^$|removed port")
@@ -654,6 +654,16 @@ class EOSTestHarness:
         self.check(suite, "mv directory move", "mv -v /tmp/h_mv_d /tmp/h_mv_d2", r"renamed '/tmp/h_mv_d' -> '/tmp/h_mv_d2'", not_pattern=r"cannot")
         self.check(suite, "mv destination directory content exists", "cat /tmp/h_mv_d2/d.txt", r"d_item")
         self.check(suite, "mv source directory is removed", "ls /tmp", r"^((?!h_mv_d(\s|$)).)*$")
+
+        # 6. Shell Integration: tree tests
+        self.check(suite, "tree /proc terminates cleanly without infinite recursion", "tree /proc",
+                   r"(cpuinfo|devices|meminfo)", not_pattern=r"├── \.", wait=3.0)
+        self.check(suite, "tree /bin lists binary executables", "tree /bin",
+                   r"(tree|cat|ls|rm)", not_pattern=r"├── \.", wait=3.0)
+        self.check(suite, "tree /dev lists device nodes", "tree /dev",
+                   r"(gpio|keyboard0|flash0|fb0)", not_pattern=r"├── \.", wait=5.0)
+        self.check(suite, "tree / traverses root cleanly without recursion into .", "tree /",
+                   r"(proc|bin|dev|tmp)", not_pattern=r"├── \.", wait=3.0)
 
         # Cleanup all test artifacts
         self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_*")

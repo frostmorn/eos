@@ -12,6 +12,7 @@ extern int sleep_main(int argc, char **argv);
 extern int rm_main(int argc, char **argv);
 extern int cp_main(int argc, char **argv);
 extern int mv_main(int argc, char **argv);
+extern int tree_main(int argc, char **argv);
 
 typedef struct {
   int passed;
@@ -465,16 +466,71 @@ static void test_mv_suite(test_ctx_t *ctx) {
   }
 }
 
+// ── 5. Tree Tests ──────────────────────────────────────────────
+
+static void test_tree_suite(test_ctx_t *ctx) {
+  printf("--- tree Tests ---\n");
+
+  // tree on /proc must complete cleanly and not recurse into . or ..
+  {
+    char *argv[] = {"tree", "/proc", NULL};
+    int ret = tree_main(2, argv);
+    report_test(ctx, "tree: /proc terminates cleanly without infinite recursion", ret == 0);
+  }
+
+  // tree on structured directory hierarchy
+  {
+    const char *base = "/tmp/tree_suite";
+    const char *sub = "/tmp/tree_suite/nested";
+    const char *f1 = "/tmp/tree_suite/file1.txt";
+    const char *f2 = "/tmp/tree_suite/nested/file2.txt";
+
+    mkdir(base, 0755);
+    mkdir(sub, 0755);
+    helper_write_file(f1, "hello");
+    helper_write_file(f2, "world");
+
+    char *argv[] = {"tree", (char *)base, NULL};
+    int ret = tree_main(2, argv);
+    report_test(ctx, "tree: nested directory tree returns 0", ret == 0);
+
+    unlink(f2);
+    unlink(f1);
+    rmdir(sub);
+    rmdir(base);
+  }
+
+  // tree on empty directory
+  {
+    const char *empty_dir = "/tmp/tree_empty";
+    mkdir(empty_dir, 0755);
+
+    char *argv[] = {"tree", (char *)empty_dir, NULL};
+    int ret = tree_main(2, argv);
+    report_test(ctx, "tree: empty directory returns 0", ret == 0);
+
+    rmdir(empty_dir);
+  }
+
+  // tree on non-existent directory
+  {
+    char *argv[] = {"tree", "/tmp/nonexistent_tree_path", NULL};
+    int ret = tree_main(2, argv);
+    report_test(ctx, "tree: non-existent path handles cleanly", ret == 0);
+  }
+}
+
 // ── Entry Point ────────────────────────────────────────────────
 
 int test_coreutils_main(int argc, char **argv) {
-  printf("\n=== Running Coreutils (rm, cp, mv, sleep) Unit Tests ===\n");
+  printf("\n=== Running Coreutils (rm, cp, mv, sleep, tree) Unit Tests ===\n");
   test_ctx_t ctx = {0, 0};
 
   test_sleep_suite(&ctx);
   test_rm_suite(&ctx);
   test_cp_suite(&ctx);
   test_mv_suite(&ctx);
+  test_tree_suite(&ctx);
 
   printf("\nCoreutils Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);
   return (ctx.failed == 0) ? 0 : 1;
@@ -485,6 +541,6 @@ EOS_BIN_ATTR const eos_bin_t test_coreutils_bin = {
     .filename = "test_coreutils",
     .name = "Coreutils Unit Tests",
     .group = "Tests",
-    .description = "Unit test suite for rm, cp, mv, and sleep utilities",
+    .description = "Unit test suite for rm, cp, mv, sleep, and tree utilities",
     .entry_point = test_coreutils_main,
 };

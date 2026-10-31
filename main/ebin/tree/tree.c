@@ -5,18 +5,31 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static void tree_walk(const char *path, int depth, bool *last_flags) {
+  if (depth >= 32)
+    return;
+
   DIR *dir = opendir(path);
   if (!dir)
     return;
 
-  // count entries
+  // count entries excluding . and ..
   int count = 0;
-  while (readdir(dir) != NULL)
+  struct dirent *entry;
+  while ((entry = readdir(dir)) != NULL) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
     count++;
+  }
   rewinddir(dir);
+
+  if (count == 0) {
+    closedir(dir);
+    return;
+  }
 
   // allocate exactly what we need
   char (*names)[NAME_MAX + 1] = malloc(count * (NAME_MAX + 1));
@@ -30,13 +43,15 @@ static void tree_walk(const char *path, int depth, bool *last_flags) {
   }
 
   int i = 0;
-  struct dirent *entry;
   while ((entry = readdir(dir)) != NULL && i < count) {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
     strlcpy(names[i], entry->d_name, NAME_MAX + 1);
     types[i] = entry->d_type;
     i++;
   }
   closedir(dir);
+  count = i;
 
   for (i = 0; i < count; i++) {
     bool is_last = (i == count - 1);
@@ -47,10 +62,22 @@ static void tree_walk(const char *path, int depth, bool *last_flags) {
     printf(is_last ? "└── " : "├── ");
     printf("%s\n", names[i]);
 
-    if (types[i] == DT_DIR) {
-      char child_path[PATH_MAX];
+    char child_path[PATH_MAX];
+    if (strcmp(path, "/") == 0) {
+      snprintf(child_path, sizeof(child_path), "/%s", names[i]);
+    } else {
       snprintf(child_path, sizeof(child_path), "%s/%s", path, names[i]);
+    }
 
+    bool is_dir = (types[i] == DT_DIR);
+    if (types[i] == DT_UNKNOWN) {
+      struct stat st;
+      if (stat(child_path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        is_dir = true;
+      }
+    }
+
+    if (is_dir) {
       bool *child_flags = malloc((depth + 1) * sizeof(bool));
       if (child_flags) {
         if (last_flags && depth > 0)

@@ -416,6 +416,11 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
   const char *p = path;
   while (*p == '/') p++;
 
+  if (*p == '\0' || strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
+    errno = EISDIR;
+    return -1;
+  }
+
   char *content = NULL;
   if (strcmp(p, "scopes") == 0) {
     content = procfs_gen_scopes();
@@ -550,8 +555,8 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
   const char *p = path;
   while (*p == '/') p++;
 
-  if (*p == '\0') {
-    // Root /proc directory
+  if (*p == '\0' || strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
+    // Root /proc directory (or self/parent directory link)
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFDIR | 0555;
     return 0;
@@ -574,7 +579,7 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
   if (path) {
     const char *p = path;
     while (*p == '/') p++;
-    if (*p != '\0') {
+    if (*p != '\0' && strcmp(p, ".") != 0) {
       errno = ENOTDIR;
       return NULL;
     }
