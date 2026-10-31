@@ -86,10 +86,64 @@ eos_dev_t *eos_dev_alloc() {
   return NULL;
 }
 
+static bool eos_dev_is_same_device(eos_dev_t *existing, eos_dev_t *dev) {
+  if (!existing || !dev || !existing->driver || !dev->driver)
+    return false;
+
+  // Different driver means different device type
+  if (existing->driver != dev->driver)
+    return false;
+
+  // If driver has EOS_DRV_FLAG_NO_INDEX, it cannot have more than 1 instance
+  if (dev->driver->flags & EOS_DRV_FLAG_NO_INDEX)
+    return true;
+
+  // Check bus/sdio: distinguished by slot
+  if (strcmp(dev->driver->scope, "bus") == 0 && strcmp(dev->driver->name, "sdio") == 0) {
+    int s1 = eos_cfg_get_i(existing->cfg, "slot", 0);
+    int s2 = eos_cfg_get_i(dev->cfg, "slot", 0);
+    return (s1 == s2);
+  }
+
+  // Check bus/spi: distinguished by host
+  if (strcmp(dev->driver->scope, "bus") == 0 && strcmp(dev->driver->name, "spi") == 0) {
+    int h1 = eos_cfg_get_i(existing->cfg, "host", 1);
+    int h2 = eos_cfg_get_i(dev->cfg, "host", 1);
+    return (h1 == h2);
+  }
+
+  // Check bus/i2c: distinguished by port
+  if (strcmp(dev->driver->scope, "bus") == 0 && strcmp(dev->driver->name, "i2c") == 0) {
+    int p1 = eos_cfg_get_i(existing->cfg, "port", 0);
+    int p2 = eos_cfg_get_i(dev->cfg, "port", 0);
+    return (p1 == p2);
+  }
+
+  // Check storage/sd: distinguished by cs pin on SPI
+  if (strcmp(dev->driver->scope, "storage") == 0 && strcmp(dev->driver->name, "sd") == 0) {
+    int32_t cs1 = eos_pin_get_no(existing->pins, "cs");
+    int32_t cs2 = eos_pin_get_no(dev->pins, "cs");
+    if (cs1 >= 0 && cs2 >= 0) return (cs1 == cs2);
+    return true;
+  }
+
+  // Check input/gt911: distinguished by I2C address
+  if (strcmp(dev->driver->scope, "input") == 0 && strcmp(dev->driver->name, "gt911") == 0) {
+    int a1 = eos_cfg_get_i(existing->cfg, "addr", 0x5D);
+    int a2 = eos_cfg_get_i(dev->cfg, "addr", 0x5D);
+    return (a1 == a2);
+  }
+
+  // For all other device drivers attached under the same parent (flash, wifi, sta, ap,
+  // gpio_keyboard, max98357 sound, battery, adc, display, bridge):
+  // Two instances of the same driver under the same parent represent the same device.
+  return true;
+}
+
 // Attaches device to EOS device tree
 int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   // Args check
-  if (dev == NULL || (!dev->in_use)) {
+  if (dev == NULL || (!dev->in_use) || dev->driver == NULL) {
     errno = EINVAL;
     return -1;
   }
@@ -106,6 +160,26 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   if (dev->parent != NULL) {
     errno = EEXIST;
     return -1;
+  }
+
+  // Check if driver is a singleton without index and already attached anywhere in devtree
+  if (dev->driver->flags & EOS_DRV_FLAG_NO_INDEX) {
+    for (size_t i = 0; i < EOS_MAX_DEVICES; i++) {
+      if (eos_devices[i].in_use && eos_devices[i].driver == dev->driver && &eos_devices[i] != dev) {
+        errno = EEXIST;
+        return -1;
+      }
+    }
+  }
+
+  // Check if the same device is already attached at parent
+  for (eos_dev_t *child = parent->child; child != NULL; child = child->next) {
+    if (!child->in_use || !child->driver)
+      continue;
+    if (eos_dev_is_same_device(child, dev)) {
+      errno = EEXIST;
+      return -1;
+    }
   }
 
   // Inform bus through ioctl or other way about new device
@@ -127,6 +201,17 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
 
   // Assign device name for devfs path buildage
   eos_dev_assign_name(dev);
+
+  // Prevent name collisions in devfs
+  for (size_t i = 0; i < EOS_MAX_DEVICES; i++) {
+    if (eos_devices[i].in_use && &eos_devices[i] != dev &&
+        eos_devices[i].name[0] != '\0' &&
+        strcmp(eos_devices[i].name, dev->name) == 0) {
+      eos_dev_t_tree_detach(dev);
+      errno = EEXIST;
+      return -1;
+    }
+  }
 
   // Launch driver
   if (!eos_drv_init(dev)) {

@@ -43,7 +43,15 @@ class EOSTestHarness:
             self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
         else:
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        time.sleep(1.0)
+        if not self.port.startswith("socket://"):
+            # Trigger DTR/RTS hardware reset to ensure a fresh boot on physical hardware
+            self.ser.dtr = False
+            self.ser.rts = True
+            time.sleep(0.1)
+            self.ser.rts = False
+            time.sleep(2.0)
+        else:
+            time.sleep(1.0)
         self.ser.reset_input_buffer()
         self.ser.write(b"\n")
         time.sleep(0.3)
@@ -246,6 +254,14 @@ class EOSTestHarness:
         self.check(suite, "devctl attach net bridge", "devctl attach net bridge", r"Attached net/bridge as /dev/br0")
         self.check(suite, "Verify br0 appears in /proc/devices", "cat /proc/devices", r"br0\s+net/bridge")
         self.check(suite, "devctl info br0 basic", "devctl info br0", r"Device:\s+/dev/br0[\s\S]+Driver:\s+net/bridge")
+
+        # Duplicate attachment validation: reject attaching same device at same place
+        self.check(suite, "Reject duplicate attachment of same device at same place",
+                   "devctl attach net bridge",
+                   r"(failed to attach|File exists|already attached)")
+        self.check(suite, "Verify br0 remains unique in /proc/devices", "cat /proc/devices",
+                   r"br0\s+net/bridge", not_pattern=r"br1")
+
         self.check(suite, "devctl detach br0", "devctl detach br0", r"Detached /dev/br0")
         self.check(suite, "Verify br0 is removed from /proc/devices", "cat /proc/devices", r"bus/root", not_pattern=r"br0\s+net/bridge")
 
@@ -255,7 +271,32 @@ class EOSTestHarness:
                    r"Attached net/bridge as /dev/br0")
         self.check(suite, "devctl info br0 verifies config output", "devctl info br0",
                    r"Config:.*mtu=1500.*debug=1")
+        self.check(suite, "Reject duplicate attachment of configured device at same place",
+                   "devctl attach net bridge root --cfg mtu=1500,debug=1",
+                   r"(failed to attach|File exists|already attached)")
         self.check(suite, "devctl detach br0 configured device", "devctl detach br0", r"Detached /dev/br0")
+
+        # Duplicate attachment validation on pre-existing devtree peripherals
+        if "gpio" in devctl_devs:
+            self.check(suite, "Reject duplicate attachment of existing bus/gpio under root",
+                       "devctl attach bus gpio root",
+                       r"(failed to attach|File exists|already attached)")
+        if "flash0" in devctl_devs:
+            self.check(suite, "Reject duplicate attachment of existing storage/flash under root",
+                       "devctl attach storage flash root",
+                       r"(failed to attach|File exists|already attached)")
+        else:
+            self.check(suite, "Attach storage/flash under root", "devctl attach storage flash root", r"Attached storage/flash as /dev/flash0")
+            self.check(suite, "Reject duplicate attachment of storage/flash under root", "devctl attach storage flash root", r"(failed to attach|File exists|already attached)")
+            self.check(suite, "Detach flash0", "devctl detach flash0", r"Detached /dev/flash0")
+        if "sdio0" in devctl_devs:
+            self.check(suite, "Reject duplicate attachment of existing bus/sdio slot 0 under root",
+                       "devctl attach bus sdio root --cfg slot=0",
+                       r"(failed to attach|File exists|already attached)")
+        if "wifi0" in devctl_devs:
+            self.check(suite, "Reject duplicate attachment of existing net/sta under wifi0",
+                       "devctl attach net sta wifi0",
+                       r"(failed to attach|File exists|already attached)")
 
         has_launcher = "launcher.active" in self.run_cmd("ls /tmp")
         if has_launcher:
@@ -264,6 +305,7 @@ class EOSTestHarness:
                 time.sleep(0.1)
                 if "launcher.active" not in self.run_cmd("ls /tmp"):
                     break
+            time.sleep(0.3)
 
         if "keyboard0" in devctl_devs:
             self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard")
@@ -523,6 +565,8 @@ class EOSTestHarness:
         self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net",
                    r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.0)
         time.sleep(0.5)
+        self.run_cmd("echo esc > /dev/keyboard0")
+        time.sleep(0.3)
         self.run_cmd("echo QUIT > /tmp/launcher.cmd")
         for _ in range(20):
             time.sleep(0.1)
