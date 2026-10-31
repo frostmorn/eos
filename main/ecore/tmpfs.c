@@ -592,7 +592,22 @@ static int tmpfs_rename(void *ctx, const char *src, const char *dst) {
     tmpfs_delete_node(dstNode);
   }
 
-  tmpfs_fnode_t_tree_detach(node);
+  // Unlink node from parent's sibling chain without reparenting its children
+  if (node->parent) {
+    if (node->parent->child == node) {
+      node->parent->child = node->next;
+    } else {
+      tmpfs_fnode_t *cur = node->parent->child;
+      while (cur && cur->next != node) {
+        cur = cur->next;
+      }
+      if (cur) {
+        cur->next = node->next;
+      }
+    }
+    node->parent = NULL;
+    node->next = NULL;
+  }
 
   strlcpy(node->name, name, sizeof(node->name));
   node->nhash = fnv_32a_cstr(name, dstParent->nhash);

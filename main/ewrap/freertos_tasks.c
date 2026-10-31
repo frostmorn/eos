@@ -43,7 +43,8 @@ BaseType_t __wrap_xTaskCreatePinnedToCore(
     const BaseType_t xCoreID) {
 
   if (!should_wrap_task(pcName, (uint32_t)usStackDepth) ||
-      pxTaskCode == eos_twrap_freertos) {
+      pxTaskCode == eos_twrap_freertos ||
+      (void *)pxTaskCode == (void *)eos_twrap_pthread) {
     return __real_xTaskCreatePinnedToCore(pxTaskCode, pcName, usStackDepth,
                                           pvParameters, uxPriority,
                                           pvCreatedTask, xCoreID);
@@ -82,7 +83,8 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
     StaticTask_t *const pxTaskBuffer, const BaseType_t xCoreID) {
 
   if (!should_wrap_task(pcName, ulStackDepth) ||
-      pxTaskCode == eos_twrap_freertos) {
+      pxTaskCode == eos_twrap_freertos ||
+      (void *)pxTaskCode == (void *)eos_twrap_pthread) {
     return __real_xTaskCreateStaticPinnedToCore(
         pxTaskCode, pcName, ulStackDepth, pvParameters, uxPriority,
         pxStackBuffer, pxTaskBuffer, xCoreID);

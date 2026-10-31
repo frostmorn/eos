@@ -535,6 +535,85 @@ class EOSTestHarness:
         self.check(suite, "emisc unit test suite passes with 0 failures", "test_emisc",
                    r"emisc Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=3.5)
 
+    def test_coreutils(self):
+        suite = "coreutils"
+        print(f"\n{Colors.BOLD}=== 8. Coreutils (rm, cp, mv, sleep) Tests ==={Colors.RESET}")
+        # 1. Native C Unit Test Suite (covers ~40 comprehensive unit assertions)
+        self.check(suite, "Coreutils unit test binary passes with 0 failures", "test_coreutils",
+                   r"Coreutils Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=5.0)
+
+        # 2. Shell Integration: sleep tests
+        self.check(suite, "sleep help flag", "sleep --help", r"Usage:\s+sleep")
+        self.check(suite, "sleep invalid argument error", "sleep abc", r"sleep:\s+invalid time interval")
+        self.check(suite, "sleep negative interval error", "sleep -1", r"sleep:\s+invalid time interval")
+
+        # Test sleep execution delay (~0.2s)
+        t0 = time.time()
+        self.run_cmd("sleep 0.2")
+        elapsed = time.time() - t0
+        if elapsed >= 0.15:
+            print(f"  [{Colors.GREEN}PASS{Colors.RESET}] sleep 0.2 execution timing ({elapsed:.2f}s)")
+            self.passed += 1
+            self.suite_counts[suite]["pass"] += 1
+        else:
+            print(f"  [{Colors.RED}FAIL{Colors.RESET}] sleep 0.2 execution timing too short ({elapsed:.2f}s)")
+            self.failed += 1
+            self.suite_counts[suite]["fail"] += 1
+
+        # 3. Shell Integration: rm tests
+        self.run_cmd("echo h_rm_data > /tmp/h_rm.txt")
+        self.check(suite, "rm unlinks file", "rm -v /tmp/h_rm.txt", r"removed '/tmp/h_rm\.txt'", not_pattern=r"cannot")
+        self.check(suite, "rm file is gone", "ls /tmp", r"^((?!h_rm\.txt).)*$")
+        self.check(suite, "rm non-existent file fails", "rm /tmp/h_rm_ghost.txt", r"cannot remove")
+        self.check(suite, "rm -f non-existent file succeeds silently", "rm -f /tmp/h_rm_ghost.txt", r".*", not_pattern=r"(cannot|error)")
+
+        # rm directory without -r fails
+        self.run_cmd("mkdir /tmp/h_rm_dir")
+        self.check(suite, "rm directory without -r fails", "rm /tmp/h_rm_dir", r"Is a directory")
+        self.run_cmd("echo sub > /tmp/h_rm_dir/sub.txt")
+        self.check(suite, "rm -r removes directory tree", "rm -r -v /tmp/h_rm_dir", r"removed directory '/tmp/h_rm_dir'", not_pattern=r"cannot")
+        self.check(suite, "rm -r directory is gone", "ls /tmp", r"^((?!h_rm_dir).)*$")
+
+        # 4. Shell Integration: cp tests
+        self.run_cmd("echo cp_payload_888 > /tmp/h_cp_src.txt")
+        self.check(suite, "cp file copy", "cp -v /tmp/h_cp_src.txt /tmp/h_cp_dst.txt", r"'/tmp/h_cp_src\.txt' -> '/tmp/h_cp_dst\.txt'", not_pattern=r"cannot")
+        self.check(suite, "cp destination has matching content", "cat /tmp/h_cp_dst.txt", r"cp_payload_888")
+        self.check(suite, "cp source file still exists", "cat /tmp/h_cp_src.txt", r"cp_payload_888")
+        self.check(suite, "cp same file fails", "cp /tmp/h_cp_src.txt /tmp/h_cp_src.txt", r"same file")
+
+        # cp to directory
+        self.run_cmd("mkdir /tmp/h_cp_dir")
+        self.check(suite, "cp file into directory", "cp -v /tmp/h_cp_src.txt /tmp/h_cp_dir", r"'/tmp/h_cp_src\.txt' -> '/tmp/h_cp_dir/h_cp_src\.txt'", not_pattern=r"cannot")
+        self.check(suite, "cp target inside directory has content", "cat /tmp/h_cp_dir/h_cp_src.txt", r"cp_payload_888")
+
+        # cp -r recursive directory
+        self.run_cmd("mkdir /tmp/h_tree_src")
+        self.run_cmd("echo leaf > /tmp/h_tree_src/leaf.txt")
+        self.check(suite, "cp without -r on directory fails", "cp /tmp/h_tree_src /tmp/h_tree_dst", r"omitting directory")
+        self.check(suite, "cp -r recursive directory copy", "cp -r -v /tmp/h_tree_src /tmp/h_tree_dst", r"'/tmp/h_tree_src/leaf\.txt' -> '/tmp/h_tree_dst/leaf\.txt'", not_pattern=r"cannot")
+        self.check(suite, "cp -r nested file exists", "cat /tmp/h_tree_dst/leaf.txt", r"leaf")
+
+        # 5. Shell Integration: mv tests
+        self.run_cmd("echo mv_payload_999 > /tmp/h_mv_src.txt")
+        self.check(suite, "mv file rename", "mv -v /tmp/h_mv_src.txt /tmp/h_mv_dst.txt", r"renamed '/tmp/h_mv_src\.txt' -> '/tmp/h_mv_dst\.txt'", not_pattern=r"cannot")
+        self.check(suite, "mv destination has matching content", "cat /tmp/h_mv_dst.txt", r"mv_payload_999")
+        self.check(suite, "mv source is removed", "ls /tmp", r"^((?!h_mv_src\.txt).)*$")
+
+        # mv into directory
+        self.run_cmd("mkdir /tmp/h_mv_dir")
+        self.check(suite, "mv file into directory", "mv -v /tmp/h_mv_dst.txt /tmp/h_mv_dir", r"renamed '/tmp/h_mv_dst\.txt' -> '/tmp/h_mv_dir/h_mv_dst\.txt'", not_pattern=r"cannot")
+        self.check(suite, "mv file inside directory exists", "cat /tmp/h_mv_dir/h_mv_dst.txt", r"mv_payload_999")
+
+        # mv directory
+        self.run_cmd("mkdir /tmp/h_mv_d")
+        self.run_cmd("echo d_item > /tmp/h_mv_d/d.txt")
+        self.check(suite, "mv directory move", "mv -v /tmp/h_mv_d /tmp/h_mv_d2", r"renamed '/tmp/h_mv_d' -> '/tmp/h_mv_d2'", not_pattern=r"cannot")
+        self.check(suite, "mv destination directory content exists", "cat /tmp/h_mv_d2/d.txt", r"d_item")
+        self.check(suite, "mv source directory is removed", "ls /tmp", r"^((?!h_mv_d(\s|$)).)*$")
+
+        # Cleanup all test artifacts
+        self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_*")
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -567,7 +646,7 @@ def main():
     parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc"],
+    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc", "coreutils"],
                         default="all", help="Test suite to execute (default: all)")
     args = parser.parse_args()
 
@@ -590,6 +669,8 @@ def main():
             harness.test_gui_launcher()
         if args.suite in ("all", "emisc"):
             harness.test_emisc()
+        if args.suite in ("all", "coreutils"):
+            harness.test_coreutils()
         return harness.print_summary()
     except KeyboardInterrupt:
         print("\nTest cancelled by user.")
