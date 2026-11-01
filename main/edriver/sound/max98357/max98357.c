@@ -20,6 +20,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "emisc/types.h"
+#include "emisc/psram_alloc.h"
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -227,7 +228,7 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
   if (!dev)
     return false;
 
-  max98357_state_t *st = calloc(1, sizeof(max98357_state_t));
+  max98357_state_t *st = eos_psram_calloc_prefer(1, sizeof(max98357_state_t));
   if (!st)
     return false;
   dev->state = st;

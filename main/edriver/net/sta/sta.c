@@ -6,6 +6,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
+#include "emisc/psram_alloc.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -38,7 +39,7 @@ static bool sta_is_connected(eos_dev_t *dev) {
 }
 
 bool driver_net_sta_init(eos_dev_t *dev) {
-  sta_state_t *st = calloc(1, sizeof(sta_state_t));
+  sta_state_t *st = eos_psram_calloc_prefer(1, sizeof(sta_state_t));
   if (!st) return false;
 
   st->is_up = false;

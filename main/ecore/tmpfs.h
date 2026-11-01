@@ -13,13 +13,9 @@
 // hand-rolled pointer surgery, since this is exactly the shape
 // ecore/tree already solves once, tested, for everyone else.
 //
-// Nodes are allocated with plain malloc()/kvec's own realloc(), not
-// heap_caps_malloc(SPIRAM). On a board with CONFIG_SPIRAM_USE_MALLOC
-// enabled that transparently lands in PSRAM anyway for anything past
-// the usual small-allocation threshold; if a hard SPIRAM-only
-// guarantee is ever required regardless of that config, the block
-// storage would need to move off kvec's built-in allocator onto a
-// custom one.
+// Nodes are allocated with plain malloc(), while file sector block storage
+// is backed by kvec_psram_t to guarantee PSRAM allocation regardless of
+// the small-allocation threshold, with graceful fallback to internal SRAM.
 
 #include "emisc/strlimits.h"
 

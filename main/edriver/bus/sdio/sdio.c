@@ -32,6 +32,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "edriver/bus/sdio/sdio.h"
+#include "emisc/psram_alloc.h"
 
 #if SOC_SDMMC_HOST_SUPPORTED
 esp_err_t eos_sdio_get_host(eos_dev_t *dev, sdmmc_host_t *out_host) {
@@ -85,7 +86,7 @@ esp_err_t eos_sdio_reset_slave(eos_dev_t *dev) {
 }
 
 bool driver_bus_sdio_init(eos_dev_t *dev) {
-  sdio_state_t *st = calloc(1, sizeof(sdio_state_t));
+  sdio_state_t *st = eos_psram_calloc_prefer(1, sizeof(sdio_state_t));
   if (!st) return false;
 
   st->mutex = xSemaphoreCreateMutex();

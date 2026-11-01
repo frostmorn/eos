@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 #include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -76,14 +77,14 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     argc++;
   }
 
-  char **dup_argv = calloc(argc + 1, sizeof(char *));
+  char **dup_argv = eos_psram_calloc_prefer(argc + 1, sizeof(char *));
   if (!dup_argv) {
     errno = ENOMEM;
     return -1;
   }
 
   for (int i = 0; i < argc; i++) {
-    dup_argv[i] = strdup(argv[i]);
+    dup_argv[i] = eos_psram_strdup(argv[i]);
     if (!dup_argv[i]) {
       for (int j = 0; j < i; j++)
         free(dup_argv[j]);
@@ -94,7 +95,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   }
   dup_argv[argc] = NULL;
 
-  exec_arg_t *ex = malloc(sizeof(exec_arg_t));
+  exec_arg_t *ex = eos_psram_malloc_prefer(sizeof(exec_arg_t));
   if (!ex) {
     for (int i = 0; i < argc; i++)
       free(dup_argv[i]);
@@ -112,7 +113,9 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
   pthread_attr_setstacksize(&attr, eos_bin_effective_stack_size(bin));
 
-  // Create joinable thread using stack_size from the ebin manifest
+  eos_pthread_set_manifest_cfg(bin);
+
+  // Create joinable thread using stack_size and preference from the ebin manifest
   int rc = pthread_create(&thread, &attr, exec_thread_entry, ex);
   pthread_attr_destroy(&attr);
   if (rc != 0) {
@@ -145,7 +148,7 @@ int execl(const char *path, const char *arg, ...) {
   }
   va_end(args);
 
-  char **argv = calloc(argc + 1, sizeof(char *));
+  char **argv = eos_psram_calloc_prefer(argc + 1, sizeof(char *));
   if (!argv) {
     errno = ENOMEM;
     return -1;

@@ -16,6 +16,7 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/psram_alloc.h"
 
 #define I2C_MAX_FDS 8
 #define I2C_ADDR_MAX 0x7F
@@ -265,7 +266,7 @@ static esp_err_t get_or_create_device(eos_dev_t *dev, i2c_bus_state_t *st,
 }
 
 bool driver_bus_i2c_init(eos_dev_t *dev) {
-  i2c_bus_state_t *st = calloc(1, sizeof(i2c_bus_state_t));
+  i2c_bus_state_t *st = eos_psram_calloc_prefer(1, sizeof(i2c_bus_state_t));
   if (!st) {
     return false;
   }
@@ -903,7 +904,7 @@ DIR *driver_bus_i2c_opendir(eos_dev_t *dev, const char *path) {
   st->open_refcount++;
   xSemaphoreGive(st->mutex);
 
-  i2c_dir_t *dir = calloc(1, sizeof(i2c_dir_t));
+  i2c_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(i2c_dir_t));
   if (!dir) {
     if (xSemaphoreTake(st->mutex, portMAX_DELAY) == pdTRUE) {
       if (st->open_refcount > 0) st->open_refcount--;

@@ -2,6 +2,7 @@
 #include "ecore/log.h"
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <ctype.h>
 #include <driver/usb_serial_jtag.h>
 #include <driver/usb_serial_jtag_vfs.h>
@@ -14,6 +15,7 @@
 
 #define USH_LINE_MAX 256
 #define USH_WELCOME EOS_MASCOT_R " "
+#define USH_STACK_SIZE 6144U
 
 static int ush_readline(char *buf, size_t size) {
   size_t len = 0;
@@ -97,13 +99,13 @@ static FILE *fopen_path(const char *name) {
     path_env = "/bin";
   }
 
-  char path_buf[PATH_MAX];
+  char path_buf[EOS_MID_STR_LEN];
   strlcpy(path_buf, path_env, sizeof(path_buf));
 
   char *saveptr = NULL;
   char *dir = strtok_r(path_buf, ":", &saveptr);
   while (dir) {
-    char candidate[PATH_MAX];
+    char candidate[EOS_MID_STR_LEN];
     snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
     FILE *f = fopen(candidate, "r");
     if (f) return f;
@@ -138,12 +140,18 @@ int ush_main(int argc, char **argv) {
   }
 
   printf("\neos shell — type 'help' for available commands\n\n");
+  size_t free_hwm = eos_thread_stack_high_water_mark();
+  size_t used = (USH_STACK_SIZE > free_hwm) ? (USH_STACK_SIZE - free_hwm) : 0;
+  EOS_LOGI("ush: stack initialized (stack_size=%u, free_watermark=%u, actual_used=%u)",
+           (unsigned)USH_STACK_SIZE,
+           (unsigned)free_hwm,
+           (unsigned)used);
 
   char line[USH_LINE_MAX];
-  char path[PATH_MAX];
+  char path[EOS_MID_STR_LEN];
 
   for (;;) {
-    getcwd(path, PATH_MAX);
+    getcwd(path, sizeof(path));
 
     printf(USH_WELCOME "%s > ", path);
     fflush(stdout);
@@ -176,7 +184,7 @@ int ush_main(int argc, char **argv) {
 EOS_BIN_ATTR eos_bin_t ush = {
     EOS_BIN_INITIALIZER,
     .flags = EOS_BIN_FLAG_HIDDEN,
-    .stack_size = 16384U,
+    .stack_size = USH_STACK_SIZE,
     .filename = "ush",
     .name = "MicroShell",
     .group = "System",

@@ -4,6 +4,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/driver.h"
 #include "ecore/capsmgr.h"
+#include "emisc/psram_alloc.h"
 #include <driver/spi_master.h>
 
 // ── State ─────────────────────────────────────────────────────
@@ -23,7 +24,7 @@ typedef struct {
 
 // TODO: ioctl based configuration
 bool driver_bus_spi_init(eos_dev_t *dev) {
-  spi_state_t *state = malloc(sizeof(spi_state_t));
+  spi_state_t *state = eos_psram_malloc_prefer(sizeof(spi_state_t));
   if (!state)
     return false;
   dev->state = state;

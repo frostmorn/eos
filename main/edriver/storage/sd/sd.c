@@ -11,6 +11,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "edriver/bus/sdio/sdio.h"
+#include "emisc/psram_alloc.h"
 
 #include <errno.h>
 
@@ -33,7 +34,7 @@ typedef struct {
 void driver_storage_sd_shutdown(eos_dev_t *dev);
 
 bool driver_storage_sd_init(eos_dev_t *dev) {
-  sd_state_t *state = malloc(sizeof(sd_state_t));
+  sd_state_t *state = eos_psram_malloc_prefer(sizeof(sd_state_t));
   if (!state)
     return false;
   memset(state, 0, sizeof(sd_state_t));

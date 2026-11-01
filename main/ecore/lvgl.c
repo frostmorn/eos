@@ -1,5 +1,6 @@
 #include "ecore/lvgl.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -1165,7 +1166,7 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_t *scr = lv_screen_active();
   if (!scr) return NULL;
 
-  eos_input_dialog_data_t *data = calloc(1, sizeof(eos_input_dialog_data_t));
+  eos_input_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_input_dialog_data_t));
   if (!data) return NULL;
   data->cfg = *cfg;
 

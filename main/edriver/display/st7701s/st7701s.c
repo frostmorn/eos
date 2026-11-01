@@ -15,6 +15,7 @@
 #include "ecore/capsmgr.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ static void st7701s_backlight_off(int32_t bl_pin, bool ledc_active) {
 // ── Driver functions ──────────────────────────────────────────
 
 bool driver_display_st7701s_init(eos_dev_t *dev) {
-  st7701s_state_t *state = calloc(1, sizeof(st7701s_state_t));
+  st7701s_state_t *state = eos_psram_calloc_prefer(1, sizeof(st7701s_state_t));
   if (!state)
     return false;
   dev->state = state;

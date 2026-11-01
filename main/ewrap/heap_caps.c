@@ -20,6 +20,7 @@
 
 // External declarations of real ESP-IDF functions
 extern void *__real_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_t caps);
+extern void *__real_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps);
 extern void __real_heap_caps_free(void *ptr);
 
 // Wrapper for heap_caps_aligned_alloc_base - catches ALL memory allocations
@@ -35,6 +36,25 @@ void *__wrap_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_
     EOS_LOGE("heap_caps_aligned_alloc_base(%zu, %zu, %lu) failed\n", alignment, size, (unsigned long)caps);
   }
   return ptr;
+}
+
+// Wrapper for heap_caps_realloc_base - catches memory reallocations where pointers move
+void *__wrap_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps) {
+  eos_tctx_t *tctx = eos_tctx_get();
+
+  void *new_ptr = __real_heap_caps_realloc_base(ptr, size, caps);
+
+  if (ptr && new_ptr && new_ptr != ptr && tctx) {
+    // Pointer moved to a new memory location: update tracking vector
+    for (size_t i = 0; i < kv_size(tctx->memblocks); i++) {
+      if (kv_A(tctx->memblocks, i) == ptr) {
+        kv_A(tctx->memblocks, i) = new_ptr;
+        break;
+      }
+    }
+  }
+
+  return new_ptr;
 }
 
 // Wrapper for heap_caps_free - catches ALL memory deallocations

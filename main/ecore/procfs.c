@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/log.h"
+#include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <driver/gpio.h>
 #include <errno.h>
@@ -67,7 +68,7 @@ typedef struct {
 static void sbuf_init(sbuf_t *s) {
   s->cap = 256;
   s->len = 0;
-  s->buf = malloc(s->cap);
+  s->buf = eos_psram_malloc_prefer(s->cap);
   if (s->buf) s->buf[0] = '\0';
 }
 
@@ -87,7 +88,7 @@ static void sbuf_printf(sbuf_t *s, const char *fmt, ...) {
     size_t new_cap = s->cap * 2;
     if (new_cap < s->len + (size_t)needed + 1)
       new_cap = s->len + (size_t)needed + 64;
-    char *new_buf = realloc(s->buf, new_cap);
+    char *new_buf = eos_psram_realloc_prefer(s->buf, new_cap);
     if (!new_buf) {
       va_end(args);
       return;
@@ -585,7 +586,7 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
     }
   }
 
-  procfs_dir_t *dir = calloc(1, sizeof(procfs_dir_t));
+  procfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(procfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;

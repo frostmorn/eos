@@ -47,7 +47,7 @@ typedef struct {
 ///////////////////////////////////////////////////////////////////
 
 typedef struct {
-  kvec_t(devfs_fdmap_t) fds;
+  kvec_psram_t(devfs_fdmap_t) fds;
 } devfs_state_t;
 
 static devfs_state_t *eos_devfs_state = NULL;
@@ -414,7 +414,7 @@ int eos_devfs_utime(devfs_state_t *dstate, const char *path,
 DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
   (void)dstate;
 
-  devfs_dir_t *dir = calloc(1, sizeof(*dir));
+  devfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(*dir));
 
   if (!dir) {
     errno = ENOMEM;
@@ -630,7 +630,7 @@ void eos_devfs_init(void) {
   if (eos_devfs_state)
     return;
 
-  eos_devfs_state = calloc(1, sizeof(*eos_devfs_state));
+  eos_devfs_state = eos_psram_calloc_prefer(1, sizeof(*eos_devfs_state));
 
   if (!eos_devfs_state) {
     EOS_LOGE("Failed to allocate devfs state\n");

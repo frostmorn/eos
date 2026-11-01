@@ -480,7 +480,7 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
   eos_tctx_t *cur_tctx = eos_tctx_get();
 
   // Allocate twrap data
-  eos_twrap_t *twrap = malloc(sizeof(eos_twrap_t));
+  eos_twrap_t *twrap = eos_psram_malloc_prefer(sizeof(eos_twrap_t));
 
   if (!twrap) {
     EOS_LOGE("twrap_prepare failed\n");
@@ -506,13 +506,13 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data) {
 
     size_t env_n = kv_size(cur_tctx->env);
     if (env_n > 0) {
-      twrap->env_copy = calloc(env_n, sizeof(char *));
+      twrap->env_copy = eos_psram_calloc_prefer(env_n, sizeof(char *));
       if (twrap->env_copy) {
         eos_tctx_unreg_memblock(twrap->env_copy, cur_tctx);
         for (size_t i = 0; i < env_n; i++) {
           const char *e = kv_A(cur_tctx->env, i);
           if (e) {
-            char *dup_e = strdup(e);
+            char *dup_e = eos_psram_strdup(e);
             if (dup_e) {
               eos_tctx_unreg_memblock(dup_e, cur_tctx);
               twrap->env_copy[twrap->env_count++] = dup_e;
@@ -583,6 +583,11 @@ void *eos_twrap_pthread(void *data) {
 
   void *thread_result = thread_start(thread_arg);
 
+  size_t free_stack = (size_t)uxTaskGetStackHighWaterMark(NULL);
+  EOS_LOGI("Thread '%s' finished (stack free watermark: %u bytes)\n",
+           pcTaskGetName(NULL) ? pcTaskGetName(NULL) : "unknown",
+           (unsigned)free_stack);
+
   // Flush any buffered thread output while inherited stdio fd_map is still active
   fflush(stdout);
   fflush(stderr);
@@ -621,4 +626,8 @@ void *eos_twrap_pthread(void *data) {
 void eos_twrap_freertos(void *data) {
   eos_twrap_pthread(data);
   vTaskDelete(NULL);
+}
+
+size_t eos_thread_stack_high_water_mark(void) {
+  return (size_t)uxTaskGetStackHighWaterMark(NULL);
 }

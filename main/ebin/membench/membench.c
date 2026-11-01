@@ -163,13 +163,13 @@ static int membench_main(int argc, char **argv) {
   printf("*                 EOS Memory Benchmark                    *\n");
   printf("===========================================================\n\n");
 
-  size_t max_block = block_sizes[EOS_ARR_COUNT(block_sizes) - 1];
+  size_t min_block = block_sizes[0];
 
   for (size_t t = 0; t < EOS_ARR_COUNT(mem_types); t++) {
 
     uint32_t caps = mem_types[t].caps;
 
-    if (heap_caps_get_free_size(caps) < max_block * 2) {
+    if (heap_caps_get_free_size(caps) < min_block * 2) {
 
       printf("[ %-8s ] - not available or insufficient memory\n\n",
              mem_types[t].name);
@@ -190,8 +190,8 @@ static int membench_main(int argc, char **argv) {
 
       if (!buf1 || !buf2) {
 
-        printf("| %8u | %12s | %12s | %12s |\n", (unsigned)block, "oom", "oom",
-               "oom");
+        print_block(block);
+        printf("| %12s | %12s | %12s |\n", "oom", "oom", "oom");
 
         heap_caps_free(buf1);
         heap_caps_free(buf2);
@@ -219,8 +219,8 @@ static int membench_main(int argc, char **argv) {
 
   // ── DRAM → PSRAM copy test ──────────────────────────────────
 
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) > 4096 &&
-      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) > 4096) {
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= min_block &&
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) >= min_block) {
 
     printf("** DRAM -> PSRAM copy\n\n");
 
@@ -237,6 +237,9 @@ static int membench_main(int argc, char **argv) {
           heap_caps_malloc(block, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 
       if (!dram || !psram) {
+
+        print_block(block);
+        printf("| %12s |\n", "oom");
 
         heap_caps_free(dram);
         heap_caps_free(psram);

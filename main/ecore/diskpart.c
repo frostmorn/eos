@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -501,7 +502,7 @@ int eos_diskpart_create(eos_dev_t *dev, eos_part_scheme_t scheme,
     return -1;
   }
 
-  eos_part_table_t *dp = calloc(1, sizeof(eos_part_table_t));
+  eos_part_table_t *dp = eos_psram_calloc_prefer(1, sizeof(eos_part_table_t));
   if (!dp) {
     errno = ENOMEM;
     return -1;

@@ -18,6 +18,7 @@
 #include "ecore/input.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/psram_alloc.h"
 
 typedef struct {
   esp_lcd_panel_io_handle_t tp_io;
@@ -33,7 +34,7 @@ typedef struct {
 } gt911_state_t;
 
 bool driver_input_gt911_init(eos_dev_t *dev) {
-  gt911_state_t *st = calloc(1, sizeof(gt911_state_t));
+  gt911_state_t *st = eos_psram_calloc_prefer(1, sizeof(gt911_state_t));
   if (!st) return false;
   dev->state = st;
 

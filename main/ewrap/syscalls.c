@@ -2,6 +2,8 @@
 #include "ecore/pipefs.h"
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
+#include "emisc/kvec.h"
+#include "emisc/psram_alloc.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -22,12 +24,8 @@
 // components/esp_lib/src/syscalls.c
 extern int __real_system(const char *str);
 
-#define EOS_SYSTEM_MAX_STAGES 8
-#define EOS_SYSTEM_MAX_ARGS   128
-
 typedef struct {
-  int argc;
-  char *argv[EOS_SYSTEM_MAX_ARGS];
+  kvec_psram_t(char *) argv;
   char *in_file;
   char *out_file;
   bool out_append;
@@ -358,38 +356,43 @@ typedef struct eos_ast_node_t {
   eos_node_type_t type;
   struct eos_ast_node_t *left;
   struct eos_ast_node_t *right;
-  int stage_count;
-  eos_cmd_stage_t stages[EOS_SYSTEM_MAX_STAGES];
-  char *glob_strings[EOS_SYSTEM_MAX_ARGS];
-  int glob_string_count;
+  kvec_psram_t(eos_cmd_stage_t) stages;
+  kvec_psram_t(char *) glob_strings;
 } eos_ast_node_t;
+
+static eos_ast_node_t *alloc_ast_node(eos_node_type_t type) {
+  eos_ast_node_t *node = (eos_ast_node_t *)eos_psram_calloc_prefer(1, sizeof(eos_ast_node_t));
+  if (!node) return NULL;
+  node->type = type;
+  kv_init(node->stages);
+  kv_init(node->glob_strings);
+  return node;
+}
 
 static void free_ast_node_single(eos_ast_node_t *node) {
   if (!node) return;
-  for (int i = 0; i < node->glob_string_count; i++) {
-    if (node->glob_strings[i]) {
-      free(node->glob_strings[i]);
+  for (size_t i = 0; i < kv_size(node->glob_strings); i++) {
+    if (kv_A(node->glob_strings, i)) {
+      free(kv_A(node->glob_strings, i));
     }
   }
+  kv_destroy(node->glob_strings);
+  for (size_t i = 0; i < kv_size(node->stages); i++) {
+    kv_destroy(kv_A(node->stages, i).argv);
+  }
+  kv_destroy(node->stages);
   free(node);
 }
 
 typedef struct {
-  char **paths;
-  int count;
-  int cap;
+  kvec_psram_t(char *) paths;
 } glob_result_t;
 
 static void glob_add_path(glob_result_t *res, const char *path) {
-  if (res->count >= EOS_SYSTEM_MAX_ARGS) return;
-  if (res->count >= res->cap) {
-    int new_cap = res->cap ? res->cap * 2 : 16;
-    char **new_paths = realloc(res->paths, new_cap * sizeof(char *));
-    if (!new_paths) return;
-    res->paths = new_paths;
-    res->cap = new_cap;
+  char *copy = eos_psram_strdup(path);
+  if (copy) {
+    kv_push(char *, res->paths, copy);
   }
-  res->paths[res->count++] = strdup(path);
 }
 
 static int glob_cmp(const void *a, const void *b) {
@@ -490,44 +493,42 @@ static bool get_op_bp(const char *op, int *bp) {
 }
 
 static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *idx) {
-  eos_ast_node_t *node = calloc(1, sizeof(eos_ast_node_t));
+  eos_ast_node_t *node = alloc_ast_node(EOS_NODE_COMMAND);
   if (!node) return NULL;
-  node->type = EOS_NODE_COMMAND;
 
-  int stage_idx = 0;
-  memset(node->stages, 0, sizeof(eos_cmd_stage_t) * EOS_SYSTEM_MAX_STAGES);
+  eos_cmd_stage_t cur_stage = {0};
+  kv_init(cur_stage.argv);
 
   while (*idx < num_tokens) {
     eos_token_t *tok = &tokens[*idx];
     if (tok->is_op) {
       if (strcmp(tok->text, "|") == 0) {
         (*idx)++;
-        if (node->stages[stage_idx].argc == 0) {
+        if (kv_size(cur_stage.argv) == 0) {
           EOS_LOGE("eos_system() syntax error: empty pipe stage");
+          kv_destroy(cur_stage.argv);
           free_ast_node_single(node);
           return NULL;
         }
-        if (stage_idx + 1 >= EOS_SYSTEM_MAX_STAGES) {
-          EOS_LOGE("eos_system() too many pipeline stages");
-          free_ast_node_single(node);
-          return NULL;
-        }
-        node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
-        stage_idx++;
+        kv_push(char *, cur_stage.argv, NULL);
+        kv_push(eos_cmd_stage_t, node->stages, cur_stage);
+        memset(&cur_stage, 0, sizeof(cur_stage));
+        kv_init(cur_stage.argv);
         continue;
       } else if (strcmp(tok->text, "<") == 0 || strcmp(tok->text, ">") == 0 ||
                  strcmp(tok->text, ">>") == 0) {
-        eos_cmd_stage_t *st = &node->stages[stage_idx];
         char *op = tok->text;
         (*idx)++;
         if (*idx >= num_tokens || tokens[*idx].is_op) {
           EOS_LOGE("eos_system() syntax error: missing target for '%s'", op);
+          kv_destroy(cur_stage.argv);
           free_ast_node_single(node);
           return NULL;
         }
         char *target = tokens[*idx].text;
         if (tokens[*idx].has_wildcard) {
           glob_result_t gres = {0};
+          kv_init(gres.paths);
           const char *pat = target;
           const char *base = NULL;
           if (*pat == '/') {
@@ -535,37 +536,35 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
             while (*pat == '/') pat++;
           }
           glob_recurse(base, pat, &gres);
-          if (gres.count == 1) {
-            target = gres.paths[0];
-            if (node->glob_string_count < EOS_SYSTEM_MAX_ARGS) {
-              node->glob_strings[node->glob_string_count++] = target;
-            }
+          if (kv_size(gres.paths) == 1) {
+            target = kv_A(gres.paths, 0);
+            kv_push(char *, node->glob_strings, target);
           } else {
-            for (int g = 0; g < gres.count; g++) {
-              free(gres.paths[g]);
+            for (size_t g = 0; g < kv_size(gres.paths); g++) {
+              free(kv_A(gres.paths, g));
             }
           }
-          free(gres.paths);
+          kv_destroy(gres.paths);
         }
         (*idx)++;
 
         if (strcmp(op, "<") == 0) {
-          st->in_file = target;
+          cur_stage.in_file = target;
         } else if (strcmp(op, ">") == 0) {
-          st->out_file = target;
-          st->out_append = false;
+          cur_stage.out_file = target;
+          cur_stage.out_append = false;
         } else if (strcmp(op, ">>") == 0) {
-          st->out_file = target;
-          st->out_append = true;
+          cur_stage.out_file = target;
+          cur_stage.out_append = true;
         }
         continue;
       } else {
         break;
       }
     } else {
-      eos_cmd_stage_t *st = &node->stages[stage_idx];
       if (tok->has_wildcard) {
         glob_result_t gres = {0};
+        kv_init(gres.paths);
         const char *pat = tok->text;
         const char *base = NULL;
         if (*pat == '/') {
@@ -573,49 +572,41 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
           while (*pat == '/') pat++;
         }
         glob_recurse(base, pat, &gres);
-        if (gres.count > 0) {
-          if (gres.count > 1) {
-            qsort(gres.paths, gres.count, sizeof(char *), glob_cmp);
+        if (kv_size(gres.paths) > 0) {
+          if (kv_size(gres.paths) > 1) {
+            qsort(gres.paths.a, kv_size(gres.paths), sizeof(char *), glob_cmp);
           }
-          for (int g = 0; g < gres.count; g++) {
-            if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS ||
-                node->glob_string_count >= EOS_SYSTEM_MAX_ARGS) {
-              free(gres.paths[g]);
-              continue;
-            }
-            node->glob_strings[node->glob_string_count++] = gres.paths[g];
-            st->argv[st->argc++] = gres.paths[g];
+          for (size_t g = 0; g < kv_size(gres.paths); g++) {
+            char *p = kv_A(gres.paths, g);
+            kv_push(char *, node->glob_strings, p);
+            kv_push(char *, cur_stage.argv, p);
           }
-          free(gres.paths);
+          kv_destroy(gres.paths);
         } else {
-          // If no matches found, keep pattern literal as POSIX/Linux standard
-          if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
-            EOS_LOGE("eos_system() too many arguments");
-            free_ast_node_single(node);
-            return NULL;
-          }
-          st->argv[st->argc++] = tok->text;
+          kv_destroy(gres.paths);
+          kv_push(char *, cur_stage.argv, tok->text);
         }
       } else {
-        if (st->argc + 1 >= EOS_SYSTEM_MAX_ARGS) {
-          EOS_LOGE("eos_system() too many arguments");
-          free_ast_node_single(node);
-          return NULL;
-        }
-        st->argv[st->argc++] = tok->text;
+        kv_push(char *, cur_stage.argv, tok->text);
       }
       (*idx)++;
     }
   }
 
-  node->stages[stage_idx].argv[node->stages[stage_idx].argc] = NULL;
-  if (stage_idx > 0 && node->stages[stage_idx].argc == 0) {
+  if (kv_size(node->stages) > 0 && kv_size(cur_stage.argv) == 0) {
     EOS_LOGE("eos_system() syntax error: trailing pipe '|'");
+    kv_destroy(cur_stage.argv);
     free_ast_node_single(node);
     return NULL;
   }
 
-  node->stage_count = (node->stages[0].argc == 0) ? 0 : (stage_idx + 1);
+  if (kv_size(cur_stage.argv) > 0) {
+    kv_push(char *, cur_stage.argv, NULL);
+    kv_push(eos_cmd_stage_t, node->stages, cur_stage);
+  } else {
+    kv_destroy(cur_stage.argv);
+  }
+
   return node;
 }
 
@@ -638,18 +629,19 @@ static eos_ast_node_t *parse_expr(eos_token_t *tokens, int num_tokens, int *idx,
       return left;
     }
 
-    eos_ast_node_t *node = calloc(1, sizeof(eos_ast_node_t));
-    if (!node) return left;
-
+    eos_node_type_t ntype = EOS_NODE_SEQ;
     if (strcmp(op, ";") == 0) {
-      node->type = EOS_NODE_SEQ;
+      ntype = EOS_NODE_SEQ;
     } else if (strcmp(op, "&&") == 0) {
-      node->type = EOS_NODE_AND;
+      ntype = EOS_NODE_AND;
     } else if (strcmp(op, "||") == 0) {
-      node->type = EOS_NODE_OR;
+      ntype = EOS_NODE_OR;
     } else if (strcmp(op, "&") == 0) {
-      node->type = EOS_NODE_BG;
+      ntype = EOS_NODE_BG;
     }
+
+    eos_ast_node_t *node = alloc_ast_node(ntype);
+    if (!node) return left;
 
     node->left = left;
     node->right = right;
@@ -913,28 +905,32 @@ static char *dup_str_untracked(const char *str, eos_tctx_t *parent_tctx) {
 static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src,
                                       eos_tctx_t *parent_tctx) {
   if (!src) return NULL;
-  eos_ast_node_t *dst = calloc(1, sizeof(eos_ast_node_t));
+  eos_ast_node_t *dst = alloc_ast_node(src->type);
   if (!dst) return NULL;
   if (parent_tctx) {
     eos_tctx_unreg_memblock(dst, parent_tctx);
   }
 
-  dst->type = src->type;
-  dst->stage_count = src->stage_count;
   dst->left = clone_ast_node(src->left, parent_tctx);
   dst->right = clone_ast_node(src->right, parent_tctx);
 
-  for (int i = 0; i < src->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
-    const eos_cmd_stage_t *st_src = &src->stages[i];
-    eos_cmd_stage_t *st_dst = &dst->stages[i];
-    st_dst->argc = st_src->argc;
-    for (int j = 0; j < st_src->argc && j < EOS_SYSTEM_MAX_ARGS - 1; j++) {
-      st_dst->argv[j] = dup_str_untracked(st_src->argv[j], parent_tctx);
+  for (size_t i = 0; i < kv_size(src->stages); i++) {
+    const eos_cmd_stage_t *st_src = &kv_A(src->stages, i);
+    eos_cmd_stage_t st_dst = {0};
+    kv_init(st_dst.argv);
+    size_t argc = kv_size(st_src->argv);
+    if (argc > 0 && kv_A(st_src->argv, argc - 1) == NULL) {
+      argc--;
     }
-    st_dst->argv[st_dst->argc] = NULL;
-    st_dst->in_file = dup_str_untracked(st_src->in_file, parent_tctx);
-    st_dst->out_file = dup_str_untracked(st_src->out_file, parent_tctx);
-    st_dst->out_append = st_src->out_append;
+    for (size_t j = 0; j < argc; j++) {
+      char *dup_arg = dup_str_untracked(kv_A(st_src->argv, j), parent_tctx);
+      kv_push(char *, st_dst.argv, dup_arg);
+    }
+    kv_push(char *, st_dst.argv, NULL);
+    st_dst.in_file = dup_str_untracked(st_src->in_file, parent_tctx);
+    st_dst.out_file = dup_str_untracked(st_src->out_file, parent_tctx);
+    st_dst.out_append = st_src->out_append;
+    kv_push(eos_cmd_stage_t, dst->stages, st_dst);
   }
   return dst;
 }
@@ -943,14 +939,19 @@ static void free_cloned_ast_node(eos_ast_node_t *node) {
   if (!node) return;
   free_cloned_ast_node(node->left);
   free_cloned_ast_node(node->right);
-  for (int i = 0; i < node->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
-    eos_cmd_stage_t *st = &node->stages[i];
-    for (int j = 0; j < st->argc && j < EOS_SYSTEM_MAX_ARGS; j++) {
-      free(st->argv[j]);
+  for (size_t i = 0; i < kv_size(node->stages); i++) {
+    eos_cmd_stage_t *st = &kv_A(node->stages, i);
+    for (size_t j = 0; j < kv_size(st->argv); j++) {
+      if (kv_A(st->argv, j)) {
+        free(kv_A(st->argv, j));
+      }
     }
-    free(st->in_file);
-    free(st->out_file);
+    kv_destroy(st->argv);
+    if (st->in_file) free(st->in_file);
+    if (st->out_file) free(st->out_file);
   }
+  kv_destroy(node->stages);
+  kv_destroy(node->glob_strings);
   free(node);
 }
 
@@ -1022,16 +1023,20 @@ static uint32_t ast_required_stack_size(const eos_ast_node_t *node) {
 
   uint32_t max_stack = EOS_BIN_DEFAULT_STACK_SIZE;
   if (node->type == EOS_NODE_COMMAND) {
-    for (int i = 0; i < node->stage_count && i < EOS_SYSTEM_MAX_STAGES; i++) {
-      const eos_cmd_stage_t *st = &node->stages[i];
-      if (st->argc <= 0 || !st->argv[0])
+    for (size_t i = 0; i < kv_size(node->stages); i++) {
+      const eos_cmd_stage_t *st = &kv_A(node->stages, i);
+      size_t argc = kv_size(st->argv);
+      if (argc > 0 && kv_A(st->argv, argc - 1) == NULL) {
+        argc--;
+      }
+      if (argc == 0 || !kv_A(st->argv, 0))
         continue;
-      if (is_shell_builtin(st->argc, (char **)st->argv))
+      if (is_shell_builtin((int)argc, (char **)st->argv.a))
         continue;
 
       char interp[EOS_SMALL_STR_LEN];
       char interp_arg[EOS_SMALL_STR_LEN];
-      const char *bin_name = st->argv[0];
+      const char *bin_name = kv_A(st->argv, 0);
       if (check_shebang_script(bin_name, interp, sizeof(interp), interp_arg,
                                sizeof(interp_arg))) {
         bin_name = interp;
@@ -1056,41 +1061,89 @@ static uint32_t ast_required_stack_size(const eos_ast_node_t *node) {
   return max_stack;
 }
 
+// Compute if any command stage in an AST subtree prefers PSRAM stack
+static bool ast_prefers_psram_stack(const eos_ast_node_t *node) {
+  if (!node)
+    return false;
+
+  if (node->type == EOS_NODE_COMMAND) {
+    for (size_t i = 0; i < kv_size(node->stages); i++) {
+      const eos_cmd_stage_t *st = &kv_A(node->stages, i);
+      size_t argc = kv_size(st->argv);
+      if (argc > 0 && kv_A(st->argv, argc - 1) == NULL) {
+        argc--;
+      }
+      if (argc == 0 || !kv_A(st->argv, 0))
+        continue;
+      if (is_shell_builtin((int)argc, (char **)st->argv.a))
+        continue;
+
+      char interp[EOS_SMALL_STR_LEN];
+      char interp_arg[EOS_SMALL_STR_LEN];
+      const char *bin_name = kv_A(st->argv, 0);
+      if (check_shebang_script(bin_name, interp, sizeof(interp), interp_arg,
+                               sizeof(interp_arg))) {
+        bin_name = interp;
+      }
+
+      eos_bin_t manifest;
+      if (load_bin_manifest(bin_name, &manifest) == 0) {
+        if (eos_bin_prefers_psram_stack(&manifest)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  return ast_prefers_psram_stack(node->left) ||
+         ast_prefers_psram_stack(node->right);
+}
+
 static int eval_command_node(eos_ast_node_t *node) {
-  int stage_count = node->stage_count;
+  size_t stage_count = kv_size(node->stages);
   if (stage_count == 0) return 0;
 
-  eos_stage_exec_t *exec_stages = calloc(stage_count, sizeof(eos_stage_exec_t));
+  eos_stage_exec_t *exec_stages = (eos_stage_exec_t *)eos_psram_calloc_prefer(stage_count, sizeof(eos_stage_exec_t));
   if (!exec_stages) return -1;
 
-  bool shebang[EOS_SYSTEM_MAX_STAGES] = {false};
+  bool *shebang = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
+  if (!shebang) {
+    free(exec_stages);
+    return -1;
+  }
 
-  for (int i = 0; i < stage_count; i++) {
+  for (size_t i = 0; i < stage_count; i++) {
     char interp[EOS_SMALL_STR_LEN];
     char interp_arg[EOS_SMALL_STR_LEN];
-    int stage_argc = node->stages[i].argc;
-    char **stage_argv = node->stages[i].argv;
+    eos_cmd_stage_t *cmd_st = &kv_A(node->stages, i);
+    size_t stage_argc = kv_size(cmd_st->argv);
+    if (stage_argc > 0 && kv_A(cmd_st->argv, stage_argc - 1) == NULL) {
+      stage_argc--;
+    }
+    char **stage_argv = cmd_st->argv.a;
     bool shebang_allocated = false;
 
-    if (is_shell_builtin(stage_argc, stage_argv)) {
+    if (is_shell_builtin((int)stage_argc, stage_argv)) {
       exec_stages[i].is_builtin = true;
       exec_stages[i].manifest.magic = EOS_BIN_MAGIC;
       exec_stages[i].manifest.flags = EOS_BIN_FLAG_HIDDEN;
       exec_stages[i].manifest.stack_size = EOS_BIN_DEFAULT_STACK_SIZE;
       exec_stages[i].manifest.entry_point = builtin_env_entry;
     } else {
-      if (check_shebang_script(stage_argv[0], interp, sizeof(interp), interp_arg, sizeof(interp_arg))) {
+      if (stage_argc > 0 && stage_argv[0] &&
+          check_shebang_script(stage_argv[0], interp, sizeof(interp), interp_arg, sizeof(interp_arg))) {
         int extra = (interp_arg[0] != '\0') ? 2 : 1;
-        char **new_argv = calloc(stage_argc + extra + 1, sizeof(char *));
+        char **new_argv = (char **)eos_psram_calloc_prefer(stage_argc + extra + 1, sizeof(char *));
         if (new_argv) {
           int idx = 0;
-          new_argv[idx++] = strdup(interp);
+          new_argv[idx++] = eos_psram_strdup(interp);
           if (interp_arg[0] != '\0') {
-            new_argv[idx++] = strdup(interp_arg);
+            new_argv[idx++] = eos_psram_strdup(interp_arg);
           }
-          new_argv[idx++] = strdup(stage_argv[0]);
-          for (int j = 1; j < stage_argc; j++) {
-            new_argv[idx++] = strdup(stage_argv[j]);
+          new_argv[idx++] = eos_psram_strdup(stage_argv[0]);
+          for (size_t j = 1; j < stage_argc; j++) {
+            new_argv[idx++] = eos_psram_strdup(stage_argv[j]);
           }
           new_argv[idx] = NULL;
           stage_argv = new_argv;
@@ -1100,72 +1153,100 @@ static int eval_command_node(eos_ast_node_t *node) {
         }
       }
 
-      if (load_bin_manifest(stage_argv[0], &exec_stages[i].manifest) < 0) {
+      if (stage_argc == 0 || !stage_argv[0] ||
+          load_bin_manifest(stage_argv[0], &exec_stages[i].manifest) < 0) {
         if (shebang_allocated) {
-          for (int j = 0; j < stage_argc; j++) free(stage_argv[j]);
+          for (size_t j = 0; j < stage_argc; j++) free(stage_argv[j]);
           free(stage_argv);
         }
-        for (int j = 0; j < i; j++) {
+        for (size_t j = 0; j < i; j++) {
           if (shebang[j]) {
             for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
             free(exec_stages[j].argv);
           }
         }
+        free(shebang);
         free(exec_stages);
         return -1;
       }
     }
 
-    exec_stages[i].argc = stage_argc;
+    exec_stages[i].argc = (int)stage_argc;
     exec_stages[i].argv = stage_argv;
     exec_stages[i].pipe_in_fd = -1;
     exec_stages[i].pipe_out_fd = -1;
-    exec_stages[i].in_file = node->stages[i].in_file;
-    exec_stages[i].out_file = node->stages[i].out_file;
-    exec_stages[i].out_append = node->stages[i].out_append;
+    exec_stages[i].in_file = cmd_st->in_file;
+    exec_stages[i].out_file = cmd_st->out_file;
+    exec_stages[i].out_append = cmd_st->out_append;
   }
 
   int ret = 0;
 
   if (stage_count == 1) {
-    eos_tctx_t *tctx = eos_tctx_get();
-    eos_tctx_fd_snapshot_t fd_snap = eos_tctx_snapshot_fds(tctx);
-    int saved_map[16];
-    for (int i = 0; i < 16; i++) {
-      saved_map[i] = tctx ? tctx->fd_map[i] : -1;
-    }
+    if (!exec_stages[0].is_builtin &&
+        eos_bin_prefers_psram_stack(&exec_stages[0].manifest)) {
+      pthread_t thread;
+      pthread_attr_t attr;
+      pthread_attr_init(&attr);
+      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+      pthread_attr_setstacksize(
+          &attr, eos_bin_effective_stack_size(&exec_stages[0].manifest));
 
-    fflush(stdout);
+      eos_pthread_set_manifest_cfg(&exec_stages[0].manifest);
+      int rc = pthread_create(&thread, &attr, pipeline_stage_thread,
+                              &exec_stages[0]);
+      pthread_attr_destroy(&attr);
 
-    bool redir = has_stage_redirections(&exec_stages[0]);
-    int opened_fds[2] = {-1, -1};
-    if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
-      ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
-                                                exec_stages[0].argv);
-    }
-
-    fflush(stdout);
-    clearerr(stdin);
-    clearerr(stdout);
-
-    if (redir) {
-      if (tctx) {
-        for (int i = 0; i < 16; i++)
-          tctx->fd_map[i] = saved_map[i];
+      if (rc == 0) {
+        void *retval = NULL;
+        if (pthread_join(thread, &retval) == 0) {
+          ret = (int)(intptr_t)retval;
+        }
+      } else {
+        EOS_LOGE("eos_system() failed to spawn PSRAM thread for %s: %d",
+                 exec_stages[0].argv[0], rc);
+        ret = -1;
+      }
+    } else {
+      eos_tctx_t *tctx = eos_tctx_get();
+      eos_tctx_fd_snapshot_t fd_snap = eos_tctx_snapshot_fds(tctx);
+      int saved_map[16];
+      for (int i = 0; i < 16; i++) {
+        saved_map[i] = tctx ? tctx->fd_map[i] : -1;
       }
 
-      close_stage_fds(opened_fds, -1, -1);
-    }
+      fflush(stdout);
 
-    // Clean up any leaked file descriptors or directory handles from the executed command
-    eos_tctx_cleanup_leaked_fds(tctx, &fd_snap);
+      bool redir = has_stage_redirections(&exec_stages[0]);
+      int opened_fds[2] = {-1, -1};
+      if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
+        ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
+                                                  exec_stages[0].argv);
+      }
+
+      fflush(stdout);
+      clearerr(stdin);
+      clearerr(stdout);
+
+      if (redir) {
+        if (tctx) {
+          for (int i = 0; i < 16; i++)
+            tctx->fd_map[i] = saved_map[i];
+        }
+
+        close_stage_fds(opened_fds, -1, -1);
+      }
+
+      // Clean up any leaked file descriptors or directory handles from the executed command
+      eos_tctx_cleanup_leaked_fds(tctx, &fd_snap);
+    }
   } else {
     eos_tctx_t *parent_tctx = eos_tctx_get();
-    for (int i = 0; i < stage_count - 1; i++) {
+    for (size_t i = 0; i < stage_count - 1; i++) {
       int pfd[2] = {-1, -1};
       if (pipe(pfd) < 0) {
         EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
-        for (int j = 0; j < stage_count; j++) {
+        for (size_t j = 0; j < stage_count; j++) {
           if (exec_stages[j].pipe_in_fd >= 0) {
             if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
             close(exec_stages[j].pipe_in_fd);
@@ -1175,12 +1256,13 @@ static int eval_command_node(eos_ast_node_t *node) {
             close(exec_stages[j].pipe_out_fd);
           }
         }
-        for (int j = 0; j < stage_count; j++) {
+        for (size_t j = 0; j < stage_count; j++) {
           if (shebang[j]) {
             for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
             free(exec_stages[j].argv);
           }
         }
+        free(shebang);
         free(exec_stages);
         return -1;
       }
@@ -1195,28 +1277,29 @@ static int eval_command_node(eos_ast_node_t *node) {
     fflush(stdout);
     fflush(stderr);
 
-    pthread_t threads[EOS_SYSTEM_MAX_STAGES] = {0};
-    bool spawned[EOS_SYSTEM_MAX_STAGES] = {false};
+    pthread_t *threads = (pthread_t *)eos_psram_calloc_prefer(stage_count, sizeof(pthread_t));
+    bool *spawned = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
 
-    for (int i = 0; i < stage_count; i++) {
+    for (size_t i = 0; i < stage_count; i++) {
       pthread_attr_t attr;
       pthread_attr_init(&attr);
       pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
       pthread_attr_setstacksize(
           &attr, eos_bin_effective_stack_size(&exec_stages[i].manifest));
 
+      eos_pthread_set_manifest_cfg(&exec_stages[i].manifest);
       int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
       pthread_attr_destroy(&attr);
 
       if (rc != 0) {
-        EOS_LOGE("eos_system() failed to spawn thread for stage %d", i);
+        EOS_LOGE("eos_system() failed to spawn thread for stage %u", (unsigned)i);
       } else {
         spawned[i] = true;
       }
     }
 
     int last_status = -1;
-    for (int i = 0; i < stage_count; i++) {
+    for (size_t i = 0; i < stage_count; i++) {
       if (spawned[i]) {
         void *retval = NULL;
         if (pthread_join(threads[i], &retval) == 0) {
@@ -1225,9 +1308,11 @@ static int eval_command_node(eos_ast_node_t *node) {
       }
     }
     ret = last_status;
+    free(threads);
+    free(spawned);
   }
 
-  for (int i = 0; i < stage_count; i++) {
+  for (size_t i = 0; i < stage_count; i++) {
     if (shebang[i]) {
       for (int j = 0; j < exec_stages[i].argc; j++) {
         free(exec_stages[i].argv[j]);
@@ -1235,6 +1320,7 @@ static int eval_command_node(eos_ast_node_t *node) {
       free(exec_stages[i].argv);
     }
   }
+  free(shebang);
   free(exec_stages);
   return ret;
 }
@@ -1267,9 +1353,10 @@ static int eval_ast(eos_ast_node_t *node) {
       break;
     case EOS_NODE_BG: {
       if (node->left &&
-          (node->left->type != EOS_NODE_COMMAND || node->left->stage_count > 0)) {
+          (node->left->type != EOS_NODE_COMMAND || kv_size(node->left->stages) > 0)) {
         uint32_t bg_stack = ast_required_stack_size(node->left);
-        bg_wrapper_t *bg = malloc(sizeof(bg_wrapper_t));
+        bool bg_psram = ast_prefers_psram_stack(node->left);
+        bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
         if (bg) {
           if (tctx) {
             eos_tctx_unreg_memblock(bg, tctx);
@@ -1281,6 +1368,7 @@ static int eval_ast(eos_ast_node_t *node) {
             pthread_attr_init(&attr);
             pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
             pthread_attr_setstacksize(&attr, bg_stack);
+            eos_pthread_set_stack_cfg(bg_stack, bg_psram, "bg_task");
             if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
               free_cloned_ast_node(bg->node);
               free(bg);
@@ -1292,7 +1380,7 @@ static int eval_ast(eos_ast_node_t *node) {
         }
       }
       if (node->right &&
-          (node->right->type != EOS_NODE_COMMAND || node->right->stage_count > 0)) {
+          (node->right->type != EOS_NODE_COMMAND || kv_size(node->right->stages) > 0)) {
         status = eval_ast(node->right);
       } else {
         status = 0;
@@ -1311,12 +1399,7 @@ static void free_ast(eos_ast_node_t *node) {
   if (!node) return;
   free_ast(node->left);
   free_ast(node->right);
-  for (int i = 0; i < node->glob_string_count; i++) {
-    if (node->glob_strings[i]) {
-      free(node->glob_strings[i]);
-    }
-  }
-  free(node);
+  free_ast_node_single(node);
 }
 
 int __wrap_system(const char *cmdline) {
@@ -1330,47 +1413,40 @@ int __wrap_system(const char *cmdline) {
 
   size_t cmd_len = strlen(cmdline);
   size_t arena_size = cmd_len * 2 + EOS_LARGE_STR_LEN;
-  char *arena_buf = malloc(arena_size);
+  char *arena_buf = (char *)eos_psram_malloc_prefer(arena_size);
   if (!arena_buf) {
     eos_tctx_cleanup_leaked_fds(tctx, &snap);
     return -1;
   }
   const char *arena_end = arena_buf + arena_size - 1;
 
-  int max_tokens = 128;
-  eos_token_t *tokens = calloc(max_tokens, sizeof(eos_token_t));
-  if (!tokens) {
-    free(arena_buf);
-    eos_tctx_cleanup_leaked_fds(tctx, &snap);
-    return -1;
-  }
+  kvec_psram_t(eos_token_t) tokens;
+  kv_init(tokens);
 
   char *cursor = (char *)cmdline;
   char *arena = arena_buf;
   bool is_op = false;
   bool has_wildcard = false;
   char *tok = NULL;
-  int num_tokens = 0;
 
   while ((tok = next_shell_token(&cursor, &arena, arena_end, &is_op, &has_wildcard)) != NULL) {
-    if (num_tokens >= max_tokens - 1) {
-      break;
-    }
-    tokens[num_tokens].text = tok;
-    tokens[num_tokens].is_op = is_op;
-    tokens[num_tokens].has_wildcard = has_wildcard;
-    num_tokens++;
+    eos_token_t tok_entry = {
+      .text = tok,
+      .is_op = is_op,
+      .has_wildcard = has_wildcard,
+    };
+    kv_push(eos_token_t, tokens, tok_entry);
   }
 
-  if (num_tokens == 0) {
-    free(tokens);
-    free(arena_buf);
+  if (kv_size(tokens) == 0) {
+    kv_destroy(tokens);
+    eos_psram_free(arena_buf);
     eos_tctx_cleanup_leaked_fds(tctx, &snap);
     return 0;
   }
 
   int idx = 0;
-  eos_ast_node_t *root = parse_expr(tokens, num_tokens, &idx, 0);
+  eos_ast_node_t *root = parse_expr(tokens.a, (int)kv_size(tokens), &idx, 0);
   int ret = 0;
   if (root) {
     ret = eval_ast(root);
@@ -1379,8 +1455,8 @@ int __wrap_system(const char *cmdline) {
     ret = -1;
   }
 
-  free(tokens);
-  free(arena_buf);
+  kv_destroy(tokens);
+  eos_psram_free(arena_buf);
 
   // Perform leak check: verify and close any descriptors left unclosed by commands
   eos_tctx_cleanup_leaked_fds(tctx, &snap);

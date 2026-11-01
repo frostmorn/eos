@@ -1,5 +1,6 @@
 #include "pipefs.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -493,7 +494,7 @@ static DIR *pipefs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
-  pipe_dir_t *dir = calloc(1, sizeof(pipe_dir_t));
+  pipe_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(pipe_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;

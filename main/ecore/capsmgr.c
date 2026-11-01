@@ -13,7 +13,7 @@
 // consider using bitmask for caps
 extern bool esp_gpio_is_reserved(uint64_t bitmask);
 
-static kvec_t(eos_cap_t) ecaps;
+static kvec_psram_t(eos_cap_t) ecaps;
 
 static const char *eos_cap_type_strings[] = {[EOS_CAPS_GPIO] = "GPIO",
                                              [EOS_CAPS_I2C] = "I2C",

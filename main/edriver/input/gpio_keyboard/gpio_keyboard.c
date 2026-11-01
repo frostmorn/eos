@@ -13,6 +13,7 @@
 #include "ecore/driver.h"
 #include "ecore/input.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 #define GPIO_KEYBOARD_QUEUE_SIZE 32
 
@@ -79,7 +80,7 @@ static bool gpio_keyboard_dequeue_event(gpio_keyboard_state_t *state, eos_input_
 }
 
 bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
-  gpio_keyboard_state_t *state = malloc(sizeof(gpio_keyboard_state_t));
+  gpio_keyboard_state_t *state = eos_psram_malloc_prefer(sizeof(gpio_keyboard_state_t));
   if (!state) return false;
   memset(state, 0, sizeof(gpio_keyboard_state_t));
   state->lock = xSemaphoreCreateMutex();

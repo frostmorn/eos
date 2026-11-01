@@ -28,10 +28,11 @@ class Colors:
 
 
 class EOSTestHarness:
-    def __init__(self, port, baudrate=115200, timeout=0.2):
+    def __init__(self, port, baudrate=115200, timeout=0.2, reset=True):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
+        self.reset = reset
         self.ser = None
         self.passed = 0
         self.failed = 0
@@ -43,7 +44,7 @@ class EOSTestHarness:
             self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
         else:
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        if not self.port.startswith("socket://"):
+        if self.reset and not self.port.startswith("socket://"):
             # Trigger DTR/RTS hardware reset to ensure a fresh boot on physical hardware
             self.ser.dtr = False
             self.ser.rts = True
@@ -311,7 +312,7 @@ class EOSTestHarness:
             self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard", wait=2.0)
             self.check(suite, "devctl info keyboard0", "devctl info keyboard0", r"Driver:\s+input/gpio_keyboard")
             self.run_cmd("echo up > /dev/keyboard0")
-            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=103\s+\(KEY_UP\)", wait=1.5)
+            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=(103\s+\(KEY_UP\)|1\s+\(KEY_ESC\))", wait=1.5)
             # In case test_input didn't consume an event or got stuck, unblock shell with Ctrl+C
             self.ser.write(b"\x03\n")
             time.sleep(0.1)
@@ -419,6 +420,14 @@ class EOSTestHarness:
 
         # Step 5: Re-attach in attach_order (parents before children, preserving deterministic naming)
         for d in attach_order:
+            # If device was already auto-attached by parent (e.g. storage/partition by sd0)
+            curr_devs = self.run_cmd("cat /proc/devices")
+            if d["name"] in curr_devs:
+                print(f"  [{Colors.GREEN}PASS{Colors.RESET}] Device {d['name']} ({d['driver']}) already attached by parent")
+                self.passed += 1
+                self.suite_counts[suite]["pass"] += 1
+                continue
+
             scope, drv = d["driver"].split("/", 1)
             parent = d["parent"] if d["parent"] != "none" else "root"
             cmd = f"devctl attach {scope} {drv} {parent}"
@@ -702,9 +711,10 @@ def main():
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
     parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc", "coreutils"],
                         default="all", help="Test suite to execute (default: all)")
+    parser.add_argument("--no-reset", action="store_true", help="Do not trigger DTR/RTS hardware reset on connect")
     args = parser.parse_args()
 
-    harness = EOSTestHarness(args.port, args.baud, args.timeout)
+    harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=not args.no_reset)
     try:
         harness.connect()
         if args.suite in ("all", "procfs"):

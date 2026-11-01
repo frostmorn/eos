@@ -6,6 +6,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
+#include "emisc/psram_alloc.h"
 
 #include <errno.h>
 #include <string.h>
@@ -30,7 +31,7 @@ typedef struct {
 } bridge_state_t;
 
 bool driver_net_bridge_init(eos_dev_t *dev) {
-  bridge_state_t *st = calloc(1, sizeof(bridge_state_t));
+  bridge_state_t *st = eos_psram_calloc_prefer(1, sizeof(bridge_state_t));
   if (!st) return false;
 
   st->is_up = false;

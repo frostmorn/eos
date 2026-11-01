@@ -100,6 +100,7 @@ static void test_kvec(test_ctx_t *ctx) {
   kvec_t(int) v;
   kv_init(v);
   report_test(ctx, "kvec: kv_init size is 0", kv_size(v) == 0 && kv_max(v) == 0);
+  report_test(ctx, "kvec: kvec_t default caps is MALLOC_CAP_DEFAULT", v.caps == MALLOC_CAP_DEFAULT);
 
   // Push elements
   for (int i = 0; i < 16; i++) {
@@ -134,6 +135,34 @@ static void test_kvec(test_ctx_t *ctx) {
 
   kv_destroy(v);
   kv_destroy(v_copy);
+
+  // kvec_psram_t operations
+  kvec_psram_t(int) vp;
+  kv_init(vp);
+  report_test(ctx, "kvec: kvec_psram_t caps has MALLOC_CAP_SPIRAM", (vp.caps & MALLOC_CAP_SPIRAM) != 0);
+  report_test(ctx, "kvec: kvec_psram_t kv_init size is 0", kv_size(vp) == 0 && kv_max(vp) == 0);
+
+  for (int i = 0; i < 20; i++) {
+    kv_push(int, vp, i * 10);
+  }
+  report_test(ctx, "kvec: kvec_psram_t push 20 elements check", kv_size(vp) == 20 && kv_A(vp, 19) == 190);
+
+  int p_popped = kv_pop(vp);
+  report_test(ctx, "kvec: kvec_psram_t pop check", p_popped == 190 && kv_size(vp) == 19);
+
+  kv_resize(int, vp, 64);
+  report_test(ctx, "kvec: kvec_psram_t resize capacity check", kv_max(vp) == 64);
+
+  kv_drop_fast(int, vp, 0);
+  report_test(ctx, "kvec: kvec_psram_t drop_fast check", kv_size(vp) == 18);
+
+  kv_destroy(vp);
+
+  // kv_init_caps custom capability
+  kvec_t(int) vc;
+  kv_init_caps(vc, 0x1234);
+  report_test(ctx, "kvec: kv_init_caps sets custom capabilities", vc.caps == 0x1234);
+  kv_destroy(vc);
 }
 
 // ── 3. fancytree Generic Hierarchy Tests ───────────────────────

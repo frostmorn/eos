@@ -6,6 +6,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/netif.h"
+#include "emisc/psram_alloc.h"
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -28,7 +29,7 @@ typedef struct {
 } ap_state_t;
 
 bool driver_net_ap_init(eos_dev_t *dev) {
-  ap_state_t *st = calloc(1, sizeof(ap_state_t));
+  ap_state_t *st = eos_psram_calloc_prefer(1, sizeof(ap_state_t));
   if (!st) return false;
 
   st->is_up = false;

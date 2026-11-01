@@ -35,7 +35,7 @@ struct tmpfs_fnode_t {
   int32_t refcount; // open fds/dirs currently referencing this node
   bool unlinked;    // marked for deletion once refcount drops to 0
 
-  kvec_t(tmpfs_fblock_t) blocks;
+  kvec_psram_t(tmpfs_fblock_t) blocks;
 };
 
 EOS_TREE_DECLARE(tmpfs_fnode_t);
@@ -197,7 +197,7 @@ static tmpfs_fnode_t *tmpfs_create_node(const char *name, mode_t mode,
     return NULL;
   }
 
-  tmpfs_fnode_t *node = malloc(sizeof(tmpfs_fnode_t));
+  tmpfs_fnode_t *node = eos_psram_malloc_prefer(sizeof(tmpfs_fnode_t));
   if (!node) {
     errno = ENOMEM;
     return NULL;
@@ -631,7 +631,7 @@ static DIR *tmpfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
-  tmpfs_dir_t *dir = malloc(sizeof(tmpfs_dir_t));
+  tmpfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(tmpfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;
@@ -831,14 +831,14 @@ static int tmpfs_utime(void *ctx, const char *path,
 ///////////////////////////////////////////////////////////////////
 
 tmpfs_state_t * eos_tmpfs_mount(const char *path) {
-  tmpfs_state_t *state = malloc(sizeof(tmpfs_state_t));
+  tmpfs_state_t *state = eos_psram_malloc_prefer(sizeof(tmpfs_state_t));
   if (!state) {
     EOS_LOGE("Failed to allocate tmpfs state for mount at %s\n", path);
     return NULL;
   }
   memset(state, 0, sizeof(tmpfs_state_t));
 
-  state->root = malloc(sizeof(tmpfs_fnode_t));
+  state->root = eos_psram_malloc_prefer(sizeof(tmpfs_fnode_t));
   if (!state->root) {
     EOS_LOGE("Failed to allocate tmpfs root node for mount at %s\n", path);
     free(state);

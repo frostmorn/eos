@@ -1,6 +1,7 @@
 #include "binfs.h"
 #include "asset.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
@@ -332,7 +333,7 @@ static DIR *binfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
-  binfs_dir_t *dir = malloc(sizeof(binfs_dir_t));
+  binfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(binfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;

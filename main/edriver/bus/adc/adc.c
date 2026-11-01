@@ -23,6 +23,7 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/psram_alloc.h"
 
 #ifndef SOC_GPIO_PIN_COUNT
 #define SOC_GPIO_PIN_COUNT 49
@@ -172,7 +173,7 @@ static bool driver_bus_adc_init(eos_dev_t *dev) {
   if (!dev)
     return false;
 
-  adc_bus_state_t *st = calloc(1, sizeof(adc_bus_state_t));
+  adc_bus_state_t *st = eos_psram_calloc_prefer(1, sizeof(adc_bus_state_t));
   if (!st)
     return false;
 

@@ -13,6 +13,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <driver/gpio.h>
 #include <errno.h>
@@ -59,7 +60,7 @@ typedef struct {
 //=====================================================================
 bool driver_bus_gpio_init(eos_dev_t *dev) {
   // GPIO INIT
-  dev->state = malloc(sizeof(gpio_bus_state_t));
+  dev->state = eos_psram_malloc_prefer(sizeof(gpio_bus_state_t));
   memset(dev->state, 0, sizeof(gpio_bus_state_t));
 
   gpio_bus_state_t *state = dev->state;
@@ -362,7 +363,7 @@ int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 DIR *driver_bus_gpio_opendir(eos_dev_t *dev, const char *name) {
   EOS_LOGI("Entering gpio opendir with path=%s\n", name);
 
-  gpio_dir_t *dirp = malloc(sizeof(gpio_dir_t));
+  gpio_dir_t *dirp = eos_psram_malloc_prefer(sizeof(gpio_dir_t));
 
   if (!dirp) {
     errno = ENOMEM;

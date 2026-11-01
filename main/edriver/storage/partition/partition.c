@@ -7,6 +7,7 @@
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 #include "includes.h"
 
 #ifdef EOS_DRV_STORAGE_PARTITION_ENABLED
@@ -29,7 +30,7 @@ typedef struct {
 // ── Init / Shutdown ───────────────────────────────────────────
 
 bool driver_storage_partition_init(eos_dev_t *dev) {
-  dev->state = malloc(sizeof(partition_state_t));
+  dev->state = eos_psram_malloc_prefer(sizeof(partition_state_t));
 
   memset(dev->state, 0, sizeof(partition_state_t));
 

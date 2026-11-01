@@ -654,6 +654,11 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 
   eos_lvgl_clear_keys();
   launcher_build_ui(st);
+
+  EOS_LOGI("launcher: stack watermark=%u bytes free (allocated %u, used ~%u bytes)",
+           (unsigned)eos_thread_stack_high_water_mark(),
+           (unsigned)EOS_BIN_GUI_STACK_SIZE,
+           (unsigned)(EOS_BIN_GUI_STACK_SIZE - eos_thread_stack_high_water_mark()));
   return 0;
 }
 
@@ -744,6 +749,11 @@ int launcher_main(int argc, char **argv) {
          eos_lvgl_get_indev() ? "keyboard active" : "touch/display mode (no keyboard)");
 
   launcher_build_ui(st);
+
+  EOS_LOGI("launcher: stack watermark=%u bytes free (allocated %u, used ~%u bytes)",
+           (unsigned)eos_thread_stack_high_water_mark(),
+           (unsigned)EOS_BIN_GUI_STACK_SIZE,
+           (unsigned)(EOS_BIN_GUI_STACK_SIZE - eos_thread_stack_high_water_mark()));
 
   if (app_to_launch) {
     for (int i = 0; i < st->filtered_count; i++) {

@@ -108,6 +108,9 @@ typedef struct {
   // Interactive items for D-Pad / Touch selection
   lv_obj_t *items[24];
 
+  // Large scratch buffer for CLI output parsing (allocated on heap to protect task stack)
+  char cmd_buf[2048];
+
   uint64_t last_refresh_ms;
 } net_app_t;
 
@@ -259,8 +262,7 @@ static void do_scan(net_app_t *app) {
     return;
   }
 
-  char buf[2048];
-  if (!net_read_output(buf, sizeof(buf))) {
+  if (!net_read_output(app->cmd_buf, sizeof(app->cmd_buf))) {
     set_status(app, 2, "Scan returned no output");
     net_render_active_tab(app);
     return;
@@ -268,7 +270,7 @@ static void do_scan(net_app_t *app) {
 
   // Parse scan output: look for table rows after the header separator "---"
   app->ap_count = 0;
-  char *line = buf;
+  char *line = app->cmd_buf;
   bool past_header = false;
   while (line && *line && app->ap_count < NET_MAX_SCAN_APS) {
     char *next = strchr(line, '\n');
@@ -858,11 +860,10 @@ static void net_render_active_tab(net_app_t *app) {
 
     // Query wifi0 status for controller info
     net_run_cmd("netctl wifi0");
-    char wifi_buf[512];
-    net_read_output(wifi_buf, sizeof(wifi_buf));
+    net_read_output(app->cmd_buf, sizeof(app->cmd_buf));
 
     lv_obj_t *hdesc = lv_label_create(hcard);
-    if (strstr(wifi_buf, "ext C6") || strstr(wifi_buf, "external")) {
+    if (strstr(app->cmd_buf, "ext C6") || strstr(app->cmd_buf, "external")) {
       lv_label_set_text(hdesc, "Target: JC4880P443C (ESP32-P4)\nController: External ESP32-C6 (SDIO)");
     } else {
       lv_label_set_text(hdesc, "Target: Lilka v2.3\nController: ESP32-S3 Internal Wi-Fi PHY");
@@ -871,14 +872,13 @@ static void net_render_active_tab(net_app_t *app) {
 
     // Query all interfaces via CLI
     net_run_cmd("netctl");
-    char all_buf[2048];
-    net_read_output(all_buf, sizeof(all_buf));
+    net_read_output(app->cmd_buf, sizeof(app->cmd_buf));
 
     // Display each interface as a card
     const char *devs[] = {"wifi0", "sta0", "ap0", "br0"};
     for (int d = 0; d < 4; d++) {
       // Find this interface in the combined output
-      char *iface_start = strstr(all_buf, devs[d]);
+      char *iface_start = strstr(app->cmd_buf, devs[d]);
       if (!iface_start) continue;
 
       lv_obj_t *card = create_card(app->content_cont);

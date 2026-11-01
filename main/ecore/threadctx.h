@@ -18,16 +18,16 @@ typedef struct eos_tctx_t eos_tctx_t;
 struct eos_tctx_t {
   // Current working directory
   char cwd[PATH_MAX];
-  // File descriptors in use
-  kvec_t(int) fds;
-  // Opened directories
-  kvec_t(DIR *) dirs;
-  // Allocated memory blocks
+  // File descriptors in use (PSRAM-backed)
+  kvec_psram_t(int) fds;
+  // Opened directories (PSRAM-backed)
+  kvec_psram_t(DIR *) dirs;
+  // Allocated memory blocks (Internal SRAM for low allocation latency)
   kvec_t(void *) memblocks;
   // Per-thread virtual descriptor mapping (index = virtual fd, value = real VFS fd or -1)
   int fd_map[FD_SETSIZE];
-  // Environment variables ("KEY=VALUE")
-  kvec_t(char *) env;
+  // Environment variables ("KEY=VALUE") (PSRAM-backed)
+  kvec_psram_t(char *) env;
   // Environment pointer array for environ macro
   char **env_array;
   // Last execution exit status ($?)
@@ -90,3 +90,6 @@ eos_twrap_t *eos_twrap_prepare(void *thread_start, void *thread_data);
 void *eos_twrap_pthread(void *data);
 // yeah, rtos have a bit different TaskEntry declaration
 void eos_twrap_freertos(void *data);
+
+// Returns free stack bytes remaining (high watermark) for current thread
+size_t eos_thread_stack_high_water_mark(void);

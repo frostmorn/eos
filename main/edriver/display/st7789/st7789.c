@@ -11,6 +11,7 @@
 #include "ecore/capsmgr.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 // Actual Display dimensions maxima defined by st7789 datasheets
 // We need to know those values to deduce an x/y shifts to make it actually work
@@ -77,7 +78,7 @@ static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
 // ── Driver functions ──────────────────────────────────────────
 
 bool driver_display_st7789_init(eos_dev_t *dev) {
-  st7789_state_t *state = malloc(sizeof(st7789_state_t));
+  st7789_state_t *state = eos_psram_malloc_prefer(sizeof(st7789_state_t));
   if (!state)
     return false;
   memset(state, 0, sizeof(st7789_state_t));

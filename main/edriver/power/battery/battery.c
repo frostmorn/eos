@@ -17,6 +17,7 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/psram_alloc.h"
 
 // ── LiPo Discharge Chemistry Curve ────────────────────────────
 
@@ -247,7 +248,7 @@ static bool driver_power_battery_init(eos_dev_t *dev) {
   if (!dev)
     return false;
 
-  battery_state_t *st = calloc(1, sizeof(battery_state_t));
+  battery_state_t *st = eos_psram_calloc_prefer(1, sizeof(battery_state_t));
   if (!st)
     return false;
 

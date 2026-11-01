@@ -7,6 +7,7 @@
 #include "ecore/log.h"
 #include "ecore/netif.h"
 #include "emisc/netmisc.h"
+#include "emisc/psram_alloc.h"
 
 #include <errno.h>
 #include <esp_mac.h>
@@ -504,7 +505,7 @@ static int wifi_set_napt_enabled(wifi_radio_state_t *st, bool enable) {
 }
 
 bool driver_net_wifi_init(eos_dev_t *dev) {
-  wifi_radio_state_t *st = calloc(1, sizeof(wifi_radio_state_t));
+  wifi_radio_state_t *st = eos_psram_calloc_prefer(1, sizeof(wifi_radio_state_t));
   if (!st) return false;
 
   st->mutex = xSemaphoreCreateMutex();
@@ -893,12 +894,12 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       st->scan_count = 0;
 
       if (ap_count > 0) {
-        wifi_ap_record_t *records = malloc(ap_count * sizeof(wifi_ap_record_t));
+        wifi_ap_record_t *records = eos_psram_malloc_prefer(ap_count * sizeof(wifi_ap_record_t));
         if (records) {
           uint16_t fetched = ap_count;
           esp_err_t rec_err = esp_wifi_scan_get_ap_records(&fetched, records);
           if (rec_err == ESP_OK) {
-            st->scan_results = malloc(fetched * sizeof(eos_wifi_scan_ap_t));
+            st->scan_results = eos_psram_malloc_prefer(fetched * sizeof(eos_wifi_scan_ap_t));
             if (st->scan_results) {
               st->scan_count = fetched;
               for (size_t i = 0; i < fetched; i++) {
@@ -960,7 +961,7 @@ int driver_net_wifi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
       if (cfg->enable) {
         if (!st->packets) {
-          st->packets = calloc(RAW_PACKET_QUEUE_SIZE, sizeof(eos_wifi_raw_packet_t));
+          st->packets = eos_psram_calloc_prefer(RAW_PACKET_QUEUE_SIZE, sizeof(eos_wifi_raw_packet_t));
           if (!st->packets) {
             EOS_LOGE("wifi: failed to allocate raw packet queue (%u bytes)",
                      (unsigned)(RAW_PACKET_QUEUE_SIZE * sizeof(eos_wifi_raw_packet_t)));

@@ -10,6 +10,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 // Color depth definition fallbacks if not provided by esp_lcd_qemu_rgb header
 #ifndef RGB_QEMU_BPP_16
@@ -59,7 +60,7 @@ bool driver_display_qemu_rgb_init(eos_dev_t *dev) {
     return false;
   }
 
-  qemu_rgb_state_t *state = calloc(1, sizeof(qemu_rgb_state_t));
+  qemu_rgb_state_t *state = eos_psram_calloc_prefer(1, sizeof(qemu_rgb_state_t));
   if (!state) {
     errno = ENOMEM;
     return false;

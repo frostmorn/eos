@@ -32,6 +32,7 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=xTaskCreateStaticPinnedToCore"
 "-Wl,--wrap=xTaskCreatePinnedToCore"
 "-Wl,--wrap=heap_caps_aligned_alloc_base"
+"-Wl,--wrap=heap_caps_realloc_base"
 "-Wl,--wrap=heap_caps_free"
 "-Wl,--wrap=usleep"
 )

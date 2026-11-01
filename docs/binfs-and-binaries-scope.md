@@ -12,7 +12,8 @@ Applications residing in `main/ebin/` are compiled and registered at compile tim
 ```c
 typedef struct {
   uint32_t magic;         // EOS_BIN_MAGIC (0x0C0A00AC)
-  uint32_t flags;
+  uint32_t flags;         // Behavior flags (e.g. EOS_BIN_FLAG_GUI, EOS_BIN_FLAG_STACK_PSRAM)
+  uint32_t stack_size;    // Thread stack size in bytes (0 = default)
   char filename[EOS_SMALL_STR_LEN];
   char name[EOS_SMALL_STR_LEN];
   char group[EOS_XSMALL_STR_LEN];
@@ -21,6 +22,7 @@ typedef struct {
 } eos_bin_t;
 ```
 
+*   **Manifest Flags & Stack Management:** See [Ebin Manifest Flags & Stack Allocation Architecture](./ebin-flags-and-stack-architecture.md) for full details on flags (`EOS_BIN_FLAG_GUI`, `EOS_BIN_FLAG_STACK_PSRAM`, `EOS_BIN_FLAG_STACK_SRAM`), automatic PSRAM stack routing, and dynamic fallback.
 *   **Linker Fragments (`eld/bin.lf`):** Instructs the linker to collect all `.eos_bins` sections across object files, placing them into read-only flash/PSRAM memory bracketed by `_eos_bins_start` and `_eos_bins_end`.
 
 ---
