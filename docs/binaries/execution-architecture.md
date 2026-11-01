@@ -82,12 +82,12 @@ flowchart TD
     Shell["MicroShell (ush) / system()"] --> Resolve["Resolve /bin/<name> via binfs"]
     Resolve --> CheckType{"Binary or Script?"}
     
-    CheckType -->|Script (*.sh)| ExecScript["Read lines sequentially -> Feed back to ush"]
+    CheckType -->|Shell Script| ExecScript["Read lines sequentially -> Feed back to ush"]
     CheckType -->|Native Binary| Manifest["Evaluate eos_bin_t Manifest"]
     
-    Manifest --> StackCheck{"eos_bin_prefers_psram_stack()?"}
-    StackCheck -->|True| AllocPSRAM["Alloc 16 KB Stack in External PSRAM"]
-    StackCheck -->|False| AllocSRAM["Alloc 8 KB Stack in Internal SRAM"]
+    Manifest --> StackCheck{"Prefers PSRAM Stack?"}
+    StackCheck -->|Yes| AllocPSRAM["Alloc 16 KB Stack in External PSRAM"]
+    StackCheck -->|No| AllocSRAM["Alloc 8 KB Stack in Internal SRAM"]
     
     AllocPSRAM --> Pthread["Spawn POSIX pthread (exec.c)"]
     AllocSRAM --> Pthread

@@ -31,8 +31,8 @@ flowchart TD
     VFS --> WIFI["/dev/wifi0 (wifi radio driver)"]
     VFS --> BR["/dev/br0 (bridge driver)"]
     
-    STA -- "EOS_WIFI_IOCTL_SET_MODE\nEOS_WIFI_IOCTL_WAIT_CONNECT" --> WIFI
-    AP -- "EOS_WIFI_IOCTL_SET_MODE" --> WIFI
+    STA -->|"EOS_WIFI_IOCTL_SET_MODE"| WIFI
+    AP -->|"EOS_WIFI_IOCTL_SET_MODE"| WIFI
     
     WIFI --> Hardware{"SoC Silicon or SDIO Co-Proc?"}
     Hardware -->|ESP32-S3| OnboardRadio["Onboard 2.4 GHz PHY"]

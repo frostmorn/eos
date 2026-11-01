@@ -64,12 +64,12 @@ Linker fragment `main/eld/driver.lf` collects all `eos_drv_t` instances across t
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Allocated: eos_dev_alloc()
-    Allocated --> Initializing: eos_dev_attach()
-    Initializing --> Active: drv->init(dev) == 0
-    Initializing --> Detached: drv->init() != 0 (Cleanup)
-    Active --> Detaching: eos_dev_detach()
-    Detaching --> Detached: drv->shutdown(dev)
+    [*] --> Allocated: eos_dev_alloc
+    Allocated --> Initializing: eos_dev_attach
+    Initializing --> Active: drv_init success
+    Initializing --> Detached: drv_init failed
+    Active --> Detaching: eos_dev_detach
+    Detaching --> Detached: drv_shutdown
     Detached --> [*]: Slot freed for reuse
 ```
 
