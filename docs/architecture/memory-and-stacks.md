@@ -1,0 +1,69 @@
+# Embedded Memory Architecture & Stack Allocation
+
+This document outlines the memory hierarchy, allocation capabilities, hardware DMA constraints, and stack placement architecture in **EOS (ESP Operating System)** across Xtensa (ESP32-S3) and RISC-V (ESP32-P4) SoCs.
+
+---
+
+## 1. Physical Memory Hierarchy
+
+In Espressif microcontrollers, system memory is divided into two distinct domains:
+
+```text
++-----------------------------------------------------------------------------------+
+|                                 EOS MEMORY DOMAINS                                |
++-------------------------------------------------+---------------------------------+
+|              INTERNAL SRAM (DRAM)               |      EXTERNAL PSRAM (SPIRAM)    |
+|               384 KB – 768 KB                   |            8 MB – 32 MB         |
++-------------------------------------------------+---------------------------------+
+| • Ultra-fast (1–2 CPU cycles)                   | • High capacity (SPI/Octal bus) |
+| • Hard requirement for ESP32-S3 SPI DMA         | • Cache-miss penalty (30-50 cyc)|
+| • Wi-Fi PHY & Bluetooth hardware ring-buffers   | • Ideal for bulk buffers & GUI  |
+| • Time-critical ISRs & FreeRTOS kernel data     | • Large task execution stacks   |
++-------------------------------------------------+---------------------------------+
+```
+
+---
+
+## 2. Allocation Capabilities & Best Practices
+
+| Memory Capability Flag | Typical Target | Usage Guidelines |
+| :--- | :--- | :--- |
+| `MALLOC_CAP_INTERNAL \| MALLOC_CAP_8BIT` | Internal DRAM | Hot-path data structures, frequent mutation tables (e.g. `tctx->memblocks`), ISR buffers. |
+| `MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT` | External PSRAM | Bulk data, dynamic vectors (`kvec_psram_t`), large strings, GUI draw buffers, task stacks. |
+| `MALLOC_CAP_INTERNAL \| MALLOC_CAP_DMA` | DMA-capable SRAM | Required on ESP32-S3 for SPI/LCD line strip descriptors and Wi-Fi packet descriptors. |
+
+### Golden Rules for Everyday Developers:
+1. **Never allocate bulk data in internal SRAM:** Any buffer exceeding 1 KB that is not touched on high-frequency hardware interrupt loops should prefer PSRAM via `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`.
+2. **Never place `tctx->memblocks` in PSRAM:** The thread context memory block tracker is accessed on every single `malloc()` and `free()`; placing it in PSRAM causes cache contention and latency penalties.
+3. **Use Capability-Aware `kvec`:** Use `kvec_psram_t(T)` (`caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) for dynamic array growth in user utilities.
+
+---
+
+## 3. Hardware DMA Constraints Matrix
+
+Before selecting buffer placement, hardware DMA bus routing must be evaluated:
+
+| SoC Architecture | Hardware Controller | Direct PSRAM DMA Capable? | Constraint Rule |
+| :--- | :--- | :---: | :--- |
+| **ESP32-S3** | General SPI (SPI2 / SPI3) | ❌ **No** | Buffers passed to `spi_device_transmit` **must** allocate with `MALLOC_CAP_DMA \| MALLOC_CAP_INTERNAL`. |
+| **ESP32-S3** | I2S Audio DMA | ❌ **No** | Audio DMA descriptors and bounce rings allocate from internal DMA SRAM. |
+| **ESP32-P4** | High-Speed AXI 2D-DMA / LCD | ✅ **Yes** | Displays and peripherals can source frames and sector buffers directly from PSRAM. |
+| **ESP32-P4** | SDMMC Host (SDIO) | ✅ **Yes** | SD card and co-processor transfers support direct PSRAM DMA buffers. |
+
+---
+
+## 4. Stack Allocation & GUI Routing
+
+Task call stacks represent one of the largest consumers of RAM in embedded systems:
+* **Standard CLI Commands:** Default to **8 KB stacks** in internal SRAM (`EOS_BIN_DEFAULT_STACK_SIZE`).
+* **GUI / LVGL Applications:** Automatically routed to **16 KB stacks in external PSRAM** (`EOS_BIN_FLAG_GUI` or `EOS_BIN_FLAG_STACK_PSRAM`), resulting in **0 internal SRAM bytes consumed**.
+* **Stack Isolation in `system()`:** Single-stage GUI commands run in dedicated worker pthreads on PSRAM stacks, preventing stack overflows on RISC-V architectures with 12 callee-saved registers (`s0`–`s11`).
+* **Graceful Fallback:** If PSRAM allocation fails, `ewrap/pthread.c` automatically clamps stack size to 8 KB and falls back to internal SRAM.
+
+---
+
+## 5. Pratt Parser PSRAM Optimization (+56.3 KB SRAM Reclaimed)
+
+The EOS MicroShell (`ush`) utilizes a Pratt precedence parser for script interpretation and command pipelines.
+* Previously, AST nodes and token arrays allocated static internal SRAM structures, consuming over 56 KB of DRAM at boot.
+* Migrating AST nodes to dynamic `kvec` allocations from `MALLOC_CAP_SPIRAM` permanently freed **56.3 KB of internal SRAM** back to the system DRAM pool with zero performance degradation.

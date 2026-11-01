@@ -6,7 +6,7 @@ In embedded operating systems running on Espressif SoCs (ESP32-S3, ESP32-P4), **
 
 Prior to these architectural fixes:
 1. **Pratt Parser Memory Footprint:** The MicroShell Pratt parser AST and token structures allocated large fixed internal SRAM tables, causing substantial DRAM pressure at boot.
-2. **GUI Task Stack Starvation:** Modern graphical applications (such as [lvgl_net](file:///home/ai/eos/main/ebin/lvgl_net/lvgl_net.c) and desktop launchers) require large call stacks (16 KB to 32 KB) due to complex LVGL widget hierarchies, string rendering, network status queries, and event handlers. Allocating these stacks from internal SRAM severely depleted DRAM headroom.
+2. **GUI Task Stack Starvation:** Modern graphical applications (such as `lvgl_net` and desktop launchers) require large call stacks (16 KB to 32 KB) due to complex LVGL widget hierarchies, string rendering, network status queries, and event handlers. Allocating these stacks from internal SRAM severely depleted DRAM headroom.
 3. **Architecture-Specific Stack Pressure:** On RISC-V architectures (ESP32-P4), the standard calling convention mandates saving 12 callee-saved registers (`s0`–`s11`, plus `ra`) across deep stack frames. When GUI applications ran synchronously on the caller's thread stack inside `system()`, stack overflow exceptions or silent memory corruption occurred.
 
 To resolve these challenges holistically across Xtensa (ESP32-S3) and RISC-V (ESP32-P4), EOS introduced:
@@ -59,7 +59,7 @@ typedef struct {
 
 ### PSRAM Stack Preference (`eos_bin_prefers_psram_stack`)
 
-Stack placement preference is evaluated dynamically via [`eos_bin_prefers_psram_stack()`](file:///home/ai/eos/main/ecore/bin.h#L52-L56):
+Stack placement preference is evaluated dynamically via `eos_bin_prefers_psram_stack()`:
 
 ```c
 static inline bool eos_bin_prefers_psram_stack(const eos_bin_t *bin) {
@@ -76,7 +76,7 @@ static inline bool eos_bin_prefers_psram_stack(const eos_bin_t *bin) {
 
 ### Effective Stack Size Resolution (`eos_bin_effective_stack_size`)
 
-Stack dimensions are resolved dynamically via [`eos_bin_effective_stack_size()`](file:///home/ai/eos/main/ecore/bin.h#L59-L69):
+Stack dimensions are resolved dynamically via `eos_bin_effective_stack_size()`:
 
 ```c
 static inline uint32_t eos_bin_effective_stack_size(const eos_bin_t *bin) {
@@ -100,84 +100,75 @@ static inline uint32_t eos_bin_effective_stack_size(const eos_bin_t *bin) {
 
 ---
 
-## 4. ESP-IDF Pthread Integration & Fallback (`ewrap/pthread.c`)
+## 4. ESP-IDF pthread Stack Configuration & Dynamic Fallback
 
-EOS bridges POSIX `pthread_create()` to FreeRTOS using ESP-IDF's pthread configuration layer (`esp_pthread_set_cfg`):
+In ESP-IDF, thread stacks for POSIX pthreads are configured via `esp_pthread_set_cfg()` before calling `pthread_create()`.
 
-### Pthread Configuration Helpers
+### Configuration Injection (`main/ewrap/pthread.c`)
 
-[`eos_pthread_set_manifest_cfg(const eos_bin_t *bin)`](file:///home/ai/eos/main/ewrap/pthread.c):
-- Inspects `eos_bin_effective_stack_size(bin)` and `eos_bin_prefers_psram_stack(bin)`.
-- If PSRAM is preferred, configures:
-  ```c
-  cfg.stack_size = stack_size;
-  cfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-  cfg.thread_name = bin->filename;
+EOS bridges binary manifest configuration directly into the pthread subsystem:
+
+```c
+void eos_pthread_set_manifest_cfg(const eos_bin_t *bin) {
+  esp_pthread_cfg_t cfg = esp_pthread_get_default_configuration();
+  cfg.stack_size = eos_bin_effective_stack_size(bin);
+  cfg.stack_alloc_caps = eos_bin_prefers_psram_stack(bin)
+                             ? (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                             : (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  cfg.inherit_cfg = false;
   esp_pthread_set_cfg(&cfg);
-  ```
+}
+```
 
 ### Graceful Internal SRAM Fallback
 
-If `pthread_create()` fails when attempting to allocate from external PSRAM (e.g. PSRAM allocation failure, SPIRAM uninitialized, or heap exhaustion), EOS automatically falls back to internal SRAM:
+If external PSRAM is exhausted, uninitialized, or disabled on the target chip, `pthread_create()` fails if `MALLOC_CAP_SPIRAM` cannot be satisfied. EOS intercepts this in `__wrap_pthread_create`:
 
 ```c
-int rc = pthread_create(thread, attr, start_routine, arg);
-if (rc != 0 && prefer_psram) {
-  // Re-try pthread creation using internal SRAM
-  esp_pthread_cfg_t fallback_cfg = esp_pthread_get_default_config();
-  fallback_cfg.stack_size = stack_size;
-  fallback_cfg.thread_name = name;
-  fallback_cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-  esp_pthread_set_cfg(&fallback_cfg);
-  rc = pthread_create(thread, attr, start_routine, arg);
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                          void *(*start_routine)(void *), void *arg) {
+  int rc = __real_pthread_create(thread, attr, start_routine, arg);
+  if (rc != 0) {
+    esp_pthread_cfg_t cur_cfg;
+    if (esp_pthread_get_cfg(&cur_cfg) == ESP_OK) {
+      if (cur_cfg.stack_alloc_caps & MALLOC_CAP_SPIRAM) {
+        EOS_LOGW("pthread", "PSRAM stack allocation failed (rc=%d), falling back to internal SRAM", rc);
+        cur_cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+        if (cur_cfg.stack_size > EOS_BIN_DEFAULT_STACK_SIZE) {
+          cur_cfg.stack_size = EOS_BIN_DEFAULT_STACK_SIZE;
+        }
+        esp_pthread_set_cfg(&cur_cfg);
+        rc = __real_pthread_create(thread, attr, start_routine, arg);
+      }
+    }
+  }
+  return rc;
 }
-// Clean up calling thread's pthread config to prevent leakage
-esp_pthread_cfg_t def_cfg = esp_pthread_get_default_config();
-esp_pthread_set_cfg(&def_cfg);
 ```
 
-### Stack Configuration Isolation
-
-After every thread spawn, the calling thread restores default pthread settings (`esp_pthread_get_default_config()`). This prevents stack configuration leakage across unrelated child threads.
-
 ---
 
-## 5. Execution Routing & Stack Isolation (`exec.c`, `syscalls.c`)
+## 5. Execution Routing & Stack Isolation in `syscalls.c`
 
-### 1. Direct Execution (`execve`)
-When a binary is spawned via `execve()` in [`main/ecore/exec.c`](file:///home/ai/eos/main/ecore/exec.c), `eos_pthread_set_manifest_cfg(bin)` is invoked immediately before `pthread_create()`, applying the binary's stack preference directly to the new worker pthread.
+When executing commands via `system(cmd)` or `ush`:
+- Multi-stage commands (e.g. `cmd1 | cmd2` or `cmd1 && cmd2`) always spawn dedicated POSIX pthreads via `exec.c`.
+- Historically, single-stage commands (`stage_count == 1`, e.g. `system("launcher lvgl_net")`) executed synchronously on the caller's stack to avoid thread creation overhead.
+- However, when a GUI application like `launcher` or `lvgl_net` was executed from a shell or init script, its 16 KB stack requirements exceeded the caller's stack, triggering catastrophic stack overflows on RISC-V architectures.
 
-### 2. Single-Stage Shell Commands (`stage_count == 1` in `syscalls.c`)
-Historically, single-stage commands dispatched via `system()` executed in-process on the caller's stack to save scheduling overhead. However, on RISC-V targets (ESP32-P4) with large frame footprints, executing GUI applications in-process overflowed the shell stack.
+### Resolution in `__wrap_system()`:
+`__wrap_system()` inspects the target binary:
+```c
+const eos_bin_t *bin = eos_bin_find_by_filename(cmd_name);
+if (bin && eos_bin_prefers_psram_stack(bin)) {
+  // Spawn dedicated joinable worker thread on 16 KB PSRAM stack
+  eos_pthread_set_manifest_cfg(bin);
+  pthread_t tid;
+  pthread_create(&tid, NULL, worker_trampoline, task_args);
+  pthread_join(tid, &exit_code);
+} else {
+  // Execute safely on caller's stack
+  bin->entry_point(argc, argv);
+}
+```
 
-[`syscalls.c`](file:///home/ai/eos/main/ewrap/syscalls.c) now evaluates `eos_bin_prefers_psram_stack()`:
-- **CLI Commands (Non-PSRAM):** Execute in-process on the caller's stack for maximum performance and minimal latency.
-- **GUI & PSRAM Commands:** Automatically spawn a dedicated worker pthread with a 16 KB PSRAM stack. The caller thread synchronously waits for completion via `pthread_join()`, providing complete stack isolation.
-
-### 3. Pipeline Stages & Background Jobs (`&`)
-Multi-command pipelines and background jobs analyze the parsed AST via `ast_prefers_psram_stack()`. If any stage requires a PSRAM stack, thread creation parameters are configured accordingly before launching background tasks.
-
----
-
-## 6. Pratt Parser PSRAM Migration (`ush_ast.c`, `ush_ast.h`)
-
-To eliminate fixed DRAM overhead during boot and parsing:
-- Replaced statically sized token arrays and AST node arrays with dynamic `kvec_t` buffers.
-- Tokens and AST allocations are served dynamically from external PSRAM (`MALLOC_CAP_SPIRAM`).
-- **Memory Outcome:** Reclaimed **56.3 KB** of internal SRAM back to the system DRAM pool across all targets.
-
----
-
-## 7. Multi-Target Validation Matrix
-
-The complete test suite has been executed and verified across all supported target platforms:
-
-| Target Platform | Architecture | Test Count | Pass Rate | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **Lilka v2.3 Hardware** | ESP32-S3 (Xtensa Dual-Core, 8MB PSRAM) | **186 / 186** | **100%** | **PASS** |
-| **Guition JC4880P4 Hardware** | ESP32-P4 (RISC-V Dual-Core, 32MB PSRAM) | **188 / 188** | **100%** | **PASS** |
-| **QEMU Simulator** | ESP32-S3 (Xtensa, 4MB PSRAM) | **113 / 113** | **100%** | **PASS** |
-| **Layer Separation Audit** | `tools/layer_audit.py` (11 checks) | **11 / 11** | **100%** | **PASS (0 violations)** |
-
----
-[Back to Documentation Index](./Readme.md) | [See BinFS & Native Binaries](./binfs-and-binaries-scope.md) | [See POSIX Wrappers Architecture](./wrappers-architecture.md)
+This guarantees stack isolation for all GUI and memory-intensive applications without compromising the lightweight execution of basic utilities.
