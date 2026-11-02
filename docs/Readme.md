@@ -14,7 +14,8 @@ docs/
 ├── binaries/                          # Executable binaries & execution environment
 │   ├── catalog.md                     # Everyday command catalog (all 45 binaries with options & syntax)
 │   ├── execution-architecture.md      # BinFS (/bin), statically linked .eos_bins, ush shell, execve
-│   └── manifest-flags-and-stacks.md   # eos_bin_t flags, PSRAM stack routing, graceful SRAM fallback
+│   ├── manifest-flags-and-stacks.md   # eos_bin_t flags, PSRAM stack routing, graceful SRAM fallback
+│   └── elf-applications.md            # Dynamic ELF loading, standalone apps, compilation & runtime symbols
 ├── drivers/                           # Driver contracts, IOCTL tables, scopes & lifecycles
 │   ├── overview.md                    # Unified driver contract (eos_drv_t), lifecycle, capsmgr, VFS
 │   ├── bus.md                         # Bus scope (root, spi, i2c, sdio, usb, gpio) & bus IOCTLs
@@ -50,6 +51,7 @@ docs/
   * **GUI Applications:** `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`.
   * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_sound`, `test_input`, `test_lvgl`, `test_sdl`, etc.
 * [**BinFS, Native Binaries & Execution**](./binaries/execution-architecture.md) — Linker section `.eos_bins`, script assets (`init.sh`), execution pipeline (`exec.c`), MicroShell (`ush.c`), pipes, and redirections.
+* [**Dynamic ELF Applications & Runtime Loader**](./binaries/elf-applications.md) — Standalone dynamic apps, runtime symbol resolution, PSRAM execution, app compilation, and toolchain discovery.
 * [**Ebin Manifest Flags & Stack Architecture**](./binaries/manifest-flags-and-stacks.md) — `eos_bin_t` manifest flags (`EOS_BIN_FLAG_GUI`, `EOS_BIN_FLAG_STACK_PSRAM`, `EOS_BIN_FLAG_STACK_SRAM`), stack dimensioning, PSRAM routing, and graceful SRAM fallback.
 
 ---
@@ -111,6 +113,7 @@ make qemu_graphics                               # Run in QEMU with SDL2 graphic
 # 3. Interactive Code Generation:
 make driver                                      # Scaffold new driver under main/edriver/
 make bin                                         # Scaffold new binary under main/ebin/
+make app                                         # Scaffold new standalone dynamic ELF application under apps/
 
 # 4. Verification & Testing:
 python3 tools/layer_audit.py                     # Verify 0 layer violations

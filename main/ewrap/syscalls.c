@@ -1,4 +1,5 @@
 #include "ecore/binfs.h"
+#include "ecore/elf.h"
 #include "ecore/pipefs.h"
 #include "ecore/threadctx.h"
 #include "emisc/fancymacro.h"
@@ -663,21 +664,42 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
   }
 
   uint32_t magic = 0;
-  if (fread(&magic, sizeof(magic), 1, f) != 1 || magic != EOS_BIN_MAGIC) {
+  if (fread(&magic, sizeof(magic), 1, f) != 1) {
     fclose(f);
-    EOS_LOGE("eos_system() unknown format: %s", path);
+    EOS_LOGE("eos_system() empty file: %s", path);
     errno = ENOEXEC;
     return -1;
   }
 
-  rewind(f);
-  if (fread(manifest_out, sizeof(*manifest_out), 1, f) != 1) {
+  if (magic == EOS_BIN_MAGIC) {
+    rewind(f);
+    if (fread(manifest_out, sizeof(*manifest_out), 1, f) != 1) {
+      fclose(f);
+      errno = EIO;
+      return -1;
+    }
     fclose(f);
-    errno = EIO;
-    return -1;
+    return 0;
   }
+
+  if (magic == EOS_ELF_MAGIC) {
+    fclose(f);
+    memset(manifest_out, 0, sizeof(*manifest_out));
+    manifest_out->magic = EOS_BIN_MAGIC;
+    manifest_out->flags = EOS_BIN_FLAG_STACK_SRAM;
+    manifest_out->stack_size = EOS_ELF_DEFAULT_STACK_SIZE;
+    strlcpy(manifest_out->filename, path, sizeof(manifest_out->filename));
+    strlcpy(manifest_out->name, cmd, sizeof(manifest_out->name));
+    strlcpy(manifest_out->group, "ELF", sizeof(manifest_out->group));
+    strlcpy(manifest_out->description, "Dynamic ELF Executable", sizeof(manifest_out->description));
+    manifest_out->entry_point = eos_elf_stage_entry;
+    return 0;
+  }
+
   fclose(f);
-  return 0;
+  EOS_LOGE("eos_system() unknown format: %s (magic=0x%08lX)", path, (unsigned long)magic);
+  errno = ENOEXEC;
+  return -1;
 }
 
 // Built-in shell environment commands (VAR=VALUE, export, setenv, unset, env)

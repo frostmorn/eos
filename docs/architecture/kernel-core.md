@@ -58,3 +58,14 @@ The File API helper module (`fapi`) provides path normalization and resolution:
 ## 6. Asset Management (`asset.c`, `asset.h`)
 
 EOS provides lightweight asset management (`eos_asset_t`) for accessing compiled-in static assets (such as fonts, images, configuration payloads, and executable scripts like `init.sh`).
+
+---
+
+## 7. Dynamic ELF Loader Subsystem (`elf.c`, `elf.h`, `elf_symbols.c`)
+
+EOS integrates Espressif's relocatable ELF loader (`espressif/elf_loader`) to enable executing standalone user-space binaries compiled independently of the firmware:
+
+* **ELF Format Detection:** `eos_is_elf_stream()` and `eos_is_elf_file()` detect the standard 4-byte ELF identifier (`0x7f, 'E', 'L', 'F'`).
+* **Kernel Symbol Registry:** `eos_elf_init_symbols()` publishes kernel and runtime symbols (POSIX VFS, standard libc, string formatting, dynamic memory, and SDL 1.2/2.0 graphics) for dynamic symbol resolution via `esp_elf_register_symbol()`.
+* **Execution & Relocation Pipeline:** `eos_elf_exec()` reads the ELF binary into a 4-byte aligned PSRAM buffer, relocates symbols with `esp_elf_relocate()`, synchronizes CPU cache lines via `esp_cache_msync()`, and executes the application entry point.
+* **Process Model Integration:** The process execution pipeline (`main/ewrap/syscalls.c` and `main/ecore/exec.c`) transparently routes ELF executables to `eos_elf_stage_entry()` with 32 KB PSRAM thread stacks, preserving shell redirection (`<`, `>`, `>>`), pipes (`|`), and exit status (`$?`). For full details, see [Dynamic ELF Applications](../binaries/elf-applications.md).

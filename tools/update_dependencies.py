@@ -23,6 +23,12 @@ TARGET_MANIFEST = os.path.join(ROOT_DIR, "main", "idf_component.yml")
 LOCK_FILE = os.path.join(ROOT_DIR, "dependencies.lock")
 MANAGED_COMPONENTS_DIR = os.path.join(ROOT_DIR, "managed_components")
 
+CORE_DEPENDENCIES = {
+    "espressif/elf_loader": {
+        "version": "^2.0.0",
+    }
+}
+
 
 def detect_board_from_sdkconfig(sdkconfig_path):
     if not os.path.exists(sdkconfig_path):
@@ -172,7 +178,10 @@ def update_dependencies(board=None):
     sync_board_init(board)
 
     enabled_macros = get_enabled_driver_macros(board)
-    merged_deps = collect_driver_dependencies(enabled_macros)
+    merged_deps = dict(CORE_DEPENDENCIES)
+    driver_deps = collect_driver_dependencies(enabled_macros)
+    for dep_name, dep_spec in driver_deps.items():
+        merged_deps[dep_name] = dep_spec
     board_deps = collect_board_dependencies(board)
     for dep_name, dep_spec in board_deps.items():
         merged_deps[dep_name] = dep_spec

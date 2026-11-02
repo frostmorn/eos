@@ -6,7 +6,7 @@ This document details the in-memory execution environment, binary registration m
 
 ## 1. Statically Linked Native Binaries (`.eos_bins`)
 
-Because microcontrollers lack MMU-based virtual memory paging and dynamic ELF loaders, all native user-space applications in EOS reside in `main/ebin/` and are registered statically at compile time.
+Built-in native user-space applications reside in `main/ebin/` and are registered statically at compile time using linker metadata. In addition, EOS supports dynamic runtime loading of external relocatable ELF binaries from filesystems via the dynamic ELF loader (see [Dynamic ELF Applications](./elf-applications.md)).
 
 ### Manifest Structure (`eos_bin_t`, `main/ecore/bin.h`)
 Every binary declares an `eos_bin_t` manifest annotated with the `EOS_BIN_ATTR` macro:
@@ -79,15 +79,17 @@ In addition to compiled ELF functions, `binfs` integrates embedded text assets i
 
 ```mermaid
 flowchart TD
-    Shell["MicroShell (ush) / system()"] --> Resolve["Resolve /bin/<name> via binfs"]
-    Resolve --> CheckType{"Binary or Script?"}
+    Shell["MicroShell (ush) / system()"] --> Resolve["Resolve via binfs or $PATH / ./"]
+    Resolve --> CheckType{"Binary Type?"}
     
     CheckType -->|Shell Script| ExecScript["Read lines sequentially -> Feed back to ush"]
-    CheckType -->|Native Binary| Manifest["Evaluate eos_bin_t Manifest"]
+    CheckType -->|Dynamic ELF| ELFStage["Create Synthetic Manifest (32KB PSRAM) -> eos_elf_stage_entry()"]
+    CheckType -->|Native .eos_bins| Manifest["Evaluate static eos_bin_t Manifest"]
     
     Manifest --> StackCheck{"Prefers PSRAM Stack?"}
     StackCheck -->|Yes| AllocPSRAM["Alloc 16 KB Stack in External PSRAM"]
     StackCheck -->|No| AllocSRAM["Alloc 8 KB Stack in Internal SRAM"]
+    ELFStage --> AllocPSRAM
     
     AllocPSRAM --> Pthread["Spawn POSIX pthread (exec.c)"]
     AllocSRAM --> Pthread
@@ -99,14 +101,15 @@ flowchart TD
 ```
 
 ### Execution Flow:
-1. **Command Resolution:** When `ush` or `system()` receives a command name (e.g. `cat file.txt`), it checks `/bin/` or the current path for matching manifests or script assets.
-2. **Thread Context Isolation (`ecore/exec.c`):** EOS executes commands in isolated POSIX pthreads. Before launching the thread:
+1. **Command Resolution:** When `ush` or `system()` receives a command name (e.g. `cat file.txt` or `./game.elf`), it checks `/bin/`, the current working directory (`./`), or directories in `$PATH` for matching manifests, dynamic ELF binaries, or script assets.
+2. **Dynamic ELF Detection:** Executables with the ELF magic `\x7fELF` are staged via `eos_elf_stage_entry` and dynamically relocated in PSRAM using `espressif/elf_loader`.
+3. **Thread Context Isolation (`ecore/exec.c`):** EOS executes commands in isolated POSIX pthreads. Before launching the thread:
    * Parent thread's current working directory (`cwd`) is inherited.
    * Argument array (`argv`) is copied into transient heap storage.
-   * Thread stack memory attributes are configured based on manifest flags.
-3. **Thread Local Storage (`ecore/threadctx.c`):** The new thread receives an `eos_tctx_t` stored in FreeRTOS TLS. This tracks open file descriptors, opened directories, and heap allocations.
-4. **Automatic Resource Cleanup:** When the thread exits, the kernel automatically closes leaked file descriptors, closes leaked directories, and frees leaked heap memory blocks, guaranteeing system stability even when user commands crash or fail to clean up.
-5. **Synchronous Waiting:** Shell processes call `eos_wait()` to join the worker thread, release its thread descriptor, and obtain its return code (`0` for success, non-zero for error).
+   * Thread stack memory attributes are configured based on manifest flags (`EOS_BIN_FLAG_STACK_PSRAM`).
+4. **Thread Local Storage (`ecore/threadctx.c`):** The new thread receives an `eos_tctx_t` stored in FreeRTOS TLS. This tracks open file descriptors, opened directories, and heap allocations.
+5. **Automatic Resource Cleanup:** When the thread exits, the kernel automatically closes leaked file descriptors, closes leaked directories, and frees leaked heap memory blocks, guaranteeing system stability even when user commands crash or fail to clean up.
+6. **Synchronous Waiting:** Shell processes call `eos_wait()` to join the worker thread, release its thread descriptor, and obtain its return code (`0` for success, non-zero for error).
 
 ---
 

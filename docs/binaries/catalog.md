@@ -13,7 +13,7 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
 - [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`
-- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_emisc`, `test_input`, `test_lvgl`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
+- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_input`, `test_lvgl`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
 
 ---
 
@@ -423,6 +423,11 @@ All GUI binaries automatically declare `EOS_BIN_FLAG_GUI` and execute on dedicat
 * **Syntax:** `test_disp_gradient`
 * **Flags:** `EOS_BIN_FLAG_GUI` | **Stack:** `EOS_BIN_DEFAULT_STACK_SIZE` (8 KB PSRAM)
 * **Function:** Computes dynamic sine-wave animated color gradients, measuring peak sustained display refresh framerates.
+
+### `test_elf_loader` — Dynamic ELF Loader & Standalone App Test Suite
+* **Syntax:** `test_elf_loader`
+* **Flags:** `0` | **Stack:** `16384U` (16 KB SRAM/PSRAM)
+* **Function:** Executes 13 automated tests verifying dynamic relocatable ELF file detection, staging to `/tmp/hello.elf`, PSRAM execution via absolute path, standard I/O redirection (`>`), command-line argument passing (`argc`, `argv`), relative `./` execution from current directory, and `$PATH` directory resolution.
 
 ### `test_emisc` — emisc Library Unit Tests
 * **Syntax:** `test_emisc`

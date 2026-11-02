@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ecore/elf.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 #include <errno.h>
@@ -11,6 +12,7 @@
 
 typedef struct {
   const eos_bin_t *bin;
+  eos_bin_t elf_manifest;
   int argc;
   char **argv;
 } exec_arg_t;
@@ -66,10 +68,15 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   }
 
   const eos_bin_t *bin = eos_bin_find_by_name(path);
+  bool is_elf = false;
   if (!bin) {
-    EOS_LOGE("execve: binary not found: %s", path);
-    errno = ENOENT;
-    return -1;
+    if (eos_is_elf_file(path)) {
+      is_elf = true;
+    } else {
+      EOS_LOGE("execve: binary not found: %s", path);
+      errno = ENOENT;
+      return -1;
+    }
   }
 
   int argc = 0;
@@ -103,7 +110,21 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     errno = ENOMEM;
     return -1;
   }
-  ex->bin = bin;
+
+  if (is_elf) {
+    memset(&ex->elf_manifest, 0, sizeof(ex->elf_manifest));
+    ex->elf_manifest.magic = EOS_BIN_MAGIC;
+    ex->elf_manifest.flags = EOS_BIN_FLAG_STACK_SRAM;
+    ex->elf_manifest.stack_size = EOS_ELF_DEFAULT_STACK_SIZE;
+    strlcpy(ex->elf_manifest.filename, path, sizeof(ex->elf_manifest.filename));
+    strlcpy(ex->elf_manifest.name, path, sizeof(ex->elf_manifest.name));
+    ex->elf_manifest.entry_point = eos_elf_stage_entry;
+    ex->bin = &ex->elf_manifest;
+    bin = &ex->elf_manifest;
+  } else {
+    ex->bin = bin;
+  }
+
   ex->argc = argc;
   ex->argv = dup_argv;
 

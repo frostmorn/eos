@@ -15,3 +15,6 @@ __pycache__/
 *.diff
 .board_cache/
 .active_board
+*.elf
+*.o
+init.sh

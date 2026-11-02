@@ -2,6 +2,7 @@
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
 #include "ecore/devfs.h"
+#include "ecore/elf.h"
 #include "ecore/log.h"
 #include "ecore/pipefs.h"
 #include "ecore/procfs.h"
@@ -25,6 +26,7 @@ void *eos_main(void *data) {
   eos_devfs_init();
   eos_procfs_init();
   eos_binfs_init();
+  eos_elf_init_symbols();
 
   while (1) {
     // Run init script (falls back to ush if init fails)

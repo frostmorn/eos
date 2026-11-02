@@ -29,6 +29,7 @@ help:
 	@echo "===================================================="
 	@echo "  driver      - Generate EOS driver code"
 	@echo "  bin         - Generate EOS bin code"
+	@echo "  app         - Generate standalone dynamic ELF app code"
 	@echo "===================================================="
 	@echo "==>   Build"
 	@echo "===================================================="
@@ -121,6 +122,9 @@ driver:
 
 bin:
 	python tools/codegen.py ebin -o main/ebin
+
+app:
+	python tools/codegen.py eapp -o apps
 
 symbols:
 	readelf ${FIRMWARE_ELF} -s -X|less -R
