@@ -1,6 +1,7 @@
 #include "binfs.h"
 #include "asset.h"
 #include "emisc/fancymacro.h"
+#include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <errno.h>
@@ -20,9 +21,9 @@ typedef struct {
   bool in_use;                // Whether this FD is open
 } binfs_fd_t;
 
-// ── Static FD Table ────────────────────────────────────────────
+// ── PSRAM Dynamic FD Table ────────────────────────────────────
 
-static binfs_fd_t binfs_fds[EOS_BINFS_MAX_FDS] = {0};
+static kvec_psram_t(binfs_fd_t) binfs_fds;
 
 // Get number of registered native bins
 static inline uint32_t binfs_bin_count(void) {
@@ -74,45 +75,61 @@ static const eos_asset_t *binfs_get_asset(uint32_t idx) {
 // ── FD Management ──────────────────────────────────────────────
 
 static int binfs_fd_alloc_bin(const eos_bin_t *bin) {
-  for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
-    if (!binfs_fds[i].in_use) {
-      binfs_fds[i].bin = bin;
-      binfs_fds[i].asset = NULL;
-      binfs_fds[i].offset = 0;
-      binfs_fds[i].in_use = true;
-      return i;
+  for (size_t i = 0; i < kv_size(binfs_fds); i++) {
+    if (!kv_A(binfs_fds, i).in_use) {
+      kv_A(binfs_fds, i).bin = bin;
+      kv_A(binfs_fds, i).asset = NULL;
+      kv_A(binfs_fds, i).offset = 0;
+      kv_A(binfs_fds, i).in_use = true;
+      return (int)i;
     }
   }
-  return -1;
+  binfs_fd_t entry = {
+      .bin = bin,
+      .asset = NULL,
+      .offset = 0,
+      .in_use = true,
+  };
+  int fd = (int)kv_size(binfs_fds);
+  kv_push(binfs_fd_t, binfs_fds, entry);
+  return fd;
 }
 
 static int binfs_fd_alloc_asset(const eos_asset_t *asset) {
-  for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
-    if (!binfs_fds[i].in_use) {
-      binfs_fds[i].bin = NULL;
-      binfs_fds[i].asset = asset;
-      binfs_fds[i].offset = 0;
-      binfs_fds[i].in_use = true;
-      return i;
+  for (size_t i = 0; i < kv_size(binfs_fds); i++) {
+    if (!kv_A(binfs_fds, i).in_use) {
+      kv_A(binfs_fds, i).bin = NULL;
+      kv_A(binfs_fds, i).asset = asset;
+      kv_A(binfs_fds, i).offset = 0;
+      kv_A(binfs_fds, i).in_use = true;
+      return (int)i;
     }
   }
-  return -1;
+  binfs_fd_t entry = {
+      .bin = NULL,
+      .asset = asset,
+      .offset = 0,
+      .in_use = true,
+  };
+  int fd = (int)kv_size(binfs_fds);
+  kv_push(binfs_fd_t, binfs_fds, entry);
+  return fd;
 }
 
 static binfs_fd_t *binfs_fd_get(int fd) {
-  if (fd < 0 || fd >= EOS_BINFS_MAX_FDS)
+  if (fd < 0 || (size_t)fd >= kv_size(binfs_fds))
     return NULL;
-  if (!binfs_fds[fd].in_use)
+  if (!kv_A(binfs_fds, fd).in_use)
     return NULL;
-  return &binfs_fds[fd];
+  return &kv_A(binfs_fds, fd);
 }
 
 static void binfs_fd_free(int fd) {
-  if (fd >= 0 && fd < EOS_BINFS_MAX_FDS) {
-    binfs_fds[fd].in_use = false;
-    binfs_fds[fd].bin = NULL;
-    binfs_fds[fd].asset = NULL;
-    binfs_fds[fd].offset = 0;
+  if (fd >= 0 && (size_t)fd < kv_size(binfs_fds)) {
+    kv_A(binfs_fds, fd).in_use = false;
+    kv_A(binfs_fds, fd).bin = NULL;
+    kv_A(binfs_fds, fd).asset = NULL;
+    kv_A(binfs_fds, fd).offset = 0;
   }
 }
 
@@ -398,13 +415,8 @@ static int binfs_closedir(void *ctx, DIR *pdir) {
 // ── Initialization ────────────────────────────────────────────
 
 void eos_binfs_init(void) {
-  // Initialize FD table
-  for (int i = 0; i < EOS_BINFS_MAX_FDS; i++) {
-    binfs_fds[i].in_use = false;
-    binfs_fds[i].bin = NULL;
-    binfs_fds[i].asset = NULL;
-    binfs_fds[i].offset = 0;
-  }
+  // Initialize dynamic FD table in PSRAM
+  kv_init(binfs_fds);
 
   // Register VFS
   static const esp_vfs_t vfs = {

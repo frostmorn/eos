@@ -11,6 +11,19 @@
 #define EOS_ELF_MAGIC 0x464C457FU // '\x7f' 'E' 'L' 'F' (Little Endian)
 #define EOS_ELF_DEFAULT_STACK_SIZE 16384U
 
+#include "ecore/bin.h"
+
+#define EOS_APP_MANIFEST_ATTR __attribute__((used, visibility("default"))) const eos_bin_t eos_app_manifest
+
+/**
+ * @brief Inspect an ELF binary and retrieve its embedded manifest, if present.
+ *
+ * @param path VFS path to the ELF file.
+ * @param out_manifest Destination buffer for manifest.
+ * @return true if manifest was located and valid, false otherwise.
+ */
+bool eos_elf_get_manifest(const char *path, eos_bin_t *out_manifest);
+
 /**
  * @brief Test if an open file stream begins with standard ELF magic (0x7F 'E' 'L' 'F').
  *

@@ -30,8 +30,7 @@ STRIP := $(STRIP_BIN)
 
 CFLAGS ?= -O2 -nostartfiles -nostdlib -fPIC -shared -e app_main -Dmain=app_main \
           -fdata-sections -ffunction-sections -Wl,--gc-sections \
-          -fvisibility=hidden -Wl,--strip-all -Wl,--strip-debug -Wl,--strip-discarded \
-          -I$(ROOT_DIR)/main/include_override
+          -I$(ROOT_DIR)/main/include_override -I$(ROOT_DIR)/main
 
 STRIP_FLAGS = --strip-unneeded --remove-section=.comment --remove-section=.got.loc \
               --remove-section=.dynamic $(ARCH_STRIP_FLAGS)

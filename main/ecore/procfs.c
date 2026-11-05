@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/log.h"
+#include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <driver/gpio.h>
@@ -38,7 +39,7 @@ typedef struct {
   struct dirent entry;
 } procfs_dir_t;
 
-static procfs_fd_t s_procfs_fds[EOS_PROCFS_MAX_FDS];
+static kvec_psram_t(procfs_fd_t) s_procfs_fds;
 
 static const char *s_proc_entries[] = {
     ".",
@@ -379,24 +380,31 @@ static char *procfs_gen_uptime(void) {
 
 static int procfs_fd_alloc(char *data) {
   if (!data) return -1;
-  for (int i = 0; i < EOS_PROCFS_MAX_FDS; i++) {
-    if (!s_procfs_fds[i].in_use) {
-      s_procfs_fds[i].data = data;
-      s_procfs_fds[i].size = strlen(data);
-      s_procfs_fds[i].offset = 0;
-      s_procfs_fds[i].in_use = true;
-      return i;
+  for (size_t i = 0; i < kv_size(s_procfs_fds); i++) {
+    if (!kv_A(s_procfs_fds, i).in_use) {
+      kv_A(s_procfs_fds, i).data = data;
+      kv_A(s_procfs_fds, i).size = strlen(data);
+      kv_A(s_procfs_fds, i).offset = 0;
+      kv_A(s_procfs_fds, i).in_use = true;
+      return (int)i;
     }
   }
-  free(data);
-  return -1;
+  procfs_fd_t entry = {
+      .data = data,
+      .size = strlen(data),
+      .offset = 0,
+      .in_use = true,
+  };
+  int fd = (int)kv_size(s_procfs_fds);
+  kv_push(procfs_fd_t, s_procfs_fds, entry);
+  return fd;
 }
 
 static procfs_fd_t *procfs_fd_get(int fd) {
-  if (fd < 0 || fd >= EOS_PROCFS_MAX_FDS || !s_procfs_fds[fd].in_use) {
+  if (fd < 0 || (size_t)fd >= kv_size(s_procfs_fds) || !kv_A(s_procfs_fds, fd).in_use) {
     return NULL;
   }
-  return &s_procfs_fds[fd];
+  return &kv_A(s_procfs_fds, fd);
 }
 
 static int procfs_open(void *ctx, const char *path, int flags, int mode) {
@@ -642,12 +650,7 @@ static int procfs_closedir(void *ctx, DIR *pdir) {
 // ── Initialization ────────────────────────────────────────────
 
 void eos_procfs_init(void) {
-  for (int i = 0; i < EOS_PROCFS_MAX_FDS; i++) {
-    s_procfs_fds[i].in_use = false;
-    s_procfs_fds[i].data = NULL;
-    s_procfs_fds[i].size = 0;
-    s_procfs_fds[i].offset = 0;
-  }
+  kv_init(s_procfs_fds);
 
   static const esp_vfs_t vfs = {
       .flags = ESP_VFS_FLAG_CONTEXT_PTR,

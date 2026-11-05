@@ -25,32 +25,43 @@
 #include "ecore/log.h"
 #include "emisc/psram_alloc.h"
 
-#ifndef SOC_GPIO_PIN_COUNT
-#define SOC_GPIO_PIN_COUNT 49
+#ifndef SOC_ADC_PERIPH_NUM
+#define SOC_ADC_PERIPH_NUM 2
 #endif
+
+#ifndef SOC_ADC_MAX_CHANNEL_NUM
+#define SOC_ADC_MAX_CHANNEL_NUM 10
+#endif
+
+#define EOS_ADC_TOTAL_CHANNELS (SOC_ADC_PERIPH_NUM * SOC_ADC_MAX_CHANNEL_NUM)
 
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
-  adc_oneshot_unit_handle_t unit1;
-  adc_oneshot_unit_handle_t unit2;
-  adc_cali_handle_t cali[SOC_GPIO_PIN_COUNT];
-  bool chan_configured[SOC_GPIO_PIN_COUNT];
-  bool pin_claimed[SOC_GPIO_PIN_COUNT];
+  adc_oneshot_unit_handle_t unit[SOC_ADC_PERIPH_NUM];
+  adc_cali_handle_t cali[EOS_ADC_TOTAL_CHANNELS];
+  bool chan_configured[EOS_ADC_TOTAL_CHANNELS];
+  bool pin_claimed[EOS_ADC_TOTAL_CHANNELS];
+  int32_t claimed_pins[EOS_ADC_TOTAL_CHANNELS];
   int32_t default_pin;
   int32_t read_offset;
   SemaphoreHandle_t lock;
 } adc_bus_state_t;
 
+static inline int adc_get_flat_index(adc_unit_t unit_id, adc_channel_t channel) {
+  int u = (int)unit_id;
+  int c = (int)channel;
+  if (u < 0 || u >= SOC_ADC_PERIPH_NUM || c < 0 || c >= SOC_ADC_MAX_CHANNEL_NUM) {
+    return -1;
+  }
+  return u * SOC_ADC_MAX_CHANNEL_NUM + c;
+}
+
 // ── Helper: configure channel on demand ───────────────────────
 
 static bool adc_ensure_pin(adc_bus_state_t *st, eos_dev_t *dev, int32_t pin) {
-  if (!st || pin < 0 || pin >= SOC_GPIO_PIN_COUNT) {
+  if (!st || pin < 0) {
     return false;
-  }
-
-  if (st->chan_configured[pin]) {
-    return true;
   }
 
   adc_unit_t unit_id;
@@ -62,16 +73,30 @@ static bool adc_ensure_pin(adc_bus_state_t *st, eos_dev_t *dev, int32_t pin) {
     return false;
   }
 
+  int idx = adc_get_flat_index(unit_id, channel);
+  if (idx < 0) {
+    EOS_LOGE("adc: invalid flat index for unit %d chan %d", (int)unit_id, (int)channel);
+    return false;
+  }
+
+  if (st->chan_configured[idx]) {
+    return true;
+  }
+
   // Claim GPIO capability if free
-  if (!st->pin_claimed[pin]) {
+  if (!st->pin_claimed[idx]) {
     if (eos_cap_claim(EOS_CAPS_GPIO, pin, dev)) {
-      st->pin_claimed[pin] = true;
+      st->pin_claimed[idx] = true;
+      st->claimed_pins[idx] = pin;
     }
   }
 
   // Ensure unit handle
-  adc_oneshot_unit_handle_t *u_handle =
-      (unit_id == ADC_UNIT_1) ? &st->unit1 : &st->unit2;
+  int u_idx = (int)unit_id;
+  if (u_idx < 0 || u_idx >= SOC_ADC_PERIPH_NUM) {
+    return false;
+  }
+  adc_oneshot_unit_handle_t *u_handle = &st->unit[u_idx];
 
   if (!*u_handle) {
     adc_oneshot_unit_init_cfg_t init_cfg = {
@@ -106,16 +131,16 @@ static bool adc_ensure_pin(adc_bus_state_t *st, eos_dev_t *dev, int32_t pin) {
       .atten = ADC_ATTEN_DB_12,
       .bitwidth = ADC_BITWIDTH_DEFAULT,
   };
-  err = adc_cali_create_scheme_curve_fitting(&cali_cfg, &st->cali[pin]);
+  err = adc_cali_create_scheme_curve_fitting(&cali_cfg, &st->cali[idx]);
   if (err != ESP_OK) {
     EOS_LOGW("adc: curve fitting cali failed for GPIO %" PRId32
              " (using fallback): %s",
              pin, esp_err_to_name(err));
-    st->cali[pin] = NULL;
+    st->cali[idx] = NULL;
   }
 #endif
 
-  st->chan_configured[pin] = true;
+  st->chan_configured[idx] = true;
   return true;
 }
 
@@ -133,8 +158,16 @@ static bool adc_read_pin(adc_bus_state_t *st, eos_dev_t *dev, int32_t pin,
     return false;
   }
 
-  adc_oneshot_unit_handle_t u_handle =
-      (unit_id == ADC_UNIT_1) ? st->unit1 : st->unit2;
+  int idx = adc_get_flat_index(unit_id, channel);
+  if (idx < 0) {
+    return false;
+  }
+
+  int u_idx = (int)unit_id;
+  if (u_idx < 0 || u_idx >= SOC_ADC_PERIPH_NUM) {
+    return false;
+  }
+  adc_oneshot_unit_handle_t u_handle = st->unit[u_idx];
   if (!u_handle) {
     return false;
   }
@@ -153,8 +186,8 @@ static bool adc_read_pin(adc_bus_state_t *st, eos_dev_t *dev, int32_t pin,
 
   if (out_mv) {
     int mv_val = 0;
-    if (st->cali[pin]) {
-      err = adc_cali_raw_to_voltage(st->cali[pin], raw_val, &mv_val);
+    if (st->cali[idx]) {
+      err = adc_cali_raw_to_voltage(st->cali[idx], raw_val, &mv_val);
       if (err != ESP_OK) {
         mv_val = (raw_val * 3100) / 4095;
       }
@@ -185,7 +218,7 @@ static bool driver_bus_adc_init(eos_dev_t *dev) {
 
   // Lilka default battery ADC pin is GPIO 3
   st->default_pin = (int32_t)eos_cfg_get_i(dev->cfg, "pin", 3);
-  if (st->default_pin < 0 || st->default_pin >= SOC_GPIO_PIN_COUNT) {
+  if (st->default_pin < 0) {
     st->default_pin = 3;
   }
 
@@ -205,7 +238,7 @@ static void driver_bus_adc_shutdown(eos_dev_t *dev) {
     xSemaphoreTake(st->lock, portMAX_DELAY);
   }
 
-  for (int i = 0; i < SOC_GPIO_PIN_COUNT; i++) {
+  for (int i = 0; i < EOS_ADC_TOTAL_CHANNELS; i++) {
 #if ADC_CALI_SCHEME_CURVE_FITTING_SUPPORTED
     if (st->cali[i]) {
       adc_cali_delete_scheme_curve_fitting(st->cali[i]);
@@ -213,18 +246,16 @@ static void driver_bus_adc_shutdown(eos_dev_t *dev) {
     }
 #endif
     if (st->pin_claimed[i]) {
-      eos_cap_release(EOS_CAPS_GPIO, i, dev);
+      eos_cap_release(EOS_CAPS_GPIO, st->claimed_pins[i], dev);
       st->pin_claimed[i] = false;
     }
   }
 
-  if (st->unit1) {
-    adc_oneshot_del_unit(st->unit1);
-    st->unit1 = NULL;
-  }
-  if (st->unit2) {
-    adc_oneshot_del_unit(st->unit2);
-    st->unit2 = NULL;
+  for (int u = 0; u < SOC_ADC_PERIPH_NUM; u++) {
+    if (st->unit[u]) {
+      adc_oneshot_del_unit(st->unit[u]);
+      st->unit[u] = NULL;
+    }
   }
 
   if (st->lock) {

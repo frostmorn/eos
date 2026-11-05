@@ -19,7 +19,7 @@ IDF_TOOLS_PY ?= $(shell if [ -n "$$IDF_PATH" ] && [ -f "$$IDF_PATH/tools/idf_too
 
 .PHONY: clean clean-all reconfigure build flash monitor symbols debug killdebug qemu qemu_graphics \
 	qemu_graphics_800x480 qemu_graphics_480x320 qemu_graphics_320x240 qemu_graphics_280x240 qemu_graphics_240x240 \
-	install-qemu install-qemu-xtensa install-qemu-riscv install-qemu-all refine-docs
+	install-qemu install-qemu-xtensa install-qemu-riscv install-qemu-all refine-docs wrapcheck audit
 
 help:
 	@echo "===================================================="
@@ -62,6 +62,8 @@ help:
 	@echo "  symbols     - List builtin firmware symbols"
 	@echo "  disasm      - Disassemble generated elf"
 	@echo "  cppcheck    - Static analyzis of a C code"
+	@echo "  wrapcheck   - Audit and verify linker wrappers (-Wl,--wrap)"
+	@echo "  audit       - Run comprehensive EOS layer separation audit"
 	@echo "===================================================="
 	@echo "==>   Misc"
 	@echo "===================================================="
@@ -209,5 +211,11 @@ install-qemu-all:
 
 refine-docs:
 	gemini --model gemini-3.5-flash-lite --approval-mode auto_edit -p "Load @DEVELOPMENT.md . Analyze current repository state. Update documentation located in @docs Be comprehensive"
+
+wrapcheck:
+	python3 tools/wrapcheck.py
+
+audit:
+	python3 tools/layer_audit.py
 
 

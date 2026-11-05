@@ -571,7 +571,7 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   s_lvgl.pub.fb_fd = -1;
   s_lvgl.pub.kbd_fd = -1;
   s_lvgl.pub.touch_fd = -1;
-  s_lvgl.touch_gestures_enabled = true;
+  s_lvgl.touch_gestures_enabled = false;
 
   const char *fb_path = (cfg && cfg->fb_path) ? cfg->fb_path : getenv("EOS_FB");
   if (!fb_path || !fb_path[0]) {

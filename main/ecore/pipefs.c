@@ -1,5 +1,6 @@
 #include "pipefs.h"
 #include "emisc/fancymacro.h"
+#include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 
 #include <dirent.h>
@@ -49,8 +50,8 @@ typedef struct {
   struct dirent entry;
 } pipe_dir_t;
 
-static pipe_node_t pipe_nodes[EOS_PIPEFS_MAX_PIPES];
-static pipe_fd_t pipe_fds[EOS_PIPEFS_MAX_FDS];
+static kvec_psram_t(pipe_node_t) pipe_nodes;
+static kvec_psram_t(pipe_fd_t) pipe_fds;
 static pthread_mutex_t pipe_table_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint32_t pipe_auto_seq = 0;
 static bool pipefs_initialized = false;
@@ -63,12 +64,12 @@ static pipe_node_t *pipe_find_by_name_locked(const char *name, int *out_idx) {
   if (!name || !name[0])
     return NULL;
 
-  for (int i = 0; i < EOS_PIPEFS_MAX_PIPES; i++) {
-    if (pipe_nodes[i].in_use && !pipe_nodes[i].unlinked &&
-        strcmp(pipe_nodes[i].name, name) == 0) {
+  for (size_t i = 0; i < kv_size(pipe_nodes); i++) {
+    if (kv_A(pipe_nodes, i).in_use && !kv_A(pipe_nodes, i).unlinked &&
+        strcmp(kv_A(pipe_nodes, i).name, name) == 0) {
       if (out_idx)
-        *out_idx = i;
-      return &pipe_nodes[i];
+        *out_idx = (int)i;
+      return &kv_A(pipe_nodes, i);
     }
   }
   return NULL;
@@ -86,9 +87,9 @@ static int pipe_alloc_node_locked(const char *name) {
     }
   }
 
-  for (int i = 0; i < EOS_PIPEFS_MAX_PIPES; i++) {
-    if (!pipe_nodes[i].in_use) {
-      pipe_node_t *node = &pipe_nodes[i];
+  for (size_t i = 0; i < kv_size(pipe_nodes); i++) {
+    if (!kv_A(pipe_nodes, i).in_use) {
+      pipe_node_t *node = &kv_A(pipe_nodes, i);
       memset(node->buf, 0, sizeof(node->buf));
       node->head = 0;
       node->tail = 0;
@@ -104,19 +105,32 @@ static int pipe_alloc_node_locked(const char *name) {
       } else {
         snprintf(node->name, sizeof(node->name), "p%" PRIu32, pipe_auto_seq++);
       }
-      return i;
+      return (int)i;
     }
   }
 
-  errno = ENFILE;
-  return -1;
+  // Push new node dynamically in PSRAM
+  pipe_node_t new_node;
+  memset(&new_node, 0, sizeof(new_node));
+  pthread_mutex_init(&new_node.lock, NULL);
+  pthread_cond_init(&new_node.r_cond, NULL);
+  pthread_cond_init(&new_node.w_cond, NULL);
+  new_node.in_use = true;
+  if (name && name[0]) {
+    strlcpy(new_node.name, name, sizeof(new_node.name));
+  } else {
+    snprintf(new_node.name, sizeof(new_node.name), "p%" PRIu32, pipe_auto_seq++);
+  }
+  int idx = (int)kv_size(pipe_nodes);
+  kv_push(pipe_node_t, pipe_nodes, new_node);
+  return idx;
 }
 
 static void pipe_check_reclaim_locked(int idx) {
-  if (idx < 0 || idx >= EOS_PIPEFS_MAX_PIPES)
+  if (idx < 0 || (size_t)idx >= kv_size(pipe_nodes))
     return;
 
-  pipe_node_t *node = &pipe_nodes[idx];
+  pipe_node_t *node = &kv_A(pipe_nodes, idx);
   if (!node->in_use)
     return;
 
@@ -136,16 +150,22 @@ static void pipe_check_reclaim_locked(int idx) {
 }
 
 static int pipe_alloc_fd_locked(int pipe_idx, int flags) {
-  for (int i = 0; i < EOS_PIPEFS_MAX_FDS; i++) {
-    if (!pipe_fds[i].in_use) {
-      pipe_fds[i].in_use = true;
-      pipe_fds[i].pipe_idx = pipe_idx;
-      pipe_fds[i].flags = flags;
-      return i;
+  for (size_t i = 0; i < kv_size(pipe_fds); i++) {
+    if (!kv_A(pipe_fds, i).in_use) {
+      kv_A(pipe_fds, i).in_use = true;
+      kv_A(pipe_fds, i).pipe_idx = pipe_idx;
+      kv_A(pipe_fds, i).flags = flags;
+      return (int)i;
     }
   }
-  errno = ENFILE;
-  return -1;
+  pipe_fd_t new_fd = {
+      .in_use = true,
+      .pipe_idx = pipe_idx,
+      .flags = flags,
+  };
+  int fd = (int)kv_size(pipe_fds);
+  kv_push(pipe_fd_t, pipe_fds, new_fd);
+  return fd;
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -189,7 +209,7 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode) {
         pthread_mutex_unlock(&pipe_table_lock);
         return -1;
       }
-      node = &pipe_nodes[pipe_idx];
+      node = &kv_A(pipe_nodes, pipe_idx);
     } else {
       pthread_mutex_unlock(&pipe_table_lock);
       errno = ENOENT;
@@ -235,19 +255,19 @@ static int pipefs_close(void *ctx, int fd) {
   (void)ctx;
 
   pthread_mutex_lock(&pipe_table_lock);
-  if (fd < 0 || fd >= EOS_PIPEFS_MAX_FDS || !pipe_fds[fd].in_use) {
+  if (fd < 0 || (size_t)fd >= kv_size(pipe_fds) || !kv_A(pipe_fds, fd).in_use) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
 
-  int pipe_idx = pipe_fds[fd].pipe_idx;
-  int flags = pipe_fds[fd].flags;
-  pipe_fds[fd].in_use = false;
-  pipe_fds[fd].pipe_idx = -1;
-  pipe_fds[fd].flags = 0;
+  int pipe_idx = kv_A(pipe_fds, fd).pipe_idx;
+  int flags = kv_A(pipe_fds, fd).flags;
+  kv_A(pipe_fds, fd).in_use = false;
+  kv_A(pipe_fds, fd).pipe_idx = -1;
+  kv_A(pipe_fds, fd).flags = 0;
 
-  pipe_node_t *node = &pipe_nodes[pipe_idx];
+  pipe_node_t *node = &kv_A(pipe_nodes, pipe_idx);
   pthread_mutex_lock(&node->lock);
 
   int acc = flags & O_ACCMODE;
@@ -283,19 +303,19 @@ static ssize_t pipefs_read(void *ctx, int fd, void *dst, size_t size) {
     return 0;
 
   pthread_mutex_lock(&pipe_table_lock);
-  if (fd < 0 || fd >= EOS_PIPEFS_MAX_FDS || !pipe_fds[fd].in_use) {
+  if (fd < 0 || (size_t)fd >= kv_size(pipe_fds) || !kv_A(pipe_fds, fd).in_use) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
-  int pipe_idx = pipe_fds[fd].pipe_idx;
-  int flags = pipe_fds[fd].flags;
+  int pipe_idx = kv_A(pipe_fds, fd).pipe_idx;
+  int flags = kv_A(pipe_fds, fd).flags;
   if ((flags & O_ACCMODE) == O_WRONLY) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
-  pipe_node_t *node = &pipe_nodes[pipe_idx];
+  pipe_node_t *node = &kv_A(pipe_nodes, pipe_idx);
   pthread_mutex_lock(&node->lock);
   pthread_mutex_unlock(&pipe_table_lock);
 
@@ -349,19 +369,19 @@ static ssize_t pipefs_write(void *ctx, int fd, const void *data, size_t size) {
     return 0;
 
   pthread_mutex_lock(&pipe_table_lock);
-  if (fd < 0 || fd >= EOS_PIPEFS_MAX_FDS || !pipe_fds[fd].in_use) {
+  if (fd < 0 || (size_t)fd >= kv_size(pipe_fds) || !kv_A(pipe_fds, fd).in_use) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
-  int pipe_idx = pipe_fds[fd].pipe_idx;
-  int flags = pipe_fds[fd].flags;
+  int pipe_idx = kv_A(pipe_fds, fd).pipe_idx;
+  int flags = kv_A(pipe_fds, fd).flags;
   if ((flags & O_ACCMODE) == O_RDONLY) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
-  pipe_node_t *node = &pipe_nodes[pipe_idx];
+  pipe_node_t *node = &kv_A(pipe_nodes, pipe_idx);
   pthread_mutex_lock(&node->lock);
   pthread_mutex_unlock(&pipe_table_lock);
 
@@ -414,12 +434,12 @@ static int pipefs_fstat(void *ctx, int fd, struct stat *st) {
   }
 
   pthread_mutex_lock(&pipe_table_lock);
-  if (fd < 0 || fd >= EOS_PIPEFS_MAX_FDS || !pipe_fds[fd].in_use) {
+  if (fd < 0 || (size_t)fd >= kv_size(pipe_fds) || !kv_A(pipe_fds, fd).in_use) {
     pthread_mutex_unlock(&pipe_table_lock);
     errno = EBADF;
     return -1;
   }
-  pipe_node_t *node = &pipe_nodes[pipe_fds[fd].pipe_idx];
+  pipe_node_t *node = &kv_A(pipe_nodes, kv_A(pipe_fds, fd).pipe_idx);
   memset(st, 0, sizeof(*st));
   st->st_mode = S_IFIFO | 0666;
   st->st_size = (off_t)node->count;
@@ -512,13 +532,13 @@ static struct dirent *pipefs_readdir(void *ctx, DIR *pdir) {
   }
 
   pthread_mutex_lock(&pipe_table_lock);
-  while (dir->idx < EOS_PIPEFS_MAX_PIPES) {
+  while (dir->idx < kv_size(pipe_nodes)) {
     uint32_t i = dir->idx++;
-    if (pipe_nodes[i].in_use && !pipe_nodes[i].unlinked) {
+    if (kv_A(pipe_nodes, i).in_use && !kv_A(pipe_nodes, i).unlinked) {
       memset(&dir->entry, 0, sizeof(dir->entry));
       dir->entry.d_ino = i;
       dir->entry.d_type = DT_FIFO;
-      strlcpy(dir->entry.d_name, pipe_nodes[i].name, sizeof(dir->entry.d_name));
+      strlcpy(dir->entry.d_name, kv_A(pipe_nodes, i).name, sizeof(dir->entry.d_name));
       pthread_mutex_unlock(&pipe_table_lock);
       return &dir->entry;
     }
@@ -565,7 +585,7 @@ int eos_pipefs_create(char *path_out, size_t len) {
     return -1;
   }
   if (path_out && len > 0) {
-    snprintf(path_out, len, EOS_PIPEFS_ROOT "/%s", pipe_nodes[idx].name);
+    snprintf(path_out, len, EOS_PIPEFS_ROOT "/%s", kv_A(pipe_nodes, idx).name);
   }
   pthread_mutex_unlock(&pipe_table_lock);
   return idx;
@@ -598,7 +618,7 @@ int pipe(int pipefd[2]) {
   // Mark anonymous pipe unlinked so it is automatically reclaimed
   // as soon as both descriptors are closed.
   pthread_mutex_lock(&pipe_table_lock);
-  pipe_nodes[idx].unlinked = true;
+  kv_A(pipe_nodes, idx).unlinked = true;
   pthread_mutex_unlock(&pipe_table_lock);
 
   pipefd[0] = rfd;
@@ -610,16 +630,8 @@ void eos_pipefs_init(void) {
   if (pipefs_initialized)
     return;
 
-  for (int i = 0; i < EOS_PIPEFS_MAX_PIPES; i++) {
-    memset(&pipe_nodes[i], 0, sizeof(pipe_node_t));
-    pthread_mutex_init(&pipe_nodes[i].lock, NULL);
-    pthread_cond_init(&pipe_nodes[i].r_cond, NULL);
-    pthread_cond_init(&pipe_nodes[i].w_cond, NULL);
-  }
-
-  for (int i = 0; i < EOS_PIPEFS_MAX_FDS; i++) {
-    memset(&pipe_fds[i], 0, sizeof(pipe_fd_t));
-  }
+  kv_init(pipe_nodes);
+  kv_init(pipe_fds);
 
   static const esp_vfs_t vfs = {
       .flags = ESP_VFS_FLAG_CONTEXT_PTR,

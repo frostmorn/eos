@@ -185,6 +185,14 @@ static int membench_main(int argc, char **argv) {
 
       size_t block = block_sizes[b];
 
+      // Check if largest free contiguous block can satisfy this benchmark block
+      size_t largest = heap_caps_get_largest_free_block(caps);
+      if (largest < block) {
+        print_block(block);
+        printf("| %12s | %12s | %12s |\n", "skip (frag)", "skip (frag)", "skip (frag)");
+        continue;
+      }
+
       void *buf1 = heap_caps_malloc(block, caps);
       void *buf2 = heap_caps_malloc(block, caps);
 
@@ -229,6 +237,14 @@ static int membench_main(int argc, char **argv) {
     for (size_t b = 0; b < EOS_ARR_COUNT(block_sizes); b++) {
 
       size_t block = block_sizes[b];
+
+      size_t largest_dram = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (largest_dram < block || largest_psram < block) {
+        print_block(block);
+        printf("| %12s |\n", "skip (frag)");
+        continue;
+      }
 
       void *dram =
           heap_caps_malloc(block, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

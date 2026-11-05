@@ -34,6 +34,10 @@ docs/
 │   ├── board-porting.md               # Declarative hardware architecture (init.sh, sdkconfig), setboard.py
 │   ├── targets.md                     # Hardware target reference (lilka_v23, jc4880p443c_i_w_y, esp32s3_qemu)
 │   └── jc4880p4-coprocessor.md        # Guition JC4880P4 (ESP32-P4 + C6) ESP-Hosted SDIO co-processor guide
+├── roadmap/                           # System roadmap, task breakdown & architectural decisions
+│   ├── tasks.md                       # Comprehensive task specification (F01-F08 foundations, T01-T22 features)
+│   ├── implementation-order.md        # Execution phases (0-6), dependency graph, critical paths, milestones
+│   └── decisions-and-audit-rules.md   # Architectural decisions (D1-D15), test strategy & declarative audit rules
 └── reports/                           # Historical & cleaned-up technical reports & audits
     ├── ebin-audit-and-roadmap.md      # Audit of ebin utilities, implemented coreutils, evolution roadmap
     └── psram-heap-migration-report.md # PSRAM heap allocation audit, DMA constraints, and completed status
@@ -92,6 +96,14 @@ docs/
 
 * [**Executable Binaries Audit & Roadmap**](./reports/ebin-audit-and-roadmap.md) — Comprehensive inventory of all commands, review of completed core POSIX utilities (`rm`, `cp`, `mv`, `sleep`, `test_coreutils`), and future roadmap.
 * [**PSRAM Heap Migration Report**](./reports/psram-heap-migration-report.md) — Memory audit across kernel core and drivers, DMA hardware constraints, and completed PSRAM migrations (+56.3 KB SRAM from Pratt parser, 48–64 KB from sniffer queue, 16 KB per GUI stack).
+
+---
+
+## 6. System Roadmap, Decisions & Governance (`docs/roadmap/`)
+
+* [**Comprehensive Task Specification**](./roadmap/tasks.md) — Detailed breakdown of foundation tasks (F01–F08) and functional epics (T01–T22: Terminal, Observability, Filesystems, Security, Drivers, Network Libraries, Apps & Loader).
+* [**Implementation Order & Phasing**](./roadmap/implementation-order.md) — Strategic execution sequence across Phases 0–6, dependency tree, critical paths, and milestone criteria.
+* [**Architectural Decisions & Audit Rules**](./roadmap/decisions-and-audit-rules.md) — Pre-implementation decisions (D1–D15), test harness classification (`qemu` vs `hardware-only`), and declarative `layer_audit` enforcement rules.
 
 ---
 

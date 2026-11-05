@@ -16,9 +16,9 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 
-#define I2C_MAX_FDS 8
 #define I2C_ADDR_MAX 0x7F
 
 typedef struct {
@@ -46,7 +46,7 @@ typedef struct {
   i2c_master_bus_handle_t i2c_bus;
   SemaphoreHandle_t mutex;
   i2c_master_dev_handle_t dev_handles[128];
-  i2c_fd_ctx_t fds[I2C_MAX_FDS];
+  kvec_psram_t(i2c_fd_ctx_t) fds;
 } i2c_bus_state_t;
 
 static bool driver_bus_i2c_has_attached_devices(eos_dev_t *dev,
@@ -306,6 +306,7 @@ bool driver_bus_i2c_init(eos_dev_t *dev) {
     dev->state = NULL;
     return false;
   }
+  kv_init(st->fds);
 
   EOS_LOGI("i2c: initialized bus device on port %d (SDA=%d, SCL=%d, clk=%lu Hz)",
            port, sda_pin, scl_pin, (unsigned long)st->clk_speed);
@@ -413,16 +414,16 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
   }
 
   int slot = -1;
-  for (int i = 0; i < I2C_MAX_FDS; i++) {
-    if (!st->fds[i].in_use) {
-      slot = i;
+  for (size_t i = 0; i < kv_size(st->fds); i++) {
+    if (!kv_A(st->fds, i).in_use) {
+      slot = (int)i;
       break;
     }
   }
   if (slot < 0) {
-    xSemaphoreGive(st->mutex);
-    errno = EMFILE;
-    return -1;
+    i2c_fd_ctx_t new_fd = {0};
+    slot = (int)kv_size(st->fds);
+    kv_push(i2c_fd_ctx_t, st->fds, new_fd);
   }
 
   // Activate bus if pins configured and not active
@@ -435,9 +436,9 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
     }
   }
 
-  st->fds[slot].in_use = true;
-  st->fds[slot].target_addr = parsed_addr;
-  st->fds[slot].timeout_ms = 1000;
+  kv_A(st->fds, slot).in_use = true;
+  kv_A(st->fds, slot).target_addr = parsed_addr;
+  kv_A(st->fds, slot).timeout_ms = 1000;
   st->open_refcount++;
   xSemaphoreGive(st->mutex);
 
@@ -456,9 +457,9 @@ int driver_bus_i2c_close(eos_dev_t *dev, int fd) {
     return -1;
   }
 
-  if (fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-    st->fds[fd].in_use = false;
-    st->fds[fd].target_addr = 0;
+  if (fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+    kv_A(st->fds, fd).in_use = false;
+    kv_A(st->fds, fd).target_addr = 0;
     if (st->open_refcount > 0) {
       st->open_refcount--;
     }
@@ -482,9 +483,9 @@ ssize_t driver_bus_i2c_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
 
   uint16_t addr = 0;
   int timeout = 1000;
-  if (fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-    addr = st->fds[fd].target_addr;
-    timeout = st->fds[fd].timeout_ms;
+  if (fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+    addr = kv_A(st->fds, fd).target_addr;
+    timeout = kv_A(st->fds, fd).timeout_ms;
   }
   if (addr == 0 || addr > I2C_ADDR_MAX) {
     errno = EDESTADDRREQ;
@@ -524,9 +525,9 @@ ssize_t driver_bus_i2c_write(eos_dev_t *dev, int fd, const void *data,
 
   uint16_t addr = 0;
   int timeout = 1000;
-  if (fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-    addr = st->fds[fd].target_addr;
-    timeout = st->fds[fd].timeout_ms;
+  if (fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+    addr = kv_A(st->fds, fd).target_addr;
+    timeout = kv_A(st->fds, fd).timeout_ms;
   }
   if (addr == 0 || addr > I2C_ADDR_MAX) {
     errno = EDESTADDRREQ;
@@ -593,8 +594,8 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       errno = EINVAL;
       return -1;
     }
-    if (fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-      st->fds[fd].target_addr = addr;
+    if (fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+      kv_A(st->fds, fd).target_addr = addr;
       return 0;
     }
     errno = EBADF;
@@ -707,8 +708,8 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     const void *buf = va_arg(args, const void *);
     size_t len = va_arg(args, size_t);
     int timeout = va_arg(args, int);
-    if (addr == 0 && fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-      addr = st->fds[fd].target_addr;
+    if (addr == 0 && fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+      addr = kv_A(st->fds, fd).target_addr;
     }
     if (!buf || len == 0 || addr > I2C_ADDR_MAX) {
       errno = EINVAL;
@@ -739,8 +740,8 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     void *buf = va_arg(args, void *);
     size_t len = va_arg(args, size_t);
     int timeout = va_arg(args, int);
-    if (addr == 0 && fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-      addr = st->fds[fd].target_addr;
+    if (addr == 0 && fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+      addr = kv_A(st->fds, fd).target_addr;
     }
     if (!buf || len == 0 || addr > I2C_ADDR_MAX) {
       errno = EINVAL;
@@ -773,8 +774,8 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     void *rx = va_arg(args, void *);
     size_t rx_len = va_arg(args, size_t);
     int timeout = va_arg(args, int);
-    if (addr == 0 && fd >= 0 && fd < I2C_MAX_FDS && st->fds[fd].in_use) {
-      addr = st->fds[fd].target_addr;
+    if (addr == 0 && fd >= 0 && (size_t)fd < kv_size(st->fds) && kv_A(st->fds, fd).in_use) {
+      addr = kv_A(st->fds, fd).target_addr;
     }
     if (!tx || tx_len == 0 || !rx || rx_len == 0 || addr > I2C_ADDR_MAX) {
       errno = EINVAL;

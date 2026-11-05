@@ -4,7 +4,51 @@ EOS utilizes Linker-wrapped functions (`-Wl,--wrap=...` in `main/CMakeLists.txt`
 
 ---
 
-## 1. Memory Allocation Tracking (`ewrap/heap_caps.c`)
+## 0. Supported Target Matrix & Toolchain Pinning
+
+EOS supports and validates the following target architectures and runtime environments on **ESP-IDF v6.0.2**:
+
+| Target Name | SoC Family | Architecture | Key Characteristics & Memory | Verified Environments |
+|---|---|---|---|---|
+| `lilka_v23` | ESP32-S3 | Xtensa dual-core LX7 | Octal PSRAM (8 MB), ST7789 display, I2S sound, SD storage | Real hardware |
+| `jc4880p443c_i_w_y` | ESP32-P4 | RISC-V dual-core HP | High-performance, MIPI-DSI/ST7701S, ESP-Hosted SDIO co-processor | Real hardware |
+| `esp32s3_qemu` | ESP32-S3 | Xtensa dual-core LX7 | Emulated S3, 32 MB flash, Octal PSRAM, OpenEth / UART | QEMU emulator & CI |
+
+---
+
+## 1. Linker Wrappers Inventory & Verification Matrix
+
+Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists.txt`](../../main/CMakeLists.txt) must be documented in this inventory table. This ensures full visibility into toolchain dependencies, underlying Newlib/ESP-IDF assumptions, and the test suites that guard each wrapper against silent breakage.
+
+| Wrapped Symbol | Implementation File | Purpose & Architectural Role | Newlib / ESP-IDF Assumption | Test Suite Guard |
+|---|---|---|---|---|
+| `_open_r` | `main/ewrap/reent_syscalls.c` | Resolves relative paths via calling thread's CWD; tracks open file descriptors in thread context for auto-cleanup. | Newlib `open()` routes internally to `_open_r(struct _reent *, ...)`. | `tools/hardware_test.py --suite coreutils` |
+| `_close_r` | `main/ewrap/reent_syscalls.c` | Untracks closed file descriptor from thread context; falls back to `__real__close_r`. | Standard Newlib reentrant close handler. | `tools/hardware_test.py --suite coreutils` |
+| `_read_r` | `main/ewrap/reent_syscalls.c` | Maps redirected file descriptors (`fd_map[0]` stdin redirection); resolves pipe fds; delivers data. | ESP-IDF console forwards reads to primary UART; redirects must intercept reentrant read. | `tools/hardware_test.py --suite coreutils` (pipelines) |
+| `_write_r` | `main/ewrap/reent_syscalls.c` | Maps redirected stdout/stderr descriptors (`fd_map[1]`, `fd_map[2]`); bypasses stdout recursion for raw console uart fd 0. | Standard Newlib reentrant write; ESP-IDF `console_write` writes to primary fd 0. | `tools/hardware_test.py --suite coreutils` |
+| `_lseek_r` | `main/ewrap/reent_syscalls.c` | Resolves thread descriptor map and performs seek. | Newlib `lseek` routes to `_lseek_r`. | `tools/hardware_test.py --suite coreutils` |
+| `_fstat_r` | `main/ewrap/reent_syscalls.c` | Resolves thread descriptor map, synthesizes stat attributes for pipes and virtual devices. | Newlib reentrant fstat handler. | `tools/hardware_test.py --suite coreutils` |
+| `_stat_r` | `main/ewrap/reent_syscalls.c` | Normalizes path via CWD and stats filesystem nodes or pseudo files. | Newlib reentrant stat handler. | `tools/hardware_test.py --suite coreutils` |
+| `_link_r` | `main/ewrap/reent_syscalls.c` | Normalizes source/target paths; enforces link permissions. | Newlib reentrant hard-link handler. | `tools/hardware_test.py --suite coreutils` |
+| `_unlink_r` | `main/ewrap/reent_syscalls.c` | Normalizes path and unlinks files. | Newlib reentrant unlink handler. | `tools/hardware_test.py --suite coreutils` |
+| `_rename_r` | `main/ewrap/reent_syscalls.c` | Normalizes source/destination paths across VFS nodes. | Newlib reentrant rename handler. | `tools/hardware_test.py --suite coreutils` |
+| `opendir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via CWD and registers `DIR*` handle for auto-close tracking. | Standard POSIX directory open. | `tools/hardware_test.py --suite coreutils` |
+| `closedir` | `main/ewrap/reent_syscalls.c` | Untracks directory handle and invokes underlying close. | Standard POSIX directory close. | `tools/hardware_test.py --suite coreutils` |
+| `mkdir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via thread CWD. | Standard POSIX directory creation. | `tools/hardware_test.py --suite coreutils` |
+| `chdir` | `main/ewrap/realpath.c` | Updates thread-isolated current working directory in thread context (`tctx`). | POSIX directory change. | `tools/hardware_test.py --suite coreutils` |
+| `getcwd` | `main/ewrap/realpath.c` | Retrieves thread-isolated current working directory. | POSIX CWD retrieval. | `tools/hardware_test.py --suite coreutils` |
+| `system` | `main/ewrap/syscalls.c` | Intercepts shell execution, parses commands/pipelines/redirections, executes native ebins and scripts. | Standard C library command execution entrypoint. | `tools/hardware_test.py --suite coreutils` |
+| `usleep` | `main/ewrap/usleep.c` | High-precision microsecond sleep integrating with FreeRTOS delay ticks. | Standard POSIX microsecond sleep. | `tools/hardware_test.py --suite coreutils` |
+| `pthread_create` | `main/ewrap/pthread.c` | Injects thread wrapper (`eos_twrap`), thread context inheritance, and manifest PSRAM stack attributes. | ESP-IDF pthread implementation. | `main/ebin/test_sdl`, GUI ebin launches |
+| `xTaskCreatePinnedToCore` | `main/ewrap/freertos_tasks.c` | Captures FreeRTOS tasks spawned dynamically, initializing EOS thread context tracking. | FreeRTOS task creation primitive. | Thread tracking & cleanup tests |
+| `xTaskCreateStaticPinnedToCore` | `main/ewrap/freertos_tasks.c` | Captures statically allocated FreeRTOS tasks to attach EOS thread contexts. | FreeRTOS static task creation primitive. | Thread tracking & cleanup tests |
+| `heap_caps_aligned_alloc_base` | `main/ewrap/heap_caps.c` | Tracks dynamic memory allocations per thread/task in `memblocks` for leak prevention. | Core ESP-IDF heap allocator backend for all malloc calls. | `tools/hardware_test.py --suite emisc` |
+| `heap_caps_realloc_base` | `main/ewrap/heap_caps.c` | Updates tracked allocation pointers upon reallocation. | Core ESP-IDF heap reallocator backend. | `tools/hardware_test.py --suite emisc` |
+| `heap_caps_free` | `main/ewrap/heap_caps.c` | Removes tracked memory block and frees underlying heap memory. | Core ESP-IDF heap free backend. | `tools/hardware_test.py --suite emisc` |
+
+---
+
+## 2. Memory Allocation Tracking (`ewrap/heap_caps.c`)
 
 EOS wraps Espressif's underlying heap allocators:
 * `__wrap_heap_caps_aligned_alloc_base`

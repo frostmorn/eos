@@ -39,6 +39,52 @@ bool eos_is_elf_file(const char *path) {
   return res;
 }
 
+bool eos_elf_get_manifest(const char *path, eos_bin_t *out_manifest) {
+  if (!path || !out_manifest) return false;
+
+  FILE *f = fopen(path, "rb");
+  if (!f) return false;
+
+  fseek(f, 0, SEEK_END);
+  long fsize = ftell(f);
+  if (fsize < (long)(ELF_MIN_HEADER_SIZE + sizeof(eos_bin_t))) {
+    fclose(f);
+    return false;
+  }
+  rewind(f);
+
+  // Scan file for EOS_BIN_MAGIC header
+  uint32_t magic = EOS_BIN_MAGIC;
+  uint8_t chunk[512];
+  long offset = 0;
+  bool found = false;
+
+  while (offset + sizeof(eos_bin_t) <= (size_t)fsize) {
+    fseek(f, offset, SEEK_SET);
+    size_t n = fread(chunk, 1, sizeof(chunk), f);
+    if (n < sizeof(uint32_t)) break;
+
+    for (size_t i = 0; i + sizeof(uint32_t) <= n; i += 4) {
+      if (*(uint32_t *)(chunk + i) == magic) {
+        long match_pos = offset + (long)i;
+        if (match_pos + sizeof(eos_bin_t) <= (size_t)fsize) {
+          fseek(f, match_pos, SEEK_SET);
+          if (fread(out_manifest, sizeof(eos_bin_t), 1, f) == 1 &&
+              out_manifest->magic == EOS_BIN_MAGIC) {
+            found = true;
+            break;
+          }
+        }
+      }
+    }
+    if (found) break;
+    offset += (long)(n - sizeof(uint32_t));
+  }
+
+  fclose(f);
+  return found;
+}
+
 int eos_elf_exec(const char *path, int argc, char **argv) {
   if (!path || argc < 0) {
     errno = EINVAL;

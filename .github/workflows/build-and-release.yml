@@ -90,6 +90,10 @@ jobs:
           echo "=== Configuring board: ${BOARD} ==="
           python tools/setboard.py "${BOARD}"
 
+          echo "=== Auditing Layer Separation & Linker Wrappers ==="
+          python tools/layer_audit.py
+          python tools/wrapcheck.py
+
           echo "=== Cleaning build cache ==="
           idf.py fullclean
 
