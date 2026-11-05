@@ -1,0 +1,182 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "version": "1.0",
+  "rules": [
+    {
+      "id": "rtos_in_ebin",
+      "name": "RTOS primitives in user-space (ebin)",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\bvTaskDelay\\b",
+        "\\bxTaskCreate\\b",
+        "\\bSemaphoreHandle_t\\b",
+        "\\bQueueHandle_t\\b",
+        "\\bTaskHandle_t\\b",
+        "\\bpdMS_TO_TICKS\\b",
+        "\\bvSemaphoreCreateBinary\\b",
+        "\\bxSemaphoreTake\\b",
+        "\\bxSemaphoreGive\\b"
+      ],
+      "rationale": "FreeRTOS primitives are forbidden in user applications; apps must use standard POSIX / EOS abstractions."
+    },
+    {
+      "id": "esp_idf_hardware_in_ecore",
+      "name": "ESP-IDF vendor hardware/bus APIs in core kernel (ecore)",
+      "type": "forbidden_patterns",
+      "paths": ["main/ecore"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\besp_wifi_\\w+\\b",
+        "\\bgpio_set_level\\b",
+        "\\bgpio_reset_pin\\b",
+        "\\bgpio_config\\b",
+        "\\bgpio_set_direction\\b",
+        "\\bspi_bus_initialize\\b",
+        "\\bspi_bus_add_device\\b",
+        "\\bspi_device_transmit\\b",
+        "\\bi2c_param_config\\b",
+        "\\bi2c_driver_install\\b",
+        "\\buart_driver_install\\b"
+      ],
+      "rationale": "Kernel core must use driver abstractions, not direct vendor bus APIs."
+    },
+    {
+      "id": "esp_idf_hardware_in_ebin",
+      "name": "ESP-IDF vendor hardware/bus APIs in user-space (ebin)",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\besp_wifi_\\w+\\b",
+        "\\bgpio_set_level\\b",
+        "\\bgpio_reset_pin\\b",
+        "\\bgpio_config\\b",
+        "\\bgpio_set_direction\\b",
+        "\\bspi_bus_initialize\\b",
+        "\\bspi_bus_add_device\\b",
+        "\\bspi_device_transmit\\b",
+        "\\bi2c_param_config\\b",
+        "\\bi2c_driver_install\\b",
+        "\\buart_driver_install\\b"
+      ],
+      "rationale": "User applications must interact with peripherals via /dev and standard syscalls."
+    },
+    {
+      "id": "raw_printf_in_drivers",
+      "name": "Raw printf/puts in drivers (edriver)",
+      "type": "forbidden_patterns",
+      "paths": ["main/edriver"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\b(printf|puts)\\s*\\("
+      ],
+      "rationale": "Drivers must use EOS_LOG macros instead of raw stdout output."
+    },
+    {
+      "id": "no_direct_http_client",
+      "name": "Direct ESP-IDF HTTP client in user-space (ebin)",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\besp_http_client\\.h\\b",
+        "\\besp_tls\\.h\\b"
+      ],
+      "rationale": "User applications must use curl compatibility layer rather than direct vendor HTTP client (T05)."
+    },
+    {
+      "id": "no_direct_http_server",
+      "name": "Direct ESP-IDF HTTP server in user-space (ebin)",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\besp_http_server\\.h\\b"
+      ],
+      "rationale": "HTTP servers must use libmicrohttpd compatibility layer rather than direct vendor HTTP server (T11)."
+    },
+    {
+      "id": "no_direct_nvs",
+      "name": "Direct NVS access outside NVS driver",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin", "main/ecore"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\bnvs_open\\b",
+        "\\bnvs_set_\\w+\\b",
+        "\\bnvs_get_\\w+\\b"
+      ],
+      "rationale": "NVS storage must be accessed exclusively through the /dev/nvs filesystem driver (T22)."
+    },
+    {
+      "id": "no_direct_idf_vfs",
+      "name": "Direct IDF VFS registration in apps",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "\\besp_vfs_register\\b",
+        "\\besp_vfs_unregister\\b"
+      ],
+      "rationale": "VFS operations belong strictly in core kernel (ecore) and linker wrappers (T07, T12)."
+    },
+    {
+      "id": "no_globals_in_ebin",
+      "name": "Unauthorized global/static variables in main/ebin",
+      "type": "no_globals",
+      "paths": ["main/ebin"],
+      "rationale": "Applications must not use unmanaged file-scope state to ensure clean restarts and thread safety."
+    },
+    {
+      "id": "no_globals_in_edriver",
+      "name": "Unauthorized global/static variables in main/edriver",
+      "type": "no_globals",
+      "paths": ["main/edriver"],
+      "rationale": "Drivers must store instance state in eos_drv_t / device contexts."
+    },
+    {
+      "id": "mandatory_include_guards",
+      "name": "Missing #pragma once in header files",
+      "type": "mandatory_include_guards",
+      "paths": ["main"],
+      "rationale": "All header files must contain #pragma once or include guards."
+    },
+    {
+      "id": "linker_scripts_location",
+      "name": "Linker scripts (.ld, .lf) outside main/eld",
+      "type": "allowed_directory",
+      "base_dir": ".",
+      "file_extensions": [".ld", ".lf"],
+      "allowed_prefix": "main/eld",
+      "exclude_dirs": [".git", "build", "components", "managed_components", ".board_cache"],
+      "rationale": "All custom linker scripts must reside in main/eld."
+    },
+    {
+      "id": "wrapper_definitions_location",
+      "name": "__wrap_* wrapper definitions outside main/ewrap",
+      "type": "wrapper_definitions",
+      "base_dir": "main",
+      "allowed_prefix": "main/ewrap",
+      "exclude_dirs": [".git", "build", "components", "managed_components", ".board_cache"],
+      "rationale": "Linker wrap definitions must reside exclusively in main/ewrap."
+    },
+    {
+      "id": "driver_enable_guards",
+      "name": "Driver source files (.c) missing EOS_DRV_*_ENABLED guard",
+      "type": "driver_enable_guards",
+      "paths": ["main/edriver"],
+      "pattern": "#\\s*if(def)?\\s+EOS_DRV_\\w+_ENABLED",
+      "rationale": "Every driver C source file must be guarded by its Kconfig enable macro."
+    },
+    {
+      "id": "driver_structures",
+      "name": "Driver directories missing eos_drv_t / eos_driver_t definition",
+      "type": "driver_structure",
+      "paths": ["main/edriver"],
+      "pattern": "\\b(eos_drv_t|eos_driver_t)\\b\\s+\\w+\\s*=",
+      "rationale": "Every driver module folder must declare a driver structure and no loose files may exist."
+    }
+  ]
+}

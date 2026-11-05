@@ -777,44 +777,47 @@ def zlib_cksum(data):
     return (~crc) & 0xFFFFFFFF
 
 
+SUITE_REGISTRY = {
+    "procfs": {"name": "Virtual /proc Filesystem Tests", "tag": "qemu", "func": lambda h: h.test_procfs()},
+    "pratt": {"name": "Shell & Pratt Parser Tests", "tag": "qemu", "func": lambda h: h.test_pratt_parser()},
+    "devctl": {"name": "Device Control (devctl) Tests", "tag": "qemu", "func": lambda h: h.test_devctl()},
+    "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
+    "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
+    "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},
+    "hash": {"name": "Hash, Checksum & Base64 Tests", "tag": "qemu", "func": lambda h: h.test_hash()},
+    "wlanctl": {"name": "WLAN Radio & Sniffer (wlanctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_wlanctl()},
+    "netctl": {"name": "Network Interface Management (netctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_netctl()},
+    "sdio": {"name": "Generic SDIO Driver Tests", "tag": "hardware-only", "func": lambda h: h.test_sdio()},
+}
+
+
 def auto_detect_port():
     candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
     return candidates[0] if candidates else "/dev/ttyACM0"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="EOS Physical Hardware Test Suite")
-    parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
+    parser = argparse.ArgumentParser(description="EOS Physical Hardware & QEMU Test Suite")
+    parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port or socket URL (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc", "coreutils", "hash"],
-                        default="all", help="Test suite to execute (default: all)")
+    parser.add_argument("--suite", choices=["all"] + list(SUITE_REGISTRY.keys()),
+                        default="all", help="Specific test suite to execute (default: all)")
+    parser.add_argument("--tag", choices=["all", "qemu", "hardware-only"],
+                        default="all", help="Filter test suites by execution environment tag (default: all)")
     parser.add_argument("--no-reset", action="store_true", help="Do not trigger DTR/RTS hardware reset on connect")
     args = parser.parse_args()
 
     harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=not args.no_reset)
     try:
         harness.connect()
-        if args.suite in ("all", "procfs"):
-            harness.test_procfs()
-        if args.suite in ("all", "pratt"):
-            harness.test_pratt_parser()
-        if args.suite in ("all", "devctl"):
-            harness.test_devctl()
-        if args.suite in ("all", "wlanctl"):
-            harness.test_wlanctl()
-        if args.suite in ("all", "netctl"):
-            harness.test_netctl()
-        if args.suite in ("all", "sdio"):
-            harness.test_sdio()
-        if args.suite in ("all", "gui"):
-            harness.test_gui_launcher()
-        if args.suite in ("all", "emisc"):
-            harness.test_emisc()
-        if args.suite in ("all", "coreutils"):
-            harness.test_coreutils()
-        if args.suite in ("all", "hash"):
-            harness.test_hash()
+        # Determine candidate suites
+        for suite_name, meta in SUITE_REGISTRY.items():
+            if args.suite != "all" and args.suite != suite_name:
+                continue
+            if args.tag != "all" and meta["tag"] != args.tag:
+                continue
+            meta["func"](harness)
         return harness.print_summary()
     except KeyboardInterrupt:
         print("\nTest cancelled by user.")

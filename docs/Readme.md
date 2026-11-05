@@ -104,6 +104,7 @@ docs/
 * [**Comprehensive Task Specification**](./roadmap/tasks.md) — Detailed breakdown of foundation tasks (F01–F08) and functional epics (T01–T22: Terminal, Observability, Filesystems, Security, Drivers, Network Libraries, Apps & Loader).
 * [**Implementation Order & Phasing**](./roadmap/implementation-order.md) — Strategic execution sequence across Phases 0–6, dependency tree, critical paths, and milestone criteria.
 * [**Architectural Decisions & Audit Rules**](./roadmap/decisions-and-audit-rules.md) — Pre-implementation decisions (D1–D15), test harness classification (`qemu` vs `hardware-only`), and declarative `layer_audit` enforcement rules.
+* [**Architecture & Status Matrix**](./status.md) — Auto-generated verification matrix tracking peripheral driver states, core kernel subsystems, test suite coverage, and board support.
 
 ---
 

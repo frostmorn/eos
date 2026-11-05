@@ -19,7 +19,7 @@ IDF_TOOLS_PY ?= $(shell if [ -n "$$IDF_PATH" ] && [ -f "$$IDF_PATH/tools/idf_too
 
 .PHONY: clean clean-all reconfigure build flash monitor symbols debug killdebug qemu qemu_graphics \
 	qemu_graphics_800x480 qemu_graphics_480x320 qemu_graphics_320x240 qemu_graphics_280x240 qemu_graphics_240x240 \
-	install-qemu install-qemu-xtensa install-qemu-riscv install-qemu-all refine-docs wrapcheck audit
+	install-qemu install-qemu-xtensa install-qemu-riscv install-qemu-all refine-docs docs status-matrix wrapcheck audit
 
 help:
 	@echo "===================================================="
@@ -64,6 +64,7 @@ help:
 	@echo "  cppcheck    - Static analyzis of a C code"
 	@echo "  wrapcheck   - Audit and verify linker wrappers (-Wl,--wrap)"
 	@echo "  audit       - Run comprehensive EOS layer separation audit"
+	@echo "  docs        - Generate status matrix (docs/status.md)"
 	@echo "===================================================="
 	@echo "==>   Misc"
 	@echo "===================================================="
@@ -217,5 +218,10 @@ wrapcheck:
 
 audit:
 	python3 tools/layer_audit.py
+
+docs:
+	python3 tools/status_matrix.py
+
+status-matrix: docs
 
 
