@@ -1,6 +1,6 @@
 # EOS Executable Binaries (`ebin`) Reference Catalog
 
-This catalog is an everyday operational reference for all **45 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
+This catalog is an everyday operational reference for all **55 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
 
 All binaries reside in `main/ebin/` and are exposed as executable nodes under `/bin/` via `binfs`.
 
@@ -8,12 +8,12 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 
 ## Quick Navigation Index
 
-- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`
+- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
 - [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
 - [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`
-- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_input`, `test_lvgl`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
+- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_lvgl`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
 
 ---
 
@@ -190,6 +190,66 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 * **Examples:**
   ```sh
   write "configured=true" /tmp/config.ini
+  ```
+
+### Checksums & Encoding
+
+Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base64.h`). They read files or standard input in 4 KB chunks, so inputs of any size work with a few hundred bytes of stack. See [Hash, Checksum & Base64 Tools](./hash-and-checksum-tools.md) for design notes and differences from GNU coreutils.
+
+### `sha256sum` — SHA-256 Message Digests
+* **Syntax:** `sha256sum [-b|-t] [FILE]...` · `sha256sum -c [--status] [--quiet] [-w] LIST...`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-b`, `--binary`: print `*` before the file name; `-t`, `--text`: default.
+  * `-c`, `--check`: read `<hex>  <name>` lines from LIST (or standard input) and verify each file. Blank lines and lines starting with `#` are ignored.
+  * `--status`: print nothing, report only through the exit code. `--quiet`: do not print `OK` lines. `-w`, `--warn`: report malformed list lines.
+  * `-h`, `--help`: Display usage information.
+  * With no FILE, or when FILE is `-`, standard input is read.
+* **Exit status:** `0` on success; `1` if a file cannot be read, a checksum does not match, or a check list contains no valid line.
+* **Capabilities:** Streaming digest (`eos_hash_*`), constant-time comparison in check mode, periodic CPU yield on large files.
+* **Examples:**
+  ```sh
+  sha256sum /sdcard/firmware.bin
+  sha256sum /sdcard/*.bin > /tmp/sums.txt
+  sha256sum -c /tmp/sums.txt
+  cat /tmp/data | sha256sum
+  ```
+
+### `md5sum`, `sha1sum`, `sha224sum`, `sha384sum`, `sha512sum` — Other Message Digests
+* **Syntax and options:** identical to `sha256sum`.
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Notes:** `md5sum` and `sha1sum` exist for compatibility with published checksums only. They are not collision resistant and must not be used to decide whether a file is trusted.
+* **Examples:**
+  ```sh
+  md5sum /sdcard/archive.zip
+  sha512sum -c /sdcard/SHA512SUMS
+  ```
+
+### `cksum` — POSIX CRC Checksum
+* **Syntax:** `cksum [FILE]...`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Output:** `<crc> <bytes> <name>` (no name for standard input), identical to GNU `cksum`.
+* **Examples:**
+  ```sh
+  cksum /tmp/log.txt
+  cat /tmp/log.txt | cksum
+  ```
+
+### `base64` — Base64 Encode or Decode
+* **Syntax:** `base64 [-d] [-i] [-w COLS] [FILE]`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-d`, `--decode`: decode instead of encode.
+  * `-i`, `--ignore-garbage`: when decoding, skip characters outside the Base64 alphabet.
+  * `-w COLS`, `--wrap=COLS`: wrap encoded lines after COLS characters (default 76; `0` disables wrapping).
+  * Short options can be combined (`-dw0`). With no FILE, or when FILE is `-`, standard input is read.
+  * Decoding skips LF and CR; any other invalid character is an error unless `-i` is given.
+* **Exit status:** `0` on success, `1` for unreadable input or invalid Base64.
+* **Examples:**
+  ```sh
+  echo hello | base64
+  echo aGVsbG8K | base64 -d
+  base64 -w 0 /sdcard/key.bin > /tmp/key.b64
   ```
 
 ---
@@ -433,6 +493,11 @@ All GUI binaries automatically declare `EOS_BIN_FLAG_GUI` and execute on dedicat
 * **Syntax:** `test_emisc`
 * **Flags:** `0` | **Stack:** Default (8 KB SRAM)
 * **Function:** Comprehensive unit tests for `emisc` components: dynamic vectors (`kvec`), hierarchical trees (`fancytree`), FNV-1a hashing, and network utilities (`netmisc`).
+
+### `test_hash` — Hash, Checksum & Base64 Test Suite
+* **Syntax:** `test_hash`
+* **Flags:** `0` | **Stack:** Default (8 KB SRAM)
+* **Function:** Executes 62 automated checks: published digest vectors for MD5 and the SHA family, block-boundary padding lengths, chunked streaming, CRC-32 and `cksum` values, hex helpers, RFC 4648 Base64 vectors and error cases, and the exit codes of the command-line tools (check mode, tampered and missing files, invalid options).
 
 ### `test_input` — Input Event Monitor
 * **Syntax:** `test_input [max_events] [/dev/input_path]`

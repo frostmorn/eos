@@ -9,12 +9,13 @@ This engineering report documents the audit of native executable binaries (`ebin
 In EOS, user commands and native applications reside in `main/ebin/`, registered at compile-time via `eos_bin_t` manifests into the `.eos_bins` linker section. The VFS layer exposes them under `/bin/` via `binfs`, and execution is managed by `exec.c` and `ush.c` in isolated pthreads.
 
 ### Current Status:
-* **Total Active Binaries:** 45 commands
+* **Total Active Binaries:** 55 commands
 * **Core POSIX Utilities:** 14 commands (`cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`)
+* **Checksums & Encoding:** 8 commands (`md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `cksum`, `base64`)
 * **Hardware & Bus Control:** 4 commands (`battery`, `devctl`, `lsi2c`, `soldercheck`)
 * **Network Management:** 2 commands (`netctl`, `wlanctl`)
 * **GUI Applications (LVGL):** 6 applications (`lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`, plus `launcher`)
-* **Diagnostics & Test Suites:** 15 test suites (`test_coreutils`, `test_sound`, `test_input`, `test_emisc`, `membench`, etc.)
+* **Diagnostics & Test Suites:** 16 test suites (`test_coreutils`, `test_hash`, `test_sound`, `test_input`, `test_emisc`, `membench`, etc.)
 
 ---
 
@@ -29,6 +30,10 @@ During recent development phases, critical operational gaps in file management, 
 | **`mv`** | ✅ **Complete** | Atomically moves/renames files and directories via `rename()`. Supports cross-device copy+remove fallback and `-v` reporting. | `test_coreutils` (6 tests) |
 | **`sleep`** | ✅ **Complete** | Suspends calling thread via `usleep()`. Parses compound durations (`s`, `ms`, `m`, `h`, e.g. `sleep 100ms`). Crucial for `init.sh` timing. | `test_coreutils` (6 tests) |
 | **`test_coreutils`** | ✅ **Complete** | Automated in-tree test runner validating 33 test cases covering boundary conditions, recursive deletion, and error codes. | Hardware test suite |
+| **`md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`** | ✅ **Complete** | Streaming digests with GNU-compatible output and `-c` check mode (`--status`, `--quiet`, `-w`). Built on a dependency-free library in `emisc/eos_hash.h`. | `test_hash`, hardware suite `hash` |
+| **`cksum`** | ✅ **Complete** | POSIX CRC and byte count, output identical to GNU `cksum`. | `test_hash`, hardware suite `hash` |
+| **`base64`** | ✅ **Complete** | Streaming encode/decode with `-d`, `-i`, `-w`; clustered short options. | `test_hash`, hardware suite `hash` |
+| **`test_hash`** | ✅ **Complete** | In-tree test runner with 62 checks for hashes, CRCs, Base64 and tool exit codes. | Hardware test suite |
 
 ---
 

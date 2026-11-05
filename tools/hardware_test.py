@@ -6,6 +6,7 @@ Tests procfs, devctl, wlanctl, netctl (with Linux 'ip' vibe), and GUI launcher I
 """
 
 import argparse
+import hashlib
 import glob
 import re
 import sys
@@ -677,6 +678,65 @@ class EOSTestHarness:
         # Cleanup all test artifacts
         self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_*")
 
+    def test_hash(self):
+        suite = "hash"
+        print(f"\n{Colors.BOLD}=== 9. Hash, Checksum & Base64 Tests ==={Colors.RESET}")
+        # 1. Native C unit tests (known-answer vectors, padding boundaries, streaming, base64, check mode)
+        self.check(suite, "Hash unit test binary passes with 0 failures", "test_hash",
+                   r"Hash Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=6.0)
+
+        # 2. Shell integration. echo may or may not append a newline, so accept either digest.
+        payload = b"eos_hash_payload"
+        variants = [payload, payload + b"\n"]
+
+        def digests(name):
+            return "(" + "|".join(hashlib.new(name, v).hexdigest() for v in variants) + ")"
+
+        self.check(suite, "new tools are installed in /bin", "ls /bin", r"sha256sum[\s\S]*base64|base64[\s\S]*sha256sum", wait=1.5)
+        self.run_cmd("echo eos_hash_payload > /tmp/h_hash.txt")
+        for tool, algo in (("md5sum", "md5"), ("sha1sum", "sha1"), ("sha224sum", "sha224"),
+                           ("sha256sum", "sha256"), ("sha384sum", "sha384"), ("sha512sum", "sha512")):
+            self.check(suite, f"{tool} prints digest and name", f"{tool} /tmp/h_hash.txt",
+                       r"^" + digests(algo) + r"  /tmp/h_hash\.txt\s*$")
+        self.check(suite, "sha256sum reads standard input from a pipe", "cat /tmp/h_hash.txt | sha256sum",
+                   r"^" + digests("sha256") + r"  -\s*$")
+        self.check(suite, "sha256sum -b marks binary mode", "sha256sum -b /tmp/h_hash.txt",
+                   r"^" + digests("sha256") + r" \*/tmp/h_hash\.txt\s*$")
+        self.check(suite, "sha256sum missing file reports an error", "sha256sum /tmp/h_hash_ghost.txt",
+                   r"No such file", not_pattern=r"^[0-9a-f]{64}")
+        self.check(suite, "sha256sum --help", "sha256sum --help", r"Usage:\s+sha256sum")
+
+        # 3. Check mode round trip, then tamper with the file
+        self.run_cmd("sha256sum /tmp/h_hash.txt > /tmp/h_hash.lst")
+        self.check(suite, "sha256sum -c verifies a correct list", "sha256sum -c /tmp/h_hash.lst",
+                   r"/tmp/h_hash\.txt: OK", not_pattern=r"FAILED")
+        self.check(suite, "sha256sum -c --quiet prints nothing on success", "sha256sum -c --quiet /tmp/h_hash.lst",
+                   r".*", not_pattern=r"(OK|FAILED|WARNING)")
+        self.run_cmd("echo tampered > /tmp/h_hash.txt")
+        self.check(suite, "sha256sum -c detects a modified file", "sha256sum -c /tmp/h_hash.lst",
+                   r"/tmp/h_hash\.txt: FAILED[\s\S]*did NOT match")
+        self.run_cmd("rm /tmp/h_hash.txt")
+        self.check(suite, "sha256sum -c detects a missing file", "sha256sum -c /tmp/h_hash.lst",
+                   r"FAILED open or read")
+
+        # 4. cksum (POSIX CRC): value for a fixed payload
+        self.run_cmd("echo eos_hash_payload > /tmp/h_hash.txt")
+        ck = "|".join(f"{zlib_cksum(v)} {len(v)}" for v in variants)
+        self.check(suite, "cksum prints POSIX CRC, size and name", "cksum /tmp/h_hash.txt",
+                   r"^(" + ck + r") /tmp/h_hash\.txt\s*$")
+
+        # 5. base64 encode, decode, wrap, error handling
+        self.check(suite, "base64 decodes a known value", "echo Zm9v | base64 -d", r"^foo\s*$")
+        self.check(suite, "base64 encodes a known value", "echo abc | base64", r"^YWJj(Cg==)?\s*$")
+        self.check(suite, "base64 rejects invalid input", "echo Zm9v! | base64 -d", r"invalid input")
+        self.check(suite, "base64 rejects truncated input", "echo Zg= | base64 -d", r"invalid input")
+        self.run_cmd("base64 /tmp/h_hash.txt > /tmp/h_hash.b64")
+        self.check(suite, "base64 round trip restores the file", "base64 -d /tmp/h_hash.b64", r"eos_hash_payload")
+        self.check(suite, "base64 --help", "base64 --help", r"Usage:\s+base64")
+
+        # Cleanup
+        self.run_cmd("rm -f /tmp/h_hash.txt /tmp/h_hash.lst /tmp/h_hash.b64")
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -699,6 +759,24 @@ class EOSTestHarness:
             return 1
 
 
+
+def zlib_cksum(data):
+    """POSIX cksum (CRC with polynomial 0x04C11DB7, length appended), used to build expected values."""
+    crc = 0
+    def feed(crc, b):
+        crc ^= b << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if crc & 0x80000000 else (crc << 1) & 0xFFFFFFFF
+        return crc
+    for b in data:
+        crc = feed(crc, b)
+    n = len(data)
+    while n:
+        crc = feed(crc, n & 0xFF)
+        n >>= 8
+    return (~crc) & 0xFFFFFFFF
+
+
 def auto_detect_port():
     candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
     return candidates[0] if candidates else "/dev/ttyACM0"
@@ -709,7 +787,7 @@ def main():
     parser.add_argument("-p", "--port", default=auto_detect_port(), help="Serial port (default: auto-detected)")
     parser.add_argument("-b", "--baud", type=int, default=115200, help="Baud rate (default: 115200)")
     parser.add_argument("-t", "--timeout", type=float, default=0.2, help="Read timeout in seconds")
-    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc", "coreutils"],
+    parser.add_argument("--suite", choices=["all", "procfs", "pratt", "devctl", "wlanctl", "netctl", "sdio", "gui", "emisc", "coreutils", "hash"],
                         default="all", help="Test suite to execute (default: all)")
     parser.add_argument("--no-reset", action="store_true", help="Do not trigger DTR/RTS hardware reset on connect")
     args = parser.parse_args()
@@ -735,6 +813,8 @@ def main():
             harness.test_emisc()
         if args.suite in ("all", "coreutils"):
             harness.test_coreutils()
+        if args.suite in ("all", "hash"):
+            harness.test_hash()
         return harness.print_summary()
     except KeyboardInterrupt:
         print("\nTest cancelled by user.")

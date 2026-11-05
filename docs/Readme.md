@@ -12,7 +12,7 @@ This documentation center is structured into dedicated topic directories for eve
 docs/
 ├── Readme.md                          # Master documentation index & quick reference
 ├── binaries/                          # Executable binaries & execution environment
-│   ├── catalog.md                     # Everyday command catalog (all 45 binaries with options & syntax)
+│   ├── catalog.md                     # Everyday command catalog (all 55 binaries with options & syntax)
 │   ├── execution-architecture.md      # BinFS (/bin), statically linked .eos_bins, ush shell, execve
 │   ├── manifest-flags-and-stacks.md   # eos_bin_t flags, PSRAM stack routing, graceful SRAM fallback
 │   └── elf-applications.md            # Dynamic ELF loading, standalone apps, compilation & runtime symbols
@@ -43,13 +43,15 @@ docs/
 
 ## 1. Binaries & Command-Line Tools (`docs/binaries/`)
 
-* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 45 native binaries:
+* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 55 native binaries:
   * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`.
+  * **Checksums & Encoding:** `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `cksum`, `base64`.
   * **System & Shell:** `ush`, `launcher`, `mount`, `umount`.
   * **Hardware & Bus Control:** `battery`, `devctl`, `lsi2c`, `soldercheck`.
   * **Network Management:** `netctl`, `wlanctl`.
   * **GUI Applications:** `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`.
-  * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_sound`, `test_input`, `test_lvgl`, `test_sdl`, etc.
+  * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_hash`, `test_sound`, `test_input`, `test_lvgl`, `test_sdl`, etc.
+* [**Hash, Checksum & Base64 Tools**](./binaries/hash-and-checksum-tools.md) — `md5sum`/`sha*sum`/`cksum`/`base64`: shared library, check-list format, differences from GNU coreutils, memory behaviour, and how the tools are tested.
 * [**BinFS, Native Binaries & Execution**](./binaries/execution-architecture.md) — Linker section `.eos_bins`, script assets (`init.sh`), execution pipeline (`exec.c`), MicroShell (`ush.c`), pipes, and redirections.
 * [**Dynamic ELF Applications & Runtime Loader**](./binaries/elf-applications.md) — Standalone dynamic apps, runtime symbol resolution, PSRAM execution, app compilation, and toolchain discovery.
 * [**Ebin Manifest Flags & Stack Architecture**](./binaries/manifest-flags-and-stacks.md) — `eos_bin_t` manifest flags (`EOS_BIN_FLAG_GUI`, `EOS_BIN_FLAG_STACK_PSRAM`, `EOS_BIN_FLAG_STACK_SRAM`), stack dimensioning, PSRAM routing, and graceful SRAM fallback.
