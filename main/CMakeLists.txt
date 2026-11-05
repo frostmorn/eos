@@ -6,6 +6,7 @@ idf_component_register(
     WHOLE_ARCHIVE 
     LDFRAGMENTS "eld/driver.lf" "eld/bin.lf" "eld/assets.lf"
 )
+target_link_libraries(${COMPONENT_LIB} PRIVATE idf::mbedtls)
 idf_build_set_property(
     COMPILE_OPTIONS "-DFD_SETSIZE=128" APPEND
 )

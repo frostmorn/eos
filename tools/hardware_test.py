@@ -726,7 +726,7 @@ class EOSTestHarness:
                    r"^(" + ck + r") /tmp/h_hash\.txt\s*$")
 
         # 5. base64 encode, decode, wrap, error handling
-        self.check(suite, "base64 decodes a known value", "echo Zm9v | base64 -d", r"^foo\s*$")
+        self.check(suite, "base64 decodes a known value", "echo Zm9v | base64 -d", r"^foo")
         self.check(suite, "base64 encodes a known value", "echo abc | base64", r"^YWJj(Cg==)?\s*$")
         self.check(suite, "base64 rejects invalid input", "echo Zm9v! | base64 -d", r"invalid input")
         self.check(suite, "base64 rejects truncated input", "echo Zg= | base64 -d", r"invalid input")

@@ -87,6 +87,15 @@ ssize_t __wrap__read_r(struct _reent *r, int fd, void *dst, size_t size) {
 }
 
 ssize_t __wrap__write_r(struct _reent *r, int fd, const void *data, size_t size) {
+  // fd 0 is /dev/uart/0 used internally by ESP-IDF vfs_console. It must never
+  // be redirected through thread-local mappings.
+  if (fd == 0) {
+    if (!eos_console_is_connected()) {
+      return (ssize_t)size;
+    }
+    return __real__write_r(r, 0, data, size);
+  }
+
   int real_fd = eos_tctx_resolve_fd(fd);
   if ((real_fd == STDOUT_FILENO || real_fd == STDERR_FILENO) &&
       !eos_console_is_connected()) {

@@ -18,8 +18,8 @@ extern int sha512sum_main(int argc, char **argv);
 extern int cksum_main(int argc, char **argv);
 extern int base64_main(int argc, char **argv);
 
-#define TEST_DATA_PATH "/tmp/eos_hash_test.dat"
-#define TEST_LIST_PATH "/tmp/eos_hash_test.lst"
+#define TEST_DATA_PATH "/tmp/h_test.dat"
+#define TEST_LIST_PATH "/tmp/h_test.lst"
 
 typedef struct {
   int passed;
@@ -352,16 +352,16 @@ static void test_tools(test_ctx_t *ctx) {
     report_test(ctx, "sha256sum -c fails when no line is valid", sha256sum_main(4, argv_ok) == 1);
   }
 
-  char *missing_list[] = { "sha256sum", "--status", "-c", "/tmp/eos_hash_test.nolist", NULL };
+  char *missing_list[] = { "sha256sum", "--status", "-c", "/tmp/h_nolist.lst", NULL };
   report_test(ctx, "sha256sum -c fails for a missing list file", sha256sum_main(4, missing_list) == 1);
-  char *missing_file[] = { "sha256sum", "/tmp/eos_hash_test.nofile", NULL };
+  char *missing_file[] = { "sha256sum", "/tmp/h_nofile.dat", NULL };
   report_test(ctx, "sha256sum reports an unreadable file with status 1", sha256sum_main(2, missing_file) == 1);
   char *bad_opt[] = { "sha256sum", "--no-such-option", NULL };
   report_test(ctx, "sha256sum rejects unknown options", sha256sum_main(2, bad_opt) == 1);
 
-  char *ck_missing[] = { "cksum", "/tmp/eos_hash_test.nofile", NULL };
+  char *ck_missing[] = { "cksum", "/tmp/h_nofile.dat", NULL };
   report_test(ctx, "cksum reports an unreadable file with status 1", cksum_main(2, ck_missing) == 1);
-  char *b64_missing[] = { "base64", "/tmp/eos_hash_test.nofile", NULL };
+  char *b64_missing[] = { "base64", "/tmp/h_nofile.dat", NULL };
   report_test(ctx, "base64 reports an unreadable file with status 1", base64_main(2, b64_missing) == 1);
   char *b64_bad_wrap[] = { "base64", "-w", "abc", NULL };
   report_test(ctx, "base64 rejects a non-numeric wrap size", base64_main(3, b64_bad_wrap) == 1);

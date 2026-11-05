@@ -814,9 +814,6 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
   // 1. Pipe descriptors first (explicit file redirections override pipes)
   if (st->pipe_in_fd >= 0) {
     dup2(st->pipe_in_fd, STDIN_FILENO);
-    if (stdin && fileno(stdin) >= 0) {
-      dup2(st->pipe_in_fd, fileno(stdin));
-    }
   }
   if (st->pipe_out_fd >= 0) {
     dup2(st->pipe_out_fd, STDOUT_FILENO);
@@ -835,9 +832,6 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     }
     opened_fds[0] = fd;
     dup2(fd, STDIN_FILENO);
-    if (stdin && fileno(stdin) >= 0) {
-      dup2(fd, fileno(stdin));
-    }
   }
 
   // 3. Explicit output redirection (> file or >> file)

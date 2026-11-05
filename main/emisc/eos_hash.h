@@ -21,6 +21,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if defined(ESP_PLATFORM)
+#include "psa/crypto.h"
+#endif
+
 typedef enum {
   EOS_HASH_MD5 = 0,
   EOS_HASH_SHA1,
@@ -45,6 +49,10 @@ typedef struct {
     uint64_t w64[8];
   } state;
   uint8_t buf[128];
+#if defined(ESP_PLATFORM)
+  bool hw_accel;
+  psa_hash_operation_t psa_op;
+#endif
 } eos_hash_ctx_t;
 
 // Returns 0 on success, -1 for an unknown algorithm.

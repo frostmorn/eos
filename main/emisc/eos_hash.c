@@ -281,6 +281,20 @@ const char *eos_hash_name(eos_hash_alg_t alg) {
   }
 }
 
+#if defined(ESP_PLATFORM)
+static psa_algorithm_t to_psa_alg(eos_hash_alg_t alg) {
+  switch (alg) {
+    case EOS_HASH_MD5:    return PSA_ALG_MD5;
+    case EOS_HASH_SHA1:   return PSA_ALG_SHA_1;
+    case EOS_HASH_SHA224: return PSA_ALG_SHA_224;
+    case EOS_HASH_SHA256: return PSA_ALG_SHA_256;
+    case EOS_HASH_SHA384: return PSA_ALG_SHA_384;
+    case EOS_HASH_SHA512: return PSA_ALG_SHA_512;
+    default:              return 0;
+  }
+}
+#endif
+
 int eos_hash_init(eos_hash_ctx_t *ctx, eos_hash_alg_t alg) {
   size_t dsz = eos_hash_digest_size(alg);
   if (!ctx || dsz == 0) return -1;
@@ -288,6 +302,19 @@ int eos_hash_init(eos_hash_ctx_t *ctx, eos_hash_alg_t alg) {
   ctx->alg = alg;
   ctx->digest_size = (uint32_t)dsz;
   ctx->block_size = (alg == EOS_HASH_SHA384 || alg == EOS_HASH_SHA512) ? 128u : 64u;
+
+#if defined(ESP_PLATFORM)
+  psa_algorithm_t psa_alg = to_psa_alg(alg);
+  if (psa_alg != 0 && psa_crypto_init() == PSA_SUCCESS) {
+    ctx->psa_op = psa_hash_operation_init();
+    if (psa_hash_setup(&ctx->psa_op, psa_alg) == PSA_SUCCESS) {
+      ctx->hw_accel = true;
+      return 0;
+    }
+  }
+  ctx->hw_accel = false;
+#endif
+
   switch (alg) {
     case EOS_HASH_MD5:
       ctx->state.w32[0] = 0x67452301u; ctx->state.w32[1] = 0xefcdab89u;
@@ -310,6 +337,17 @@ int eos_hash_init(eos_hash_ctx_t *ctx, eos_hash_alg_t alg) {
 void eos_hash_update(eos_hash_ctx_t *ctx, const void *data, size_t len) {
   const uint8_t *p = (const uint8_t *)data;
   if (!ctx || !p || len == 0) return;
+#if defined(ESP_PLATFORM)
+  if (ctx->hw_accel) {
+    ctx->total += len;
+    if (psa_hash_update(&ctx->psa_op, p, len) == PSA_SUCCESS) {
+      return;
+    }
+    psa_hash_abort(&ctx->psa_op);
+    ctx->hw_accel = false;
+    return;
+  }
+#endif
   ctx->total += len;
   if (ctx->buf_len) {
     size_t take = ctx->block_size - ctx->buf_len;
@@ -335,6 +373,18 @@ void eos_hash_update(eos_hash_ctx_t *ctx, const void *data, size_t len) {
 
 void eos_hash_final(eos_hash_ctx_t *ctx, uint8_t *out) {
   if (!ctx || !out) return;
+#if defined(ESP_PLATFORM)
+  if (ctx->hw_accel) {
+    size_t out_len = 0;
+    psa_status_t status = psa_hash_finish(&ctx->psa_op, out, ctx->digest_size, &out_len);
+    if (status != PSA_SUCCESS) {
+      psa_hash_abort(&ctx->psa_op);
+      memset(out, 0, ctx->digest_size);
+    }
+    memset(ctx, 0, sizeof(*ctx));
+    return;
+  }
+#endif
   const uint32_t bs = ctx->block_size;
   const uint32_t len_bytes = (bs == 128u) ? 16u : 8u;
   const uint64_t bits_lo = ctx->total << 3;
@@ -371,6 +421,25 @@ void eos_hash_final(eos_hash_ctx_t *ctx, uint8_t *out) {
 }
 
 void eos_hash_buf(eos_hash_alg_t alg, const void *data, size_t len, uint8_t *out) {
+  if (!out) return;
+#if defined(ESP_PLATFORM)
+  psa_algorithm_t psa_alg = to_psa_alg(alg);
+  size_t dsz = eos_hash_digest_size(alg);
+  if (psa_alg != 0 && dsz > 0 && psa_crypto_init() == PSA_SUCCESS) {
+    size_t out_len = 0;
+    psa_status_t status = psa_hash_compute(
+      psa_alg,
+      (const uint8_t *)(data ? data : ""),
+      data ? len : 0,
+      out,
+      dsz,
+      &out_len
+    );
+    if (status == PSA_SUCCESS && out_len == dsz) {
+      return;
+    }
+  }
+#endif
   eos_hash_ctx_t ctx;
   if (eos_hash_init(&ctx, alg) != 0) return;
   eos_hash_update(&ctx, data, len);
