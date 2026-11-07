@@ -470,6 +470,16 @@ void eos_proc_exit(pid_t pid, int exit_code) {
   }
 
   if (p) {
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+    for (size_t j = 0; j < kv_size(p->threads); j++) {
+      TaskHandle_t th = kv_A(p->threads, j);
+      if (th) {
+        TaskStatus_t details;
+        vTaskGetInfo(th, &details, pdFALSE, eInvalid);
+        p->cpu_time_us += (uint64_t)details.ulRunTimeCounter;
+      }
+    }
+#endif
     p->exit_code = exit_code;
     p->last_exit_status = exit_code;
     p->state = EOS_PROC_STATE_ZOMBIE;
@@ -992,6 +1002,11 @@ void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread) {
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread) {
   if (!proc || !thread) return;
   proc_lock();
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+  TaskStatus_t details;
+  vTaskGetInfo(thread, &details, pdFALSE, eInvalid);
+  proc->cpu_time_us += (uint64_t)details.ulRunTimeCounter;
+#endif
   if (proc->main_thread == thread) {
     proc->main_thread = NULL;
   }
@@ -1003,6 +1018,26 @@ void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread) {
     }
   }
   proc_unlock();
+}
+
+uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc) {
+  if (!proc) return 0;
+  proc_lock();
+  uint64_t total = proc->cpu_time_us;
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+  if (proc->state != EOS_PROC_STATE_ZOMBIE) {
+    for (size_t i = 0; i < kv_size(proc->threads); i++) {
+      TaskHandle_t th = kv_A(proc->threads, i);
+      if (th) {
+        TaskStatus_t details;
+        vTaskGetInfo(th, &details, pdFALSE, eInvalid);
+        total += (uint64_t)details.ulRunTimeCounter;
+      }
+    }
+  }
+#endif
+  proc_unlock();
+  return total;
 }
 
 eos_pwrap_t *eos_proc_wrap_prepare(void *thread_start, void *thread_data) {

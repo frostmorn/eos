@@ -8,7 +8,7 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 
 ## Quick Navigation Index
 
-- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
+- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
 - [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
@@ -109,6 +109,22 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
   mv -v script.sh /tmp/
   ```
 
+### `ps` — Report Process Status
+* **Syntax:** `ps [-e|-A] [-f|-ef] [-l] [-h|--help]`
+* **Flags:** `0` (Visible in launcher) | **Stack:** Default (8 KB SRAM)
+* **Function:** Queries `/proc` to report a snapshot of active processes, their PIDs, PPIDs, state, controlling TTY, CPU run-time (`TIME`), start time (`STIME`), and command line (`CMD`).
+* **Options:**
+  * `-e`, `-A`: Select all processes (default).
+  * `-f`, `-ef`: Full-format listing (`UID`, `PID`, `PPID`, `C`, `STIME`, `TTY`, `TIME`, `CMD`).
+  * `-l`: Long-format listing (`S`, `UID`, `PID`, `PPID`, `C`, `TTY`, `TIME`, `CMD`).
+* **Capabilities:** Enumerates `/proc`, parses `/proc/<pid>/status` and `/proc/<pid>/cmdline`.
+* **Examples:**
+  ```sh
+  ps
+  ps -ef
+  ps -l
+  ```
+
 ### `pwd` — Print Working Directory
 * **Syntax:** `pwd`
 * **Flags:** `0` | **Stack:** Default (8 KB SRAM)
@@ -180,6 +196,16 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
   tree
   tree /proc
   tree /dev
+  ```
+
+### `uptime` — Tell How Long System Has Been Running
+* **Syntax:** `uptime [-h|--help]`
+* **Flags:** `0` (Visible in launcher) | **Stack:** Default (8 KB SRAM)
+* **Function:** Queries `/proc/uptime` and `/proc/loadavg` to display how long the system has been up and the 1, 5, and 15-minute exponentially damped load averages.
+* **Capabilities:** Reads `/proc/uptime` and `/proc/loadavg`.
+* **Examples:**
+  ```sh
+  uptime
   ```
 
 ### `write` — Write Text Directly to File

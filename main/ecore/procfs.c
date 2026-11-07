@@ -15,10 +15,12 @@
 #include <esp_intr_alloc.h>
 #include <esp_mac.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 #include <esp_vfs.h>
 #include <fcntl.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,6 +88,8 @@ static const char *s_proc_entries[] = {
     "heapinfo",
     "cpuinfo",
     "uptime",
+    "loadavg",
+    "stat",
     "pipes",
     "self",
 };
@@ -426,6 +430,101 @@ static char *procfs_gen_uptime(void) {
   return sb.buf;
 }
 
+static double s_load1 = 0.0;
+static double s_load5 = 0.0;
+static double s_load15 = 0.0;
+static uint64_t s_last_load_sample = 0;
+
+static void update_loadavg(void) {
+  uint64_t now = esp_timer_get_time();
+  if (s_last_load_sample == 0) {
+    s_last_load_sample = now;
+    return;
+  }
+  uint64_t elapsed_us = now - s_last_load_sample;
+  if (elapsed_us < 1000000) return; // Sample at most once every second
+  s_last_load_sample = now;
+
+  double dt = (double)elapsed_us / 1000000.0;
+  double active = 1.0;
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+  UBaseType_t task_count = uxTaskGetNumberOfTasks();
+  TaskStatus_t *status_arr = eos_psram_calloc_prefer(task_count, sizeof(TaskStatus_t));
+  if (status_arr) {
+    UBaseType_t actual = uxTaskGetSystemState(status_arr, task_count, NULL);
+    active = 0.0;
+    for (UBaseType_t i = 0; i < actual; i++) {
+      if (status_arr[i].eCurrentState == eRunning || status_arr[i].eCurrentState == eReady) {
+        active += 1.0;
+      }
+    }
+    eos_psram_free(status_arr);
+  }
+#endif
+
+  double exp1 = exp(-dt / 60.0);
+  double exp5 = exp(-dt / 300.0);
+  double exp15 = exp(-dt / 900.0);
+
+  s_load1 = s_load1 * exp1 + active * (1.0 - exp1);
+  s_load5 = s_load5 * exp5 + active * (1.0 - exp5);
+  s_load15 = s_load15 * exp15 + active * (1.0 - exp15);
+}
+
+static char *procfs_gen_loadavg(void) {
+  update_loadavg();
+
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  UBaseType_t total_tasks = uxTaskGetNumberOfTasks();
+  pid_t last_pid = getpid();
+
+  sbuf_printf(&sb, "%.2f %.2f %.2f 1/%u %d\n",
+              s_load1, s_load5, s_load15, (unsigned int)total_tasks, (int)last_pid);
+
+  return sb.buf;
+}
+
+static char *procfs_gen_stat(void) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  uint64_t total_runtime = esp_timer_get_time();
+  unsigned long total_ticks = (unsigned long)(total_runtime / 10000);
+  unsigned long idle_ticks = 0;
+  unsigned long user_ticks = 0;
+
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+  UBaseType_t task_count = uxTaskGetNumberOfTasks();
+  TaskStatus_t *status_arr = eos_psram_calloc_prefer(task_count, sizeof(TaskStatus_t));
+  if (status_arr) {
+    uint32_t total_run = 0;
+    UBaseType_t actual = uxTaskGetSystemState(status_arr, task_count, &total_run);
+    for (UBaseType_t i = 0; i < actual; i++) {
+      if (strncmp(status_arr[i].pcTaskName, "IDLE", 4) == 0) {
+        idle_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / 10000);
+      } else {
+        user_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / 10000);
+      }
+    }
+    eos_psram_free(status_arr);
+  }
+#endif
+
+  if (idle_ticks == 0 && total_ticks > user_ticks) {
+    idle_ticks = total_ticks - user_ticks;
+  }
+
+  sbuf_printf(&sb, "cpu  %lu 0 0 %lu 0 0 0 0 0 0\n", user_ticks, idle_ticks);
+  sbuf_printf(&sb, "btime %llu\n", (unsigned long long)1700000000);
+  sbuf_printf(&sb, "processes %zu\n", eos_proc_count_active());
+
+  return sb.buf;
+}
+
 // ── VFS Implementation ─────────────────────────────────────────
 
 static int procfs_fd_alloc(char *data) {
@@ -579,7 +678,9 @@ static char *procfs_gen_pid_status(eos_proc_t *p) {
   sbuf_printf(&sb, "Pgid:\t%d\n", (int)p->pgid);
   sbuf_printf(&sb, "Sid:\t%d\n", (int)p->sid);
   sbuf_printf(&sb, "TTY:\t%s\n", p->tty[0] ? p->tty : "?");
-  sbuf_printf(&sb, "Threads:\t1\n");
+  sbuf_printf(&sb, "Threads:\t%zu\n", kv_size(p->threads) ? kv_size(p->threads) : (size_t)1);
+  sbuf_printf(&sb, "CPUTime:\t%llu\n", (unsigned long long)eos_proc_get_cpu_time_us(p));
+  sbuf_printf(&sb, "StartTime:\t%llu\n", (unsigned long long)p->start_time);
 
   return sb.buf;
 }
@@ -592,8 +693,13 @@ static char *procfs_gen_pid_stat(eos_proc_t *p) {
   char st_c = (char)p->state;
   if (st_c == 0) st_c = 'R';
 
-  sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 0 0 0 0 0 1 0 %llu 0 0\n",
+  uint64_t cpu_us = eos_proc_get_cpu_time_us(p);
+  unsigned long utime = (unsigned long)(cpu_us / 10000); // 100Hz clock ticks
+
+  sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 %lu 0 0 0 0 0 %zu 0 %llu 0 0\n",
               (int)p->pid, p->name, st_c, (int)p->ppid, (int)p->pgid, (int)p->sid,
+              utime,
+              kv_size(p->threads) ? kv_size(p->threads) : (size_t)1,
               (unsigned long long)(p->start_time / 1000));
 
   return sb.buf;
@@ -711,6 +817,10 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
       content = procfs_gen_cpuinfo();
     } else if (strcmp(p, "uptime") == 0) {
       content = procfs_gen_uptime();
+    } else if (strcmp(p, "loadavg") == 0) {
+      content = procfs_gen_loadavg();
+    } else if (strcmp(p, "stat") == 0) {
+      content = procfs_gen_stat();
     } else {
       errno = ENOENT;
       return -1;

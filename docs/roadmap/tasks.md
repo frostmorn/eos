@@ -10,38 +10,38 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ## 0. Summary
 
-| ID | Task | Epic | Size | Depends on | Phase |
-|---|---|---|---|---|---|
-| F01 | IDF pin, wrapper inventory, CI matrix | Foundation | S | – | 0 |
-| F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
-| F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
-| F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
-| F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
-| F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
-| F07 | TTY layer (termios, echo, line discipline) | Terminal | L | F04 | 2 |
-| F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
-| T06 | Hash and checksum utilities | Userland | S | F06 | 1 |
-| T10 | Device-selection environment variables | Userland | S | – | 1 |
-| T17 | Run-time stats and `/proc/loadavg` | Observability | S | – | 1 |
-| T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
-| T13 | Real per-process `/proc` | Observability | M | F04 | 1 |
-| T20 | `ps` | Observability | S | T13 | 1 |
-| T18 | Signals (cooperative) and `kill` | Terminal | L | F04, F07 | 2 |
-| T19 | Job control (fg / bg / Ctrl-Z) | Terminal | M | T18, F07 | 2 |
-| T01 | terminfo and ncurses port | Terminal | L | F07, T18, T10 | 2 |
-| T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
-| T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
-| T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
-| T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
-| T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
-| T15 | PWM driver | Drivers | M | T16 | 4 |
-| T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
-| T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
-| T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
-| T05 | libcurl compatibility layer | Network libs | L | F03 | 5 |
-| T11 | libmicrohttpd compatibility layer | Network libs | L | F03 | 5 |
-| T04 | SDL / SDL2 completion | Apps | XL | T02, T10, T14 | 5 |
-| T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
+| Status | ID | Task | Epic | Size | Depends on | Phase |
+|---|---|---|---|---|---|---|
+| Done | F01 | IDF pin, wrapper inventory, CI matrix | Foundation | S | – | 0 |
+| Pending | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
+| Pending | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
+| Done | F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
+| Pending | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
+| Done | F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
+| Pending | F07 | TTY layer (termios, echo, line discipline) | Terminal | L | F04 | 2 |
+| Pending | F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
+| Done | T06 | Hash and checksum utilities | Userland | S | F06 | 1 |
+| Pending | T10 | Device-selection environment variables | Userland | S | – | 1 |
+| Done | T17 | Run-time stats and `/proc/loadavg` | Observability | S | – | 1 |
+| Pending | T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
+| Done | T13 | Real per-process `/proc` | Observability | M | F04 | 1 |
+| Done | T20 | `ps` | Observability | S | T13 | 1 |
+| Pending | T18 | Signals (cooperative) and `kill` | Terminal | L | F04, F07 | 2 |
+| Pending | T19 | Job control (fg / bg / Ctrl-Z) | Terminal | M | T18, F07 | 2 |
+| Pending | T01 | terminfo and ncurses port | Terminal | L | F07, T18, T10 | 2 |
+| Pending | T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
+| Pending | T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
+| Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
+| Pending | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
+| Pending | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
+| Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
+| Pending | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
+| Pending | T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
+| Pending | T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
+| Pending | T05 | libcurl compatibility layer | Network libs | L | F03 | 5 |
+| Pending | T11 | libmicrohttpd compatibility layer | Network libs | L | F03 | 5 |
+| Pending | T04 | SDL / SDL2 completion | Apps | XL | T02, T10, T14 | 5 |
+| Pending | T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
 
 ---
 
@@ -56,7 +56,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ## 2. Foundation tasks
 
-### F01 — IDF pin, wrapper inventory, CI matrix
+### F01 — IDF pin, wrapper inventory, CI matrix [DONE]
 `Size: S · Depends: –`
 
 **Why:** The list adds more linker wraps (T12, T16, T18). `--wrap` on a symbol that no longer exists is silent, so an IDF upgrade can disable a wrapper without any build error. The P4 guide already mentions IDF 6.0, so the supported matrix should be explicit.
@@ -102,7 +102,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F04 — Process table
+### F04 — Process table [DONE]
 `Size: M · Depends: –`
 
 **Why:** An exec created a thread and `eos_wait()` joined it, without a pid, parent, process group or exit-status record that other components could query. T09, T13, T18, T19, T20, F02 and F07 all need a proper process table.
@@ -131,7 +131,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F06 — Test and audit infrastructure
+### F06 — Test and audit infrastructure [DONE]
 `Size: S–M · Depends: –`
 
 **Scope**
@@ -227,7 +227,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ### Epic: Observability
 
-#### T17 — Run-time stats and `/proc/loadavg`
+#### T17 — Run-time stats and `/proc/loadavg` [DONE]
 `Size: S · Depends: – · Orig #17`
 
 **Scope**
@@ -240,7 +240,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Risks:** `uxTaskGetSystemState` briefly blocks scheduling and scales with task count; sample slowly (≥ 1 s) and measure.
 
-#### T13 — Real per-process `/proc`
+#### T13 — Real per-process `/proc` [DONE]
 `Size: M · Depends: F04 · Orig #13`
 
 **Scope**
@@ -252,7 +252,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** `ls /proc` lists live pids; `cat /proc/self/status` works inside a pipeline; entries vanish on exit.
 
-#### T20 — `ps`
+#### T20 — `ps` [DONE]
 `Size: S · Depends: T13 · Orig #20`
 
 `ps` and `ps -ef` style output (pid, ppid, state, cpu time once T09 lands, memory, command) read purely from `/proc`. After T01, add `top`.
@@ -315,7 +315,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance (a–c):** `ln -s /sdcard/x /tmp/x` works, `cat /tmp/x` reads through, `mv` across `/tmp` and `/sdcard` works, symlink loops fail with `ELOOP`.
 
-#### T06 — Hash and checksum utilities
+#### T06 — Hash and checksum utilities [DONE]
 `Size: S · Depends: F06 · Orig #6`
 
 **Scope**

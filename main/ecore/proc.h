@@ -35,6 +35,7 @@ struct eos_proc_t {
   eos_proc_state_t state;
   int exit_code;
   uint64_t start_time;
+  uint64_t cpu_time_us;
   char name[32];
   char *cmdline;
   char tty[16];
@@ -134,6 +135,7 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap);
 // Thread management & wrapping
 void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread);
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread);
+uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc);
 
 typedef struct {
   void *(*thread_start)(void *);

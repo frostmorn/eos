@@ -273,6 +273,90 @@ static void test_procfs_process_hierarchy(test_ctx_t *ctx) {
   }
 }
 
+extern int ps_main(int argc, char **argv);
+extern int uptime_main(int argc, char **argv);
+
+static void test_ps_utility(test_ctx_t *ctx) {
+  printf("--- Testing ps utility ---\n");
+  char *help_argv[] = {"ps", "--help", NULL};
+  int rc = ps_main(2, help_argv);
+  report_test(ctx, "ps: ps --help exits with 0", rc == 0);
+
+  char *default_argv[] = {"ps", NULL};
+  rc = ps_main(1, default_argv);
+  report_test(ctx, "ps: default ps exits with 0", rc == 0);
+
+  char *full_argv[] = {"ps", "-f", NULL};
+  rc = ps_main(2, full_argv);
+  report_test(ctx, "ps: ps -f exits with 0", rc == 0);
+
+  char *long_argv[] = {"ps", "-l", NULL};
+  rc = ps_main(2, long_argv);
+  report_test(ctx, "ps: ps -l exits with 0", rc == 0);
+
+  // Test spawning ps via execve
+  char *spawn_argv[] = {"ps", "-ef", NULL};
+  int exec_rc = execve("ps", spawn_argv, NULL);
+  report_test(ctx, "ps: execve('ps', -ef) succeeds", exec_rc == 0);
+  int status = -1;
+  pid_t reaped = waitpid(-1, &status, 0);
+  report_test(ctx, "ps: waitpid reaped ps process", reaped > 0);
+  report_test(ctx, "ps: ps process exited with 0", WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+  // Verify CPU time in /proc/self/status
+  FILE *f = fopen("/proc/self/status", "r");
+  report_test(ctx, "procfs: fopen('/proc/self/status') contains CPUTime", f != NULL);
+  if (f) {
+    char buf[512] = {0};
+    fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    report_test(ctx, "procfs: status contains 'CPUTime:' and 'StartTime:'",
+                strstr(buf, "CPUTime:") != NULL && strstr(buf, "StartTime:") != NULL);
+  }
+}
+
+static void test_loadavg_and_uptime(test_ctx_t *ctx) {
+  printf("--- Testing /proc/loadavg, /proc/stat and uptime ---\n");
+  FILE *f = fopen("/proc/loadavg", "r");
+  report_test(ctx, "procfs: fopen('/proc/loadavg') succeeds", f != NULL);
+  if (f) {
+    char buf[128] = {0};
+    fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    double l1 = -1, l5 = -1, l15 = -1;
+    unsigned int total = 0;
+    int pid = 0;
+    int parsed = sscanf(buf, "%lf %lf %lf 1/%u %d", &l1, &l5, &l15, &total, &pid);
+    report_test(ctx, "procfs: /proc/loadavg format matches Linux", parsed >= 3 && l1 >= 0.0);
+  }
+
+  f = fopen("/proc/stat", "r");
+  report_test(ctx, "procfs: fopen('/proc/stat') succeeds", f != NULL);
+  if (f) {
+    char buf[256] = {0};
+    fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    report_test(ctx, "procfs: /proc/stat contains 'cpu ' and 'processes'",
+                strstr(buf, "cpu ") != NULL && strstr(buf, "processes") != NULL);
+  }
+
+  char *uptime_argv[] = {"uptime", NULL};
+  int rc = uptime_main(1, uptime_argv);
+  report_test(ctx, "uptime: uptime exits with 0", rc == 0);
+
+  char *uptime_help[] = {"uptime", "--help", NULL};
+  rc = uptime_main(2, uptime_help);
+  report_test(ctx, "uptime: uptime --help exits with 0", rc == 0);
+
+  char *spawn_argv[] = {"uptime", NULL};
+  int exec_rc = execve("uptime", spawn_argv, NULL);
+  report_test(ctx, "uptime: execve('uptime') succeeds", exec_rc == 0);
+  int status = -1;
+  pid_t reaped = waitpid(-1, &status, 0);
+  report_test(ctx, "uptime: waitpid reaped uptime process", reaped > 0);
+  report_test(ctx, "uptime: uptime process exited with 0", WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
 int test_proc_main(int argc, char **argv) {
   // Subcommand dispatch for child processes spawned during tests
   if (argc >= 3 && strcmp(argv[1], "--child-exit") == 0) {
@@ -289,6 +373,8 @@ int test_proc_main(int argc, char **argv) {
   test_orphan_reparenting(&ctx);
   test_pipeline_and_pgid(&ctx);
   test_procfs_process_hierarchy(&ctx);
+  test_ps_utility(&ctx);
+  test_loadavg_and_uptime(&ctx);
   test_1000_cycles_stress(&ctx);
 
   printf("\nProcess Table Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);
