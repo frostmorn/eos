@@ -4,7 +4,7 @@
 #include <esp_cpu.h>
 #include <limits.h>
 #include "emisc/fancymacro.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 
 // For file path manipulation we always need two buffers since some calls
 // wrapped here require two path arguments
@@ -110,10 +110,11 @@ char *eos_fapi_path_resolve(char *path, char *buffer) {
   }
 
   // Relative path
-  eos_tctx_t *tctx = eos_tctx_get();
+  eos_proc_t *proc = eos_proc_current();
+  const char *cwd = proc ? proc->cwd : "/";
 
-  strcpy(buffer, tctx->cwd);
-  if (tctx->cwd[strlen(tctx->cwd) - 1] != '/')
+  strcpy(buffer, cwd);
+  if (cwd[strlen(cwd) - 1] != '/')
     strcat(buffer, "/");
   strcat(buffer, path);
 

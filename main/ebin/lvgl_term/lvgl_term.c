@@ -1,6 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/lvgl.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 
 #include <ctype.h>
@@ -799,8 +799,8 @@ int lvgl_term_main(int argc, char **argv) {
   }
 
   // Check if stdin is redirected from a pipe or file (`cmd | lvgl_term`)
-  eos_tctx_t *tctx = eos_tctx_get();
-  bool stdin_redirected = (tctx && tctx->fd_map[STDIN_FILENO] >= 0);
+  eos_proc_t *proc = eos_proc_current();
+  bool stdin_redirected = (proc && proc->fd_map[STDIN_FILENO] >= 0);
 
   if (run_cmd_arg) {
     term_execute_cmd_to_file(st, st->active_cmd);

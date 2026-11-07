@@ -105,13 +105,13 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 ### F04 — Process table
 `Size: M · Depends: –`
 
-**Why:** Today an exec creates a thread and `eos_wait()` joins it. There is no pid, parent, process group or exit-status record that other components can query. T09, T13, T18, T19, T20, F02 and F07 all need one.
+**Why:** An exec created a thread and `eos_wait()` joined it, without a pid, parent, process group or exit-status record that other components could query. T09, T13, T18, T19, T20, F02 and F07 all need a proper process table.
 
 **Scope**
-- `eos_proc_t`: `pid, ppid, pgid, sid, state (R/S/T/Z), exit_code, start_time, argv string, tctx pointer, controlling tty`.
-- Process = one exec instance (and all threads it creates). Threads inherit the pid through the existing `tctx` inheritance.
+- `eos_proc_t`: `pid, ppid, pgid, sid, state (R/S/T/Z), exit_code, start_time, name, cmdline, tty, cwd, env, fds, dirs, fd_map, memblocks, mem_mutex, main_thread, threads, wait_cond, in_use`.
+- Unified architecture: thread-context structures (`tctx`) are completely merged into `eos_proc_t`, binding threads to processes directly via FreeRTOS TLS.
 - `getpid/getppid/getpgid/setpgid/setsid`, `waitpid(pid)`, zombie reaping, orphan re-parenting to pid 1 (the init shell).
-- Table size configurable; allocate from PSRAM.
+- Centralized table allocated dynamically in external PSRAM (`s_proc_table`); low-latency `memblocks` retained in internal SRAM.
 
 **Acceptance:** `eos_wait` becomes a thin wrapper over `waitpid`. Pipelines get one pgid. Table survives 1000 spawn/exit cycles with no growth (QEMU test).
 

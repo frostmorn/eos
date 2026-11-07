@@ -8,7 +8,9 @@ Tests procfs, devctl, wlanctl, netctl (with Linux 'ip' vibe), and GUI launcher I
 import argparse
 import hashlib
 import glob
+import os
 import re
+import subprocess
 import sys
 import time
 
@@ -28,8 +30,53 @@ class Colors:
     RESET = "\033[0m"
 
 
+def get_port_usb_info(port):
+    """Dynamically resolves USB bus topology and serial number from sysfs for any tty port."""
+    try:
+        tty_name = os.path.basename(port)
+        usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
+        loc = os.path.basename(usb_dir)
+        serial_path = os.path.join(usb_dir, "serial")
+        serial_num = open(serial_path).read().strip() if os.path.exists(serial_path) else None
+        return loc, serial_num
+    except Exception:
+        return None, None
+
+
+def get_target_cfg():
+    if os.path.exists("sdkconfig"):
+        try:
+            with open("sdkconfig") as f:
+                content = f.read()
+                if 'CONFIG_IDF_TARGET="esp32s3"' in content:
+                    return "board/esp32s3-builtin.cfg"
+                if 'CONFIG_IDF_TARGET="esp32p4"' in content:
+                    return "board/esp32p4-builtin.cfg"
+        except Exception:
+            pass
+    return "board/esp32p4-builtin.cfg"
+
+
+def jtag_reset(port):
+    loc, _ = get_port_usb_info(port)
+    cfg = get_target_cfg()
+    cmd = [
+        "/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd",
+        "-f", cfg
+    ]
+    if loc:
+        cmd.extend(["-c", f"adapter usb location {loc}"])
+    cmd.extend(["-c", "init; reset run; shutdown"])
+    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({loc or 'auto'})...{Colors.RESET}")
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+        time.sleep(1.5)
+    except Exception as e:
+        print(f"{Colors.YELLOW}Warning: OpenOCD reset failed: {e}{Colors.RESET}")
+
+
 class EOSTestHarness:
-    def __init__(self, port, baudrate=115200, timeout=0.2, reset=True):
+    def __init__(self, port, baudrate=115200, timeout=0.2, reset=False):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
@@ -39,24 +86,68 @@ class EOSTestHarness:
         self.failed = 0
         self.suite_counts = {}
 
-    def connect(self):
-        print(f"{Colors.CYAN}Connecting to EOS on {self.port} at {self.baudrate} baud...{Colors.RESET}")
+    def _open_serial(self):
         if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=1.0)
         else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
-        if self.reset and not self.port.startswith("socket://"):
-            # Trigger DTR/RTS hardware reset to ensure a fresh boot on physical hardware
-            self.ser.dtr = False
-            self.ser.rts = True
-            time.sleep(0.1)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=1.0)
+        if not self.port.startswith("socket://"):
+            self.ser.dtr = True
             self.ser.rts = False
-            time.sleep(2.0)
-        else:
-            time.sleep(1.0)
-        self.ser.reset_input_buffer()
-        self.ser.write(b"\n")
-        time.sleep(0.3)
+
+    def connect(self):
+        if self.reset and not self.port.startswith("socket://"):
+            jtag_reset(self.port)
+
+        print(f"{Colors.CYAN}Connecting to EOS on {self.port} at {self.baudrate} baud...{Colors.RESET}")
+        self._open_serial()
+
+        ready_marker = b"__EOS_READY__"
+        deadline = time.time() + 4.0
+        buf = b""
+        last_ping = 0.0
+        while time.time() < deadline:
+            if self.ser.in_waiting:
+                buf += self.ser.read(self.ser.in_waiting)
+                if ready_marker in buf:
+                    break
+            else:
+                now = time.time()
+                if now - last_ping > 0.4:
+                    try:
+                        self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                    except Exception:
+                        pass
+                    last_ping = now
+                time.sleep(0.05)
+
+        if ready_marker not in buf and not self.reset and not self.port.startswith("socket://"):
+            print(f"{Colors.YELLOW}No prompt detected, recovering via OpenOCD JTAG reset...{Colors.RESET}")
+            self.close()
+            jtag_reset(self.port)
+            self._open_serial()
+            deadline = time.time() + 4.0
+            buf = b""
+            last_ping = 0.0
+            while time.time() < deadline:
+                if self.ser.in_waiting:
+                    buf += self.ser.read(self.ser.in_waiting)
+                    if ready_marker in buf:
+                        break
+                else:
+                    now = time.time()
+                    if now - last_ping > 0.4:
+                        try:
+                            self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                        except Exception:
+                            pass
+                        last_ping = now
+                    time.sleep(0.05)
+
+        time.sleep(0.05)
+        while self.ser.in_waiting:
+            self.ser.read(self.ser.in_waiting)
+            time.sleep(0.01)
         self.ser.reset_input_buffer()
 
     def close(self):
@@ -66,10 +157,25 @@ class EOSTestHarness:
     def run_cmd(self, cmd, wait=1.0):
         if not self.ser or not self.ser.is_open:
             raise RuntimeError("Serial connection not open")
+        cmd_str = cmd.strip()
+        self._seq = getattr(self, "_seq", 0) + 1
+        marker = f"__EOS_{self._seq}__"
+        if cmd_str.endswith("&"):
+            full_cmd = f"{cmd_str} sleep 0.1; echo {marker}\n"
+        elif cmd_str:
+            full_cmd = f"{cmd_str}; echo {marker}\n"
+        else:
+            full_cmd = f"echo {marker}\n"
+
+        while self.ser.in_waiting:
+            self.ser.read(self.ser.in_waiting)
+            time.sleep(0.005)
         self.ser.reset_input_buffer()
-        self.ser.write((cmd + "\n").encode("utf-8"))
-        deadline = time.time() + wait
-        out = b""
+
+        self.ser.write(full_cmd.encode("utf-8"))
+        deadline = time.time() + max(wait, 2.0)
+        buf = b""
+        marker_bytes = f"\n{marker}".encode("utf-8")
         while time.time() < deadline:
             if self.ser.in_waiting:
                 if hasattr(self.ser, "_socket"):
@@ -77,27 +183,29 @@ class EOSTestHarness:
                 else:
                     chunk = self.ser.read(self.ser.in_waiting)
                 if chunk:
-                    out += chunk
-                    # Check if shell prompt has returned after executing command
-                    if re.search(rb"/[ \t]*>\s*$", out):
-                        break
-            time.sleep(0.02)
-        # Flush any trailing bytes
-        time.sleep(0.05)
-        flush_deadline = time.time() + 0.3
-        while self.ser.in_waiting and time.time() < flush_deadline:
-            if hasattr(self.ser, "_socket"):
-                out += self.ser._socket.recv(4096)
-            else:
-                out += self.ser.read(self.ser.in_waiting)
-            time.sleep(0.02)
-        return out.decode("utf-8", errors="replace").strip()
+                    buf += chunk
+                    pos = buf.find(marker_bytes)
+                    if pos >= 0:
+                        after = buf[pos + len(marker_bytes):]
+                        if b"\n" in after or re.search(rb"/[ \t]*>\s*$", after):
+                            break
+            time.sleep(0.01)
+
+        pos = buf.find(marker_bytes)
+        if pos >= 0:
+            extracted = buf[:pos].decode("utf-8", errors="replace")
+        else:
+            extracted = buf.decode("utf-8", errors="replace")
+
+        lines = extracted.splitlines()
+        if lines and (cmd_str in lines[0] or marker in lines[0] or ">" in lines[0]):
+            lines = lines[1:]
+        if lines and re.search(r"/[ \t]*>\s*$", lines[-1]):
+            lines = lines[:-1]
+        return "\n".join(lines).strip()
 
     def check(self, suite, name, cmd, pattern, wait=1.0, not_pattern=None):
-        out = self.run_cmd(cmd, wait=wait)
-        # Strip command echo line from serial out before matching
-        lines = out.splitlines()
-        cmd_output = "\n".join(lines[1:]) if len(lines) > 1 else out
+        cmd_output = self.run_cmd(cmd, wait=wait)
 
         has_match = re.search(pattern, cmd_output, re.MULTILINE) is not None
         has_bad = (not_pattern and re.search(not_pattern, cmd_output, re.MULTILINE) is not None)
@@ -109,18 +217,18 @@ class EOSTestHarness:
             print(f"  [{Colors.GREEN}PASS{Colors.RESET}] {name}")
             self.passed += 1
             self.suite_counts[suite]["pass"] += 1
-            return True, out
+            return True, cmd_output
         else:
             print(f"  [{Colors.RED}FAIL{Colors.RESET}] {name}")
             print(f"    Command: {cmd}")
             print(f"    Expected regex: {pattern}")
             if not_pattern:
                 print(f"    Forbidden regex: {not_pattern}")
-            print(f"    Raw output repr: {repr(out)}")
+            print(f"    Raw output repr: {repr(cmd_output)}")
             print(f"    Cmd output:\n{cmd_output}\n")
             self.failed += 1
             self.suite_counts[suite]["fail"] += 1
-            return False, out
+            return False, cmd_output
 
     def test_procfs(self):
         suite = "procfs"
@@ -156,8 +264,8 @@ class EOSTestHarness:
         self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"(/proc|/dev|/spiffs)")
         self.check(suite, "Interrupt allocation in /proc/interrupts", "cat /proc/interrupts", r"(CPU|intr|alloc|Level|Edge)")
         self.check(suite, "File descriptors in /proc/fds", "cat /proc/fds", r"(VFS|fd|File|Handle|Driver)")
-        self.check(suite, "GPIO pin matrix in /proc/gpio", "cat /proc/gpio", r"(GPIO|IO|pin|input|output|Pullup|direction)", wait=2.0)
-        self.check(suite, "Heap memory summary in /proc/heapinfo", "cat /proc/heapinfo", r"== HEAP SUMMARY ==[\s\S]+INTERNAL[\s\S]+DMA")
+        self.check(suite, "GPIO pin matrix in /proc/gpio", "cat /proc/gpio", r"(GPIO|IO|pin|input|output|Pullup|direction)", wait=5.0)
+        self.check(suite, "Heap memory summary in /proc/heapinfo", "cat /proc/heapinfo", r"== HEAP SUMMARY ==[\s\S]+INTERNAL[\s\S]+DMA", wait=2.5)
         self.check(suite, "SoC and core info in /proc/cpuinfo", "cat /proc/cpuinfo", r"model name[\s\S]+cpu cores\s+:\s+\d+")
         self.check(suite, "System uptime in /proc/uptime", "cat /proc/uptime", r"uptime:\s+\d+s[\s\S]+reset reason:")
 
@@ -463,7 +571,7 @@ class EOSTestHarness:
             print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] WiFi radio device (wifi0) not present on this board architecture")
             return
         self.check(suite, "wlanctl usage / help", "wlanctl", r"Commands:[\s\S]+radio[\s\S]+getmac[\s\S]+sniffer")
-        self.check(suite, "wlanctl radio on", "wlanctl radio on", r"radio turned ON", wait=3.0)
+        self.check(suite, "wlanctl radio on", "wlanctl radio on", r"radio turned ON", wait=6.0)
         self.check(suite, "wlanctl radio status is ON", "wlanctl radio status", r"radio turned ON")
         self.check(suite, "wlanctl getmac returns valid non-zero MAC", "wlanctl getmac",
                    r"([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", not_pattern=r"00:00:00:00:00:00")
@@ -513,7 +621,7 @@ class EOSTestHarness:
 
         # Shorthand up/down syntax
         self.check(suite, "Shorthand: netctl sta0 up", "netctl sta0 up", r"(brought UP|interface set to UP)")
-        self.check(suite, "netctl sta0 status reports UP", "netctl sta0 status", r"STATUS:if=sta0,up=1")
+        self.check(suite, "netctl sta0 status reports UP", "netctl sta0 status", r"STATUS:if=sta0,up=1", wait=2.5)
         self.check(suite, "Shorthand: netctl sta0 down", "netctl sta0 down", r"(brought DOWN|interface set to DOWN)")
         self.check(suite, "netctl sta0 status reports DOWN", "netctl sta0 status", r"STATUS:if=sta0,up=0")
         self.check(suite, "Shorthand: netctl up sta0", "netctl up sta0", r"(brought UP|interface set to UP)")
@@ -737,6 +845,12 @@ class EOSTestHarness:
         # Cleanup
         self.run_cmd("rm -f /tmp/h_hash.txt /tmp/h_hash.lst /tmp/h_hash.b64")
 
+    def test_proc(self):
+        suite = "proc"
+        print(f"\n{Colors.BOLD}=== 11. Process Table, Syscalls & Lifecycle Tests ==={Colors.RESET}")
+        self.check(suite, "Process table test binary passes with 0 failures", "test_proc",
+                   r"Process Table Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=25.0)
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -778,6 +892,7 @@ def zlib_cksum(data):
 
 
 SUITE_REGISTRY = {
+    "proc": {"name": "Process Table & POSIX Lifecycle Tests", "tag": "qemu", "func": lambda h: h.test_proc()},
     "procfs": {"name": "Virtual /proc Filesystem Tests", "tag": "qemu", "func": lambda h: h.test_procfs()},
     "pratt": {"name": "Shell & Pratt Parser Tests", "tag": "qemu", "func": lambda h: h.test_pratt_parser()},
     "devctl": {"name": "Device Control (devctl) Tests", "tag": "qemu", "func": lambda h: h.test_devctl()},
@@ -805,10 +920,11 @@ def main():
                         default="all", help="Specific test suite to execute (default: all)")
     parser.add_argument("--tag", choices=["all", "qemu", "hardware-only"],
                         default="all", help="Filter test suites by execution environment tag (default: all)")
-    parser.add_argument("--no-reset", action="store_true", help="Do not trigger DTR/RTS hardware reset on connect")
+    parser.add_argument("--reset", action="store_true", help="Explicitly trigger OpenOCD JTAG reset before testing")
+    parser.add_argument("--no-reset", action="store_true", help="Deprecated: reset is now off by default")
     args = parser.parse_args()
 
-    harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=not args.no_reset)
+    harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=args.reset)
     try:
         harness.connect()
         # Determine candidate suites

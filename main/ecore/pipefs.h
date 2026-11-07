@@ -6,14 +6,14 @@
 // (^__^)==\~ pipefs - in-memory ring-buffer pipe VFS
 //
 // Exposes anonymous pipes (pipe(int pipefd[2])) and named
-// pipe nodes under /pipe/[id] via ESP-IDF's VFS layer.
+// pipe nodes under /proc/pipes/[id] via ESP-IDF's VFS layer.
 //
 
 #include "emisc/strlimits.h"
 #include <stddef.h>
 
 #ifndef EOS_PIPEFS_ROOT
-#define EOS_PIPEFS_ROOT "/pipe"
+#define EOS_PIPEFS_ROOT "/proc/pipes"
 #endif
 
 #ifndef EOS_PIPE_BUF_SIZE

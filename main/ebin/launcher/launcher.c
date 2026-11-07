@@ -1,6 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/lvgl.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 
 #include <fcntl.h>
@@ -566,8 +566,7 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
   eos_lvgl_deinit();
 
   // Snapshot active file descriptors in launcher thread before running child app
-  eos_tctx_t *tctx = eos_tctx_get();
-  eos_tctx_fd_snapshot_t app_snap = eos_tctx_snapshot_fds(tctx);
+  eos_proc_fd_snapshot_t app_snap = eos_proc_snapshot_fds();
 
   struct timeval t0, t1;
   gettimeofday(&t0, NULL);
@@ -586,7 +585,7 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
     }
 
     // Clean up any file descriptors leaked by the direct application
-    eos_tctx_cleanup_leaked_fds(tctx, &app_snap);
+    eos_proc_cleanup_leaked_fds(&app_snap);
 
     gettimeofday(&t1, NULL);
     int64_t elapsed_ms = (int64_t)(t1.tv_sec - t0.tv_sec) * 1000LL +
@@ -614,23 +613,23 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 
     char redir_cmd[EOS_LARGE_STR_LEN];
     snprintf(redir_cmd, sizeof(redir_cmd), "%s < %s > %s 2>&1", cmd_str,
-             LAUNCHER_TERM_IN_FILE, LAUNCHER_TERM_OUT_FILE);
+         LAUNCHER_TERM_IN_FILE, LAUNCHER_TERM_OUT_FILE);
     rc = system(redir_cmd);
 
     // Clean up any file descriptors leaked by the child app before launching lvgl_term
-    eos_tctx_cleanup_leaked_fds(tctx, &app_snap);
+    eos_proc_cleanup_leaked_fds(&app_snap);
 
-    eos_tctx_fd_snapshot_t term_snap = eos_tctx_snapshot_fds(tctx);
+    eos_proc_fd_snapshot_t term_snap = eos_proc_snapshot_fds();
     char view_cmd[EOS_LARGE_STR_LEN];
     snprintf(view_cmd, sizeof(view_cmd),
              "lvgl_term %s \"%s (exit %d)\" \"%s\"", LAUNCHER_TERM_OUT_FILE,
              target->filename, rc, cmd_str);
     (void)system(view_cmd);
-    eos_tctx_cleanup_leaked_fds(tctx, &term_snap);
+    eos_proc_cleanup_leaked_fds(&term_snap);
   }
 
   // Safety cleanup: ensure any remaining leaked descriptors are closed before reinitializing LVGL
-  eos_tctx_cleanup_leaked_fds(tctx, &app_snap);
+  eos_proc_cleanup_leaked_fds(&app_snap);
 
   st->last_exit_code = rc;
   snprintf(st->last_launched, sizeof(st->last_launched), "%s",

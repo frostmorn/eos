@@ -1,6 +1,6 @@
 #include "ecore/log.h"
 #include "ecore/fapi.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/strlimits.h"
 
 #include <esp_log.h>
@@ -15,6 +15,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -33,7 +35,26 @@ extern int __real__fstat_r(struct _reent *r, int fd, struct stat *st);
 
 static vprintf_like_t s_prev_vprintf = NULL;
 static bool s_log_initialized = false;
-static __thread bool s_in_log_hook = false;
+static inline bool is_in_log_hook(void) {
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
+    return false;
+  }
+  uintptr_t flags = (uintptr_t)pvTaskGetThreadLocalStoragePointer(NULL, 1);
+  return (flags & 1) != 0;
+}
+
+static inline void set_in_log_hook(bool val) {
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
+    return;
+  }
+  uintptr_t flags = (uintptr_t)pvTaskGetThreadLocalStoragePointer(NULL, 1);
+  if (val) {
+    flags |= 1;
+  } else {
+    flags &= ~1;
+  }
+  vTaskSetThreadLocalStoragePointer(NULL, 1, (void *)flags);
+}
 
 // Global synced state for EOS_LOG and EOS_LOG_FILE across all threads
 static bool s_global_log_enabled = false;
@@ -56,11 +77,7 @@ static bool is_falsy_str(const char *val) {
 }
 
 bool eos_console_is_connected(void) {
-#ifdef EOS_HAS_USJ_DRIVER
-  return usb_serial_jtag_is_connected();
-#else
   return true;
-#endif
 }
 
 void eos_log_sync_env(const char *name, const char *value) {
@@ -104,11 +121,11 @@ void eos_log_sync_env(const char *name, const char *value) {
 }
 
 bool eos_log_is_file_enabled(const char **path_out) {
-  // Check current thread environment first in case it was overridden locally
-  const char *t_log = eos_tctx_getenv("EOS_LOG");
-  const char *t_file = eos_tctx_getenv("EOS_LOG_FILE");
+  // Check current process environment first in case it was overridden locally
+  const char *t_log = eos_proc_getenv("EOS_LOG");
+  const char *t_file = eos_proc_getenv("EOS_LOG_FILE");
   if (!t_file) {
-    t_file = eos_tctx_getenv("LOG_FILE");
+    t_file = eos_proc_getenv("LOG_FILE");
   }
 
   bool enabled = s_global_log_enabled;
@@ -175,14 +192,14 @@ static void write_log_to_file(const char *path, const char *buf, size_t len) {
 }
 
 static int eos_log_vprintf(const char *fmt, va_list ap) {
-  if (s_in_log_hook) {
+  if (is_in_log_hook()) {
     if (eos_console_is_connected() && s_prev_vprintf) {
       return s_prev_vprintf(fmt, ap);
     }
     return 0;
   }
 
-  s_in_log_hook = true;
+  set_in_log_hook(true);
 
   char buf[512];
   va_list ap_copy;
@@ -208,7 +225,7 @@ static int eos_log_vprintf(const char *fmt, va_list ap) {
     }
   }
 
-  s_in_log_hook = false;
+  set_in_log_hook(false);
   return ret;
 }
 

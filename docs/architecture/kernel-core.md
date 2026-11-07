@@ -35,13 +35,19 @@ Hardware resources on ESP32 microcontrollers (such as GPIO pins, I2C ports, SPI 
 
 ---
 
-## 4. Thread Context & Resource Tracking (`threadctx.c`, `threadctx.h`)
+## 4. Process Table & Context Management (`proc.c`, `proc.h`)
 
-EOS implements robust per-thread context management (`eos_tctx_t`) stored in FreeRTOS Thread Local Storage (TLS):
+EOS implements a unified, multi-process architecture with a centralized process table (`eos_proc_t`) allocated in PSRAM:
 
-* **Resource Leak Detection & Cleanup:** Every thread tracks open file descriptors (`fds`), opened directories (`dirs`), and allocated dynamic memory blocks (`memblocks`).
-* **Automatic Cleanup on Exit:** When a thread (whether spawned via `pthread_create` or FreeRTOS task wrappers) terminates, EOS automatically closes leaked file descriptors, closes leaked directories, frees leaked memory blocks, and logs warnings, preventing resource exhaustion in long-running embedded applications.
-* **Working Directory Isolation:** Each thread maintains its own Current Working Directory (`cwd`), supporting independent path navigation (`chdir`, `getcwd`) across tasks and shell instances.
+* **Process Lifecycle & Identification:** Each process instance is assigned a unique `pid`, `ppid`, `pgid`, and `sid`. State is tracked as `EOS_PROC_STATE_RUNNING` (`'R'`), `EOS_PROC_STATE_SLEEPING` (`'S'`), `EOS_PROC_STATE_STOPPED` (`'T'`), or `EOS_PROC_STATE_ZOMBIE` (`'Z'`).
+* **POSIX Process Hierarchy & Group Management:** Supports standard POSIX process operations including `getpid()`, `getppid()`, `getpgid()`, `setpgid()`, `setsid()`, and `waitpid()`. When parent processes exit without reaping, child processes are automatically reparented to `init` (PID 1).
+* **Multi-Thread Membership:** Each process manages a main thread (`main_thread`) and a dynamic vector of child threads (`threads`). All threads spawned by a process (via `pthread_create` or FreeRTOS task primitives) inherit the parent process's context (`eos_proc_t`) and share its resource registry.
+* **Working Directory & Environment Isolation:** Each process maintains its own Current Working Directory (`cwd`), controlling terminal (`tty`), and isolated environment variables (`env`), supporting independent path navigation (`chdir`, `getcwd`) and process-specific variables.
+* **Unified Resource Leak Tracking & Zombie Reaping:**
+  - Open file descriptors (`fds`) and descriptor mapping (`fd_map`) for I/O redirections and pipes.
+  - Open directory handles (`dirs`).
+  - Allocated dynamic memory blocks (`memblocks`) protected by `mem_mutex` (internal SRAM).
+  - When all threads of a process terminate, the process transitions to zombie state until reaped via `waitpid()`, at which point all unreleased file descriptors, directories, and memory blocks are reclaimed automatically.
 
 ---
 

@@ -1,5 +1,5 @@
 #include "ecore/bin.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -43,15 +43,15 @@ BaseType_t __wrap_xTaskCreatePinnedToCore(
     const BaseType_t xCoreID) {
 
   if (!should_wrap_task(pcName, (uint32_t)usStackDepth) ||
-      pxTaskCode == eos_twrap_freertos ||
-      (void *)pxTaskCode == (void *)eos_twrap_pthread) {
+      pxTaskCode == eos_proc_wrap_freertos ||
+      (void *)pxTaskCode == (void *)eos_proc_wrap_pthread) {
     return __real_xTaskCreatePinnedToCore(pxTaskCode, pcName, usStackDepth,
                                           pvParameters, uxPriority,
                                           pvCreatedTask, xCoreID);
   }
 
-  eos_twrap_t *twrap = eos_twrap_prepare(pxTaskCode, pvParameters);
-  if (!twrap) {
+  eos_pwrap_t *pwrap = eos_proc_wrap_prepare((void *)pxTaskCode, pvParameters);
+  if (!pwrap) {
     EOS_LOGE("Failed to allocate thread wrap data\n");
     return errCOULD_NOT_ALLOCATE_REQUIRED_MEMORY;
   }
@@ -60,17 +60,11 @@ BaseType_t __wrap_xTaskCreatePinnedToCore(
            pcName ? pcName : "unnamed", (int)xCoreID, (int)usStackDepth,
            (int)uxPriority);
   BaseType_t rc =
-      __real_xTaskCreatePinnedToCore(eos_twrap_freertos, pcName, usStackDepth,
-                                     twrap, uxPriority, pvCreatedTask, xCoreID);
+      __real_xTaskCreatePinnedToCore(eos_proc_wrap_freertos, pcName, usStackDepth,
+                                     pwrap, uxPriority, pvCreatedTask, xCoreID);
 
   if (rc != pdPASS) {
-    if (twrap->env_copy) {
-      for (size_t i = 0; i < twrap->env_count; i++) {
-        free(twrap->env_copy[i]);
-      }
-      free(twrap->env_copy);
-    }
-    free(twrap);
+    free(pwrap);
   }
 
   return rc;
@@ -83,15 +77,15 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
     StaticTask_t *const pxTaskBuffer, const BaseType_t xCoreID) {
 
   if (!should_wrap_task(pcName, ulStackDepth) ||
-      pxTaskCode == eos_twrap_freertos ||
-      (void *)pxTaskCode == (void *)eos_twrap_pthread) {
+      pxTaskCode == eos_proc_wrap_freertos ||
+      (void *)pxTaskCode == (void *)eos_proc_wrap_pthread) {
     return __real_xTaskCreateStaticPinnedToCore(
         pxTaskCode, pcName, ulStackDepth, pvParameters, uxPriority,
         pxStackBuffer, pxTaskBuffer, xCoreID);
   }
 
-  eos_twrap_t *twrap = eos_twrap_prepare(pxTaskCode, pvParameters);
-  if (!twrap) {
+  eos_pwrap_t *pwrap = eos_proc_wrap_prepare((void *)pxTaskCode, pvParameters);
+  if (!pwrap) {
     EOS_LOGE("Failed to allocate thread wrap data\n");
     return NULL;
   }
@@ -100,17 +94,11 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
            pcName ? pcName : "unnamed", (int)xCoreID, (int)ulStackDepth,
            (int)uxPriority);
   TaskHandle_t handle = __real_xTaskCreateStaticPinnedToCore(
-      eos_twrap_freertos, pcName, ulStackDepth, twrap, uxPriority,
+      eos_proc_wrap_freertos, pcName, ulStackDepth, pwrap, uxPriority,
       pxStackBuffer, pxTaskBuffer, xCoreID);
 
   if (!handle) {
-    if (twrap->env_copy) {
-      for (size_t i = 0; i < twrap->env_count; i++) {
-        free(twrap->env_copy[i]);
-      }
-      free(twrap->env_copy);
-    }
-    free(twrap);
+    free(pwrap);
   }
 
   return handle;

@@ -2,8 +2,10 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/log.h"
+#include "ecore/proc.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
+#include <ctype.h>
 #include <dirent.h>
 #include <driver/gpio.h>
 #include <errno.h>
@@ -33,9 +35,37 @@ typedef struct {
   bool in_use;
 } procfs_fd_t;
 
+typedef enum {
+  PROCFS_NODE_INVALID = 0,
+  PROCFS_NODE_ROOT,
+  PROCFS_NODE_STATIC_FILE,
+  PROCFS_NODE_PIPES_DIR,
+  PROCFS_NODE_PID_DIR,
+  PROCFS_NODE_PID_STATUS,
+  PROCFS_NODE_PID_STAT,
+  PROCFS_NODE_PID_CMDLINE,
+  PROCFS_NODE_PID_CWD,
+  PROCFS_NODE_PID_ENVIRON,
+  PROCFS_NODE_PID_FD_DIR,
+  PROCFS_NODE_PID_FD_ENTRY,
+} procfs_node_type_t;
+
+typedef struct {
+  procfs_node_type_t type;
+  pid_t pid;
+  int fd_num;
+  const char *static_name;
+} procfs_parsed_path_t;
+
 typedef struct {
   uint32_t esp_idf_fs_index; // Must be first field for ESP-IDF VFS
+  procfs_node_type_t dir_type;
+  pid_t pid;
   uint32_t index;
+  pid_t pids[EOS_MAX_PROCS];
+  size_t num_pids;
+  int fds[EOS_MAX_PROCS];
+  size_t num_fds;
   struct dirent entry;
 } procfs_dir_t;
 
@@ -56,8 +86,22 @@ static const char *s_proc_entries[] = {
     "heapinfo",
     "cpuinfo",
     "uptime",
+    "pipes",
+    "self",
 };
 #define PROC_ENTRY_COUNT (sizeof(s_proc_entries) / sizeof(s_proc_entries[0]))
+
+static const char *s_pid_entries[] = {
+    ".",
+    "..",
+    "status",
+    "stat",
+    "cmdline",
+    "cwd",
+    "environ",
+    "fd",
+};
+#define PID_ENTRY_COUNT (sizeof(s_pid_entries) / sizeof(s_pid_entries[0]))
 
 // Dynamic string accumulator
 typedef struct {
@@ -67,9 +111,12 @@ typedef struct {
 } sbuf_t;
 
 static void sbuf_init(sbuf_t *s) {
-  s->cap = 256;
+  s->cap = 2048;
   s->len = 0;
   s->buf = eos_psram_malloc_prefer(s->cap);
+  if (!s->buf) {
+    s->buf = malloc(s->cap);
+  }
   if (s->buf) s->buf[0] = '\0';
 }
 
@@ -90,6 +137,9 @@ static void sbuf_printf(sbuf_t *s, const char *fmt, ...) {
     if (new_cap < s->len + (size_t)needed + 1)
       new_cap = s->len + (size_t)needed + 64;
     char *new_buf = eos_psram_realloc_prefer(s->buf, new_cap);
+    if (!new_buf) {
+      new_buf = realloc(s->buf, new_cap);
+    }
     if (!new_buf) {
       va_end(args);
       return;
@@ -407,6 +457,203 @@ static procfs_fd_t *procfs_fd_get(int fd) {
   return &kv_A(s_procfs_fds, fd);
 }
 
+// ── Dynamic PID Generators & Path Parsing ────────────────────────
+
+static bool procfs_parse_path(const char *path, procfs_parsed_path_t *out) {
+  memset(out, 0, sizeof(*out));
+  if (!path) return false;
+
+  const char *p = path;
+  while (*p == '/') p++;
+
+  if (*p == '\0' || strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
+    out->type = PROCFS_NODE_ROOT;
+    return true;
+  }
+
+  // Check static files and special dirs at root level
+  for (size_t i = 2; i < PROC_ENTRY_COUNT; i++) {
+    if (strcmp(p, s_proc_entries[i]) == 0) {
+      if (strcmp(p, "pipes") == 0) {
+        out->type = PROCFS_NODE_PIPES_DIR;
+        return true;
+      }
+      if (strcmp(p, "self") == 0) {
+        out->type = PROCFS_NODE_PID_DIR;
+        out->pid = eos_getpid();
+        return true;
+      }
+      out->type = PROCFS_NODE_STATIC_FILE;
+      out->static_name = s_proc_entries[i];
+      return true;
+    }
+  }
+
+  // Check self/...
+  const char *sub = NULL;
+  pid_t target_pid = -1;
+  if (strcmp(p, "self") == 0) {
+    out->type = PROCFS_NODE_PID_DIR;
+    out->pid = eos_getpid();
+    return true;
+  } else if (strncmp(p, "self/", 5) == 0) {
+    target_pid = eos_getpid();
+    sub = p + 5;
+  } else if (isdigit((unsigned char)*p)) {
+    char *end = NULL;
+    unsigned long val = strtoul(p, &end, 10);
+    target_pid = (pid_t)val;
+    if (*end == '\0') {
+      out->type = PROCFS_NODE_PID_DIR;
+      out->pid = target_pid;
+      return true;
+    } else if (*end == '/') {
+      sub = end + 1;
+    } else {
+      return false;
+    }
+  }
+
+  if (target_pid > 0 && sub) {
+    while (*sub == '/') sub++;
+    if (*sub == '\0') {
+      out->type = PROCFS_NODE_PID_DIR;
+      out->pid = target_pid;
+      return true;
+    }
+    out->pid = target_pid;
+    if (strcmp(sub, "status") == 0) {
+      out->type = PROCFS_NODE_PID_STATUS;
+      return true;
+    } else if (strcmp(sub, "stat") == 0) {
+      out->type = PROCFS_NODE_PID_STAT;
+      return true;
+    } else if (strcmp(sub, "cmdline") == 0) {
+      out->type = PROCFS_NODE_PID_CMDLINE;
+      return true;
+    } else if (strcmp(sub, "cwd") == 0) {
+      out->type = PROCFS_NODE_PID_CWD;
+      return true;
+    } else if (strcmp(sub, "environ") == 0) {
+      out->type = PROCFS_NODE_PID_ENVIRON;
+      return true;
+    } else if (strcmp(sub, "fd") == 0 || strcmp(sub, "fd/") == 0) {
+      out->type = PROCFS_NODE_PID_FD_DIR;
+      return true;
+    } else if (strncmp(sub, "fd/", 3) == 0) {
+      const char *fd_str = sub + 3;
+      while (*fd_str == '/') fd_str++;
+      if (isdigit((unsigned char)*fd_str)) {
+        char *endfd = NULL;
+        out->fd_num = (int)strtol(fd_str, &endfd, 10);
+        if (*endfd == '\0') {
+          out->type = PROCFS_NODE_PID_FD_ENTRY;
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+static char *procfs_gen_pid_status(eos_proc_t *p) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  const char *state_desc = "unknown";
+  switch (p->state) {
+    case EOS_PROC_STATE_RUNNING: state_desc = "R (running)"; break;
+    case EOS_PROC_STATE_SLEEPING: state_desc = "S (sleeping)"; break;
+    case EOS_PROC_STATE_STOPPED: state_desc = "T (stopped)"; break;
+    case EOS_PROC_STATE_ZOMBIE: state_desc = "Z (zombie)"; break;
+    default: break;
+  }
+
+  sbuf_printf(&sb, "Name:\t%s\n", p->name);
+  sbuf_printf(&sb, "State:\t%s\n", state_desc);
+  sbuf_printf(&sb, "Tgid:\t%d\n", (int)p->pid);
+  sbuf_printf(&sb, "Pid:\t%d\n", (int)p->pid);
+  sbuf_printf(&sb, "PPid:\t%d\n", (int)p->ppid);
+  sbuf_printf(&sb, "Pgid:\t%d\n", (int)p->pgid);
+  sbuf_printf(&sb, "Sid:\t%d\n", (int)p->sid);
+  sbuf_printf(&sb, "TTY:\t%s\n", p->tty[0] ? p->tty : "?");
+  sbuf_printf(&sb, "Threads:\t1\n");
+
+  return sb.buf;
+}
+
+static char *procfs_gen_pid_stat(eos_proc_t *p) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  char st_c = (char)p->state;
+  if (st_c == 0) st_c = 'R';
+
+  sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 0 0 0 0 0 1 0 %llu 0 0\n",
+              (int)p->pid, p->name, st_c, (int)p->ppid, (int)p->pgid, (int)p->sid,
+              (unsigned long long)(p->start_time / 1000));
+
+  return sb.buf;
+}
+
+static char *procfs_gen_pid_cmdline(eos_proc_t *p) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  if (p->cmdline && p->cmdline[0]) {
+    sbuf_printf(&sb, "%s\n", p->cmdline);
+  } else {
+    sbuf_printf(&sb, "%s\n", p->name);
+  }
+
+  return sb.buf;
+}
+
+static char *procfs_gen_pid_cwd(eos_proc_t *p) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  const char *cwd = (p->cwd[0]) ? p->cwd : "/";
+  sbuf_printf(&sb, "%s\n", cwd);
+
+  return sb.buf;
+}
+
+static char *procfs_gen_pid_environ(eos_proc_t *p) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  for (size_t i = 0; i < kv_size(p->env); i++) {
+    char *entry = kv_A(p->env, i);
+    if (entry) {
+      sbuf_printf(&sb, "%s\n", entry);
+    }
+  }
+
+  return sb.buf;
+}
+
+static char *procfs_gen_pid_fd_info(eos_proc_t *p, int fd) {
+  sbuf_t sb;
+  sbuf_init(&sb);
+  if (!sb.buf) return NULL;
+
+  int real_fd = fd;
+  if (fd >= 0 && fd < FD_SETSIZE && p->fd_map[fd] >= 0) {
+    real_fd = p->fd_map[fd];
+  }
+
+  sbuf_printf(&sb, "pos:\t0\nflags:\t0%o\nreal_fd:\t%d\n", O_RDWR, real_fd);
+
+  return sb.buf;
+}
+
 static int procfs_open(void *ctx, const char *path, int flags, int mode) {
   (void)ctx;
   (void)mode;
@@ -422,42 +669,83 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
     return -1;
   }
 
-  const char *p = path;
-  while (*p == '/') p++;
+  procfs_parsed_path_t parsed;
+  if (!procfs_parse_path(path, &parsed)) {
+    errno = ENOENT;
+    return -1;
+  }
 
-  if (*p == '\0' || strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
+  if (parsed.type == PROCFS_NODE_ROOT ||
+      parsed.type == PROCFS_NODE_PIPES_DIR ||
+      parsed.type == PROCFS_NODE_PID_DIR ||
+      parsed.type == PROCFS_NODE_PID_FD_DIR) {
     errno = EISDIR;
     return -1;
   }
 
   char *content = NULL;
-  if (strcmp(p, "scopes") == 0) {
-    content = procfs_gen_scopes();
-  } else if (strcmp(p, "drivers") == 0) {
-    content = procfs_gen_drivers();
-  } else if (strcmp(p, "devices") == 0) {
-    content = procfs_gen_devices();
-  } else if (strcmp(p, "meminfo") == 0) {
-    content = procfs_gen_meminfo();
-  } else if (strcmp(p, "version") == 0) {
-    content = procfs_gen_version();
-  } else if (strcmp(p, "mounts") == 0) {
-    content = procfs_gen_mounts();
-  } else if (strcmp(p, "interrupts") == 0) {
-    content = procfs_gen_interrupts();
-  } else if (strcmp(p, "fds") == 0) {
-    content = procfs_gen_fds();
-  } else if (strcmp(p, "gpio") == 0) {
-    content = procfs_gen_gpio();
-  } else if (strcmp(p, "heapinfo") == 0) {
-    content = procfs_gen_heapinfo();
-  } else if (strcmp(p, "cpuinfo") == 0) {
-    content = procfs_gen_cpuinfo();
-  } else if (strcmp(p, "uptime") == 0) {
-    content = procfs_gen_uptime();
+
+  if (parsed.type == PROCFS_NODE_STATIC_FILE) {
+    const char *p = parsed.static_name;
+    if (strcmp(p, "scopes") == 0) {
+      content = procfs_gen_scopes();
+    } else if (strcmp(p, "drivers") == 0) {
+      content = procfs_gen_drivers();
+    } else if (strcmp(p, "devices") == 0) {
+      content = procfs_gen_devices();
+    } else if (strcmp(p, "meminfo") == 0) {
+      content = procfs_gen_meminfo();
+    } else if (strcmp(p, "version") == 0) {
+      content = procfs_gen_version();
+    } else if (strcmp(p, "mounts") == 0) {
+      content = procfs_gen_mounts();
+    } else if (strcmp(p, "interrupts") == 0) {
+      content = procfs_gen_interrupts();
+    } else if (strcmp(p, "fds") == 0) {
+      content = procfs_gen_fds();
+    } else if (strcmp(p, "gpio") == 0) {
+      content = procfs_gen_gpio();
+    } else if (strcmp(p, "heapinfo") == 0) {
+      content = procfs_gen_heapinfo();
+    } else if (strcmp(p, "cpuinfo") == 0) {
+      content = procfs_gen_cpuinfo();
+    } else if (strcmp(p, "uptime") == 0) {
+      content = procfs_gen_uptime();
+    } else {
+      errno = ENOENT;
+      return -1;
+    }
   } else {
-    errno = ENOENT;
-    return -1;
+    // Dynamic process file
+    eos_proc_t p;
+    if (!eos_proc_get_copy(parsed.pid, &p)) {
+      errno = ENOENT;
+      return -1;
+    }
+
+    switch (parsed.type) {
+      case PROCFS_NODE_PID_STATUS:
+        content = procfs_gen_pid_status(&p);
+        break;
+      case PROCFS_NODE_PID_STAT:
+        content = procfs_gen_pid_stat(&p);
+        break;
+      case PROCFS_NODE_PID_CMDLINE:
+        content = procfs_gen_pid_cmdline(&p);
+        break;
+      case PROCFS_NODE_PID_CWD:
+        content = procfs_gen_pid_cwd(&p);
+        break;
+      case PROCFS_NODE_PID_ENVIRON:
+        content = procfs_gen_pid_environ(&p);
+        break;
+      case PROCFS_NODE_PID_FD_ENTRY:
+        content = procfs_gen_pid_fd_info(&p, parsed.fd_num);
+        break;
+      default:
+        errno = ENOENT;
+        return -1;
+    }
   }
 
   if (!content) {
@@ -467,6 +755,7 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
 
   int fd = procfs_fd_alloc(content);
   if (fd < 0) {
+    free(content);
     errno = ENFILE;
     return -1;
   }
@@ -561,45 +850,128 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
     return -1;
   }
 
-  const char *p = path;
-  while (*p == '/') p++;
-
-  if (*p == '\0' || strcmp(p, ".") == 0 || strcmp(p, "..") == 0) {
-    // Root /proc directory (or self/parent directory link)
-    memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFDIR | 0555;
-    return 0;
+  procfs_parsed_path_t parsed;
+  if (!procfs_parse_path(path, &parsed)) {
+    errno = ENOENT;
+    return -1;
   }
 
-  for (size_t i = 2; i < PROC_ENTRY_COUNT; i++) {
-    if (strcmp(p, s_proc_entries[i]) == 0) {
-      memset(st, 0, sizeof(*st));
+  memset(st, 0, sizeof(*st));
+
+  switch (parsed.type) {
+    case PROCFS_NODE_ROOT:
+    case PROCFS_NODE_PIPES_DIR:
+      st->st_mode = S_IFDIR | 0555;
+      return 0;
+
+    case PROCFS_NODE_STATIC_FILE:
+      st->st_mode = S_IFREG | 0444;
+      return 0;
+
+    case PROCFS_NODE_PID_DIR: {
+      eos_proc_t p;
+      if (!eos_proc_get_copy(parsed.pid, &p)) {
+        errno = ENOENT;
+        return -1;
+      }
+      st->st_mode = S_IFDIR | 0555;
+      return 0;
+    }
+
+    case PROCFS_NODE_PID_FD_DIR: {
+      eos_proc_t p;
+      if (!eos_proc_get_copy(parsed.pid, &p)) {
+        errno = ENOENT;
+        return -1;
+      }
+      st->st_mode = S_IFDIR | 0555;
+      return 0;
+    }
+
+    case PROCFS_NODE_PID_STATUS:
+    case PROCFS_NODE_PID_STAT:
+    case PROCFS_NODE_PID_CMDLINE:
+    case PROCFS_NODE_PID_CWD:
+    case PROCFS_NODE_PID_ENVIRON: {
+      eos_proc_t p;
+      if (!eos_proc_get_copy(parsed.pid, &p)) {
+        errno = ENOENT;
+        return -1;
+      }
       st->st_mode = S_IFREG | 0444;
       return 0;
     }
-  }
 
-  errno = ENOENT;
-  return -1;
+    case PROCFS_NODE_PID_FD_ENTRY: {
+      eos_proc_t p;
+      if (!eos_proc_get_copy(parsed.pid, &p)) {
+        errno = ENOENT;
+        return -1;
+      }
+      st->st_mode = S_IFREG | 0444;
+      return 0;
+    }
+
+    default:
+      errno = ENOENT;
+      return -1;
+  }
 }
 
 static DIR *procfs_opendir(void *ctx, const char *path) {
   (void)ctx;
-  if (path) {
-    const char *p = path;
-    while (*p == '/') p++;
-    if (*p != '\0' && strcmp(p, ".") != 0) {
-      errno = ENOTDIR;
+  procfs_parsed_path_t parsed;
+  if (!procfs_parse_path(path, &parsed)) {
+    errno = ENOENT;
+    return NULL;
+  }
+
+  if (parsed.type != PROCFS_NODE_ROOT &&
+      parsed.type != PROCFS_NODE_PIPES_DIR &&
+      parsed.type != PROCFS_NODE_PID_DIR &&
+      parsed.type != PROCFS_NODE_PID_FD_DIR) {
+    errno = ENOTDIR;
+    return NULL;
+  }
+
+  // If opening PID or PID_FD dir, verify process exists
+  if (parsed.type == PROCFS_NODE_PID_DIR || parsed.type == PROCFS_NODE_PID_FD_DIR) {
+    eos_proc_t p_check;
+    if (!eos_proc_get_copy(parsed.pid, &p_check)) {
+      errno = ENOENT;
       return NULL;
     }
   }
 
-  procfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(procfs_dir_t));
+  procfs_dir_t *dir = (procfs_dir_t *)eos_psram_calloc_prefer(1, sizeof(procfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
     return NULL;
   }
+
+  dir->dir_type = parsed.type;
+  dir->pid = parsed.pid;
   dir->index = 0;
+
+  if (parsed.type == PROCFS_NODE_ROOT) {
+    dir->num_pids = eos_proc_get_all_pids(dir->pids, EOS_MAX_PROCS);
+  } else if (parsed.type == PROCFS_NODE_PID_FD_DIR) {
+    eos_proc_t p;
+    if (eos_proc_get_copy(parsed.pid, &p)) {
+      size_t count = 0;
+      for (int fd = 0; fd < 3 && count < EOS_MAX_PROCS; fd++) {
+        dir->fds[count++] = fd;
+      }
+      for (size_t i = 0; i < kv_size(p.fds) && count < EOS_MAX_PROCS; i++) {
+        int v = kv_A(p.fds, i);
+        if (v >= 3) {
+          dir->fds[count++] = v;
+        }
+      }
+      dir->num_fds = count;
+    }
+  }
+
   return (DIR *)dir;
 }
 
@@ -611,20 +983,72 @@ static struct dirent *procfs_readdir(void *ctx, DIR *pdir) {
     return NULL;
   }
 
-  if (dir->index >= PROC_ENTRY_COUNT) {
-    return NULL; // End of directory
+  memset(&dir->entry, 0, sizeof(dir->entry));
+
+  if (dir->dir_type == PROCFS_NODE_ROOT) {
+    if (dir->index < PROC_ENTRY_COUNT) {
+      const char *name = s_proc_entries[dir->index];
+      strncpy(dir->entry.d_name, name, sizeof(dir->entry.d_name) - 1);
+      if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
+          strcmp(name, "pipes") == 0 || strcmp(name, "self") == 0) {
+        dir->entry.d_type = DT_DIR;
+      } else {
+        dir->entry.d_type = DT_REG;
+      }
+      dir->index++;
+      return &dir->entry;
+    }
+
+    size_t pid_idx = dir->index - PROC_ENTRY_COUNT;
+    if (pid_idx < dir->num_pids) {
+      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", (int)dir->pids[pid_idx]);
+      dir->entry.d_type = DT_DIR;
+      dir->index++;
+      return &dir->entry;
+    }
+
+    return NULL; // End of root directory
   }
 
-  memset(&dir->entry, 0, sizeof(dir->entry));
-  const char *name = s_proc_entries[dir->index];
-  strncpy(dir->entry.d_name, name, sizeof(dir->entry.d_name) - 1);
-  if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) {
-    dir->entry.d_type = DT_DIR;
-  } else {
-    dir->entry.d_type = DT_REG;
+  if (dir->dir_type == PROCFS_NODE_PID_DIR) {
+    if (dir->index >= PID_ENTRY_COUNT) {
+      return NULL;
+    }
+    const char *name = s_pid_entries[dir->index];
+    strncpy(dir->entry.d_name, name, sizeof(dir->entry.d_name) - 1);
+    if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || strcmp(name, "fd") == 0) {
+      dir->entry.d_type = DT_DIR;
+    } else {
+      dir->entry.d_type = DT_REG;
+    }
+    dir->index++;
+    return &dir->entry;
   }
-  dir->index++;
-  return &dir->entry;
+
+  if (dir->dir_type == PROCFS_NODE_PID_FD_DIR) {
+    if (dir->index == 0) {
+      strcpy(dir->entry.d_name, ".");
+      dir->entry.d_type = DT_DIR;
+      dir->index++;
+      return &dir->entry;
+    }
+    if (dir->index == 1) {
+      strcpy(dir->entry.d_name, "..");
+      dir->entry.d_type = DT_DIR;
+      dir->index++;
+      return &dir->entry;
+    }
+    size_t fd_idx = dir->index - 2;
+    if (fd_idx < dir->num_fds) {
+      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", dir->fds[fd_idx]);
+      dir->entry.d_type = DT_CHR;
+      dir->index++;
+      return &dir->entry;
+    }
+    return NULL;
+  }
+
+  return NULL;
 }
 
 static long procfs_telldir(void *ctx, DIR *pdir) {

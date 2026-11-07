@@ -94,22 +94,22 @@ flowchart TD
     AllocPSRAM --> Pthread["Spawn POSIX pthread (exec.c)"]
     AllocSRAM --> Pthread
     
-    Pthread --> SetupTLS["Initialize Thread Context (eos_tctx_t)"]
+    Pthread --> SetupTLS["Attach Process Context (eos_proc_t)"]
     SetupTLS --> Run["Invoke entry_point(argc, argv)"]
-    Run --> Cleanup["Automatic Resource Cleanup (FDs, Dirs, Memory)"]
-    Cleanup --> Join["Return Exit Status Code"]
+    Run --> Cleanup["Automatic Resource Cleanup & Zombie State"]
+    Cleanup --> Join["waitpid() Reaps Process & Status Code"]
 ```
 
 ### Execution Flow:
 1. **Command Resolution:** When `ush` or `system()` receives a command name (e.g. `cat file.txt` or `./game.elf`), it checks `/bin/`, the current working directory (`./`), or directories in `$PATH` for matching manifests, dynamic ELF binaries, or script assets.
 2. **Dynamic ELF Detection:** Executables with the ELF magic `\x7fELF` are staged via `eos_elf_stage_entry` and dynamically relocated in PSRAM using `espressif/elf_loader`.
-3. **Thread Context Isolation (`ecore/exec.c`):** EOS executes commands in isolated POSIX pthreads. Before launching the thread:
-   * Parent thread's current working directory (`cwd`) is inherited.
-   * Argument array (`argv`) is copied into transient heap storage.
+3. **Process Context Isolation (`ecore/proc.c`, `ecore/exec.c`):** EOS creates a dedicated process entry (`eos_proc_t`) in the centralized process table with unique PID, PPID, PGID, and SID. Before launching the main thread:
+   * Parent process's current working directory (`cwd`) is inherited.
+   * Argument array (`argv`) and environment (`env`) are copied.
    * Thread stack memory attributes are configured based on manifest flags (`EOS_BIN_FLAG_STACK_PSRAM`).
-4. **Thread Local Storage (`ecore/threadctx.c`):** The new thread receives an `eos_tctx_t` stored in FreeRTOS TLS. This tracks open file descriptors, opened directories, and heap allocations.
-5. **Automatic Resource Cleanup:** When the thread exits, the kernel automatically closes leaked file descriptors, closes leaked directories, and frees leaked heap memory blocks, guaranteeing system stability even when user commands crash or fail to clean up.
-6. **Synchronous Waiting:** Shell processes call `eos_wait()` to join the worker thread, release its thread descriptor, and obtain its return code (`0` for success, non-zero for error).
+4. **Thread-to-Process Binding:** The new thread receives a pointer to its process's `eos_proc_t` stored in FreeRTOS TLS slot 0. The process tracks all open file descriptors, opened directories, dynamic memory allocations, and child threads.
+5. **Automatic Resource Cleanup:** When all threads of a process terminate, the process transitions to zombie state (`EOS_PROC_STATE_ZOMBIE`). Leaked file descriptors, directories, and memory blocks are automatically reclaimed upon exit and reaping, guaranteeing system stability even when user commands crash.
+6. **POSIX Process Waiting:** Shell and parent processes call `waitpid(pid, &status, options)` (or `eos_wait()`) to synchronously wait for completion, collect exit status codes, and reap zombie process table slots.
 
 ---
 

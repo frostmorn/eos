@@ -36,6 +36,8 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=heap_caps_realloc_base"
 "-Wl,--wrap=heap_caps_free"
 "-Wl,--wrap=usleep"
+"-Wl,--wrap=getpid"
+"-Wl,--wrap=usb_serial_jtag_is_connected"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

@@ -48,3 +48,54 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32 microcontrollers (ESP32
 *   **No Global Variables:** User-space binaries (`ebin`) must remain stateless and reentrant.
 *   **PSRAM Allocation:** Bulk data (framebuffers, packet capture buffers) must be allocated in PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)`).
 *   **Dynamic Arrays:** Prefer `kvec` (`emisc/kvec.h`) for safe array collections.
+
+---
+
+## 5. Hardware Testing, Flashing & OpenOCD JTAG Debugging
+
+Physical targets (ESP32-P4 and ESP32-S3) connect via built-in USB-Serial-JTAG (`303a:1001`).
+
+### Anti-Patterns to Avoid (Strictly Prohibited)
+*   **NEVER perform blind DTR/RTS serial resetting or rely on arbitrary sleep delays (`time.sleep`)**:
+    *   Toggling DTR pulls down the boot strapping pin (`GPIO35` on ESP32-P4, `GPIO0` on ESP32-S3).
+    *   Releasing `RTS` while `DTR` is active latches `GPIO_STRAP_REG = 0x207` (**ROM Download Mode**), trapping the board in a bootloop where it never boots EOS and locks up the host CDC-ACM serial driver.
+    *   Host serial write calls without non-blocking mode or timeouts lock up inside the Linux kernel `tty_write` when endpoints are unserviced.
+*   **NEVER leave orphaned OpenOCD or GDB processes running in the background**:
+    *   OpenOCD claims the USB JTAG interface (`usbfs`). Orphaned processes block all subsequent JTAG access with `LIBUSB_ERROR_IO`.
+
+### OpenOCD Standard Procedures
+Always use OpenOCD JTAG commands to control the target hardware:
+
+1.  **Target Reset (Clean JTAG CPU Reset, No Strapping Pin Hazard):**
+    *   **ESP32-P4 (JC4880P443C, USB `2-1.4.3`):**
+        ```bash
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "init; reset run; shutdown"
+        ```
+    *   **ESP32-S3 (Lilka v2.3, USB `2-1.4.4`):**
+        ```bash
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter usb location 2-1.4.4" -c "init; reset run; shutdown"
+        ```
+
+2.  **Flash Firmware & Verify via JTAG:**
+    *   **ESP32-P4:**
+        ```bash
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "program_esp_bins build flasher_args.json verify reset exit"
+        ```
+    *   **ESP32-S3:**
+        ```bash
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter usb location 2-1.4.4" -c "program_esp_bins build flasher_args.json verify reset exit"
+        ```
+
+3.  **Live Inspection & Crash Diagnosis (GDB + OpenOCD):**
+    *   Attach to running target without resetting:
+        ```bash
+        riscv32-esp-elf-gdb -batch -ex "target remote :3333" -ex "interrupt" -ex "info threads" -ex "thread apply all bt" -ex "detach" -ex "quit" build/eos.elf
+        ```
+    *   Check Program Counter and core state:
+        ```bash
+        openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "init; halt; targets; reg pc; resume; shutdown"
+        ```
+
+4.  **Automated Test Harness Execution (`tools/hardware_test.py`):**
+    *   Tests interact with the running shell prompt using active canary pinging (`echo __EOS_READY__\n`) and non-blocking I/O.
+    *   If target recovery is needed, trigger OpenOCD JTAG reset instead of DTR/RTS pin toggling.

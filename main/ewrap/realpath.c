@@ -1,21 +1,21 @@
 #include "ecore/fapi.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include <errno.h>
 #include <dirent.h>
 #include <string.h>
 #include <stddef.h>
-// realpath() seems to be made correctly
 
 extern char *__real_getcwd(char *buf, size_t size);
 extern int _real_chdir(const char *path);
 
 char *__wrap_getcwd(char *buf, size_t size){
-  eos_tctx_t *tctx = eos_tctx_get();
+  eos_proc_t *proc = eos_proc_current();
+  const char *cwd = proc ? proc->cwd : "/";
 
   if (buf == NULL){
-    return strdup(tctx->cwd);
+    return strdup(cwd);
   }
-  strlcpy(buf, tctx->cwd, size);
+  strlcpy(buf, cwd, size);
   return buf;
 }
 
@@ -29,7 +29,6 @@ int __wrap_chdir(char*path){
   _path = eos_fapi_path_resolve(path, _path);
 
   DIR *dir = opendir(_path);
-  // check if openable
   if (!dir)
   {
     errno = ENOTDIR;
@@ -38,23 +37,11 @@ int __wrap_chdir(char*path){
  
   closedir(dir);
 
-  eos_tctx_t *tctx = eos_tctx_get();
-
-  strcpy(tctx->cwd, _path);
+  eos_proc_t *proc = eos_proc_current();
+  if (proc) {
+    strlcpy(proc->cwd, _path, sizeof(proc->cwd));
+    eos_proc_set_cwd(proc->pid, _path);
+  }
    
   return 0;
 }
-/*
-// Maybe we would like to intercept it, one day or another
-int chmod(const char *path, mode_t mode)
-{
-    return 0;
-}
-
-int dirfd(DIR *dirp)
-{
-    errno = ENOSYS;
-    return -1;
-}
-
-*/

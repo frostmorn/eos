@@ -26,7 +26,7 @@ docs/
 │   ├── network.md                     # Network scope (wifi, sta, ap, bridge), radio lifecycle, IOCTLs
 │   └── adc-and-power.md               # ADC bus & battery power drivers, voltage curve, SoC engine
 ├── architecture/                      # Overall system architecture
-│   ├── kernel-core.md                 # Unified Device Model, Device Tree, capsmgr, threadctx, fapi, asset
+│   ├── kernel-core.md                 # Unified Device Model, Device Tree, capsmgr, proc, fapi, asset
 │   ├── vfs-and-filesystems.md         # VFS hierarchy: tmpfs (/), devfs (/dev), binfs (/bin), pipefs, procfs
 │   ├── wrappers-and-syscalls.md       # Linker wrappers (-Wl,--wrap), memory leak tracking, reentrant syscalls
 │   └── memory-and-stacks.md           # Internal SRAM vs External PSRAM, DMA constraints, kvec optimization
@@ -77,8 +77,8 @@ docs/
 
 ## 3. Overall System Architecture (`docs/architecture/`)
 
-* [**Kernel Core Subsystems & Unified Device Model**](./architecture/kernel-core.md) — Hierarchical Device Tree (`dev.c`), driver abstraction (`driver.c`), capability manager (`capsmgr.c`), thread context tracking (`threadctx.c`), path resolution (`fapi.c`), and static assets (`asset.c`).
-* [**Virtual Filesystem (VFS) & Subsystems**](./architecture/vfs-and-filesystems.md) — Root `tmpfs` (`/`), dynamic `devfs` (`/dev`), executable `binfs` (`/bin`), inter-process `pipefs` (`/pipe`), and diagnostic `procfs` (`/proc`).
+* [**Kernel Core Subsystems & Unified Device Model**](./architecture/kernel-core.md) — Hierarchical Device Tree (`dev.c`), driver abstraction (`driver.c`), capability manager (`capsmgr.c`), process table and context management (`proc.c`), path resolution (`fapi.c`), and static assets (`asset.c`).
+* [**Virtual Filesystem (VFS) & Subsystems**](./architecture/vfs-and-filesystems.md) — Root `tmpfs` (`/`), dynamic `devfs` (`/dev`), executable `binfs` (`/bin`), diagnostic `procfs` (`/proc`), and inter-process `pipefs` (`/proc/pipes`).
 * [**POSIX, FreeRTOS & Syscall Wrappers**](./architecture/wrappers-and-syscalls.md) — Linker-wrapped syscalls (`-Wl,--wrap`), memory allocation leak tracking (`heap_caps.c`), reentrant filesystem syscalls, thread creation (`pthread.c`), and SDL 1.2/2.0 compatibility layers.
 * [**Embedded Memory Architecture & Stack Allocation**](./architecture/memory-and-stacks.md) — Physical memory domains (Internal SRAM vs External PSRAM), allocation capabilities, DMA constraints, stack dimensioning, and Pratt parser PSRAM migration (+56.3 KB SRAM saved).
 

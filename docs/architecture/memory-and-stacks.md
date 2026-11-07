@@ -28,13 +28,13 @@ In Espressif microcontrollers, system memory is divided into two distinct domain
 
 | Memory Capability Flag | Typical Target | Usage Guidelines |
 | :--- | :--- | :--- |
-| `MALLOC_CAP_INTERNAL \| MALLOC_CAP_8BIT` | Internal DRAM | Hot-path data structures, frequent mutation tables (e.g. `tctx->memblocks`), ISR buffers. |
-| `MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT` | External PSRAM | Bulk data, dynamic vectors (`kvec_psram_t`), large strings, GUI draw buffers, task stacks. |
+| `MALLOC_CAP_INTERNAL \| MALLOC_CAP_8BIT` | Internal DRAM | Hot-path data structures, frequent mutation tables (e.g. `proc->memblocks`), ISR buffers. |
+| `MALLOC_CAP_SPIRAM \| MALLOC_CAP_8BIT` | External PSRAM | Bulk data, dynamic vectors (`kvec_psram_t`), large strings, GUI draw buffers, task stacks, process table (`s_proc_table`). |
 | `MALLOC_CAP_INTERNAL \| MALLOC_CAP_DMA` | DMA-capable SRAM | Required on ESP32-S3 for SPI/LCD line strip descriptors and Wi-Fi packet descriptors. |
 
 ### Golden Rules for Everyday Developers:
 1. **Never allocate bulk data in internal SRAM:** Any buffer exceeding 1 KB that is not touched on high-frequency hardware interrupt loops should prefer PSRAM via `heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)`.
-2. **Never place `tctx->memblocks` in PSRAM:** The thread context memory block tracker is accessed on every single `malloc()` and `free()`; placing it in PSRAM causes cache contention and latency penalties.
+2. **Never place `proc->memblocks` in PSRAM:** The process memory block tracker is accessed on every single `malloc()` and `free()`; placing it in PSRAM causes cache contention and latency penalties. Keep it in internal SRAM (`kvec_t(void *)`).
 3. **Use Capability-Aware `kvec`:** Use `kvec_psram_t(T)` (`caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT`) for dynamic array growth in user utilities.
 
 ---

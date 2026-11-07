@@ -11,8 +11,8 @@ graph TD
     Root["/ (tmpfs - Root in-memory filesystem)"]
     Root --> Dev["/dev/ (devfs - Dynamic device tree mapping)"]
     Root --> Bin["/bin/ (binfs - Statically linked binaries & assets)"]
-    Root --> Pipe["/pipe/ (pipefs - Inter-process pipe ring-buffers)"]
     Root --> Proc["/proc/ (procfs - Process & system diagnostics)"]
+    Proc --> Pipe["/proc/pipes/ (pipefs - Inter-process pipe ring-buffers)"]
     Root --> Mounts["/sdcard/ or /storage/ (Persistent block storage)"]
 ```
 
@@ -52,7 +52,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ## 5. pipefs (Pipe Filesystem & Ring Buffers, `ecore/pipefs.c`)
 
-`pipefs` exposes anonymous pipes (`pipe(int pipefd[2])`) and named pipe nodes under `/pipe/` via ESP-IDF's VFS layer:
+`pipefs` exposes anonymous pipes (`pipe(int pipefd[2])`) and named pipe nodes under `/proc/pipes/` via ESP-IDF's VFS layer:
 
 * **Ring Buffer IPC:** Provides thread-safe in-memory circular buffers for inter-process communication.
 * **Shell Pipelines:** Underpins shell command pipelines (`cmd1 | cmd2 | cmd3`), streaming producer stdout into consumer stdin with FreeRTOS semaphore synchronization.

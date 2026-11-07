@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/elf.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 #include <errno.h>
@@ -15,12 +16,11 @@ typedef struct {
   eos_bin_t elf_manifest;
   int argc;
   char **argv;
+  pid_t pid;
+  pid_t ppid;
+  pid_t pgid;
+  pid_t sid;
 } exec_arg_t;
-
-// Track last spawned thread for eos_wait()
-static pthread_t last_child_thread = 0;
-static bool has_child_thread = false;
-static pthread_mutex_t exec_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static const eos_bin_t *eos_bin_find_by_name(const char *name) {
   if (!name)
@@ -42,6 +42,10 @@ static void *exec_thread_entry(void *arg) {
   exec_arg_t *ex = (exec_arg_t *)arg;
   int ret = -1;
 
+  if (ex) {
+    eos_proc_set_thread(ex->pid, xTaskGetCurrentTaskHandle());
+  }
+
   if (ex && ex->bin && ex->bin->entry_point) {
     ret = ex->bin->entry_point(ex->argc, ex->argv);
   }
@@ -50,6 +54,8 @@ static void *exec_thread_entry(void *arg) {
   fflush(stderr);
 
   if (ex) {
+    eos_proc_exit(ex->pid, ret);
+
     for (int i = 0; i < ex->argc; i++) {
       free(ex->argv[i]);
     }
@@ -125,21 +131,42 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     ex->bin = bin;
   }
 
+  eos_proc_t *cur = eos_proc_current();
+  pid_t parent_pid = (cur && cur->pid > 0) ? cur->pid : 1;
+  pid_t parent_pgid = (cur && cur->pgid > 0) ? cur->pgid : 1;
+  pid_t parent_sid = (cur && cur->sid > 0) ? cur->sid : 1;
+  pid_t child_pid = eos_proc_create(path, NULL, parent_pid, parent_pgid);
+  if (child_pid < 0) {
+    for (int i = 0; i < argc; i++)
+      free(dup_argv[i]);
+    free(dup_argv);
+    free(ex);
+    errno = EAGAIN;
+    return -1;
+  }
+
   ex->argc = argc;
   ex->argv = dup_argv;
+  ex->pid = child_pid;
+  ex->ppid = parent_pid;
+  ex->pgid = parent_pgid;
+  ex->sid = parent_sid;
 
   pthread_t thread;
   pthread_attr_t attr;
   pthread_attr_init(&attr);
-  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
   pthread_attr_setstacksize(&attr, eos_bin_effective_stack_size(bin));
 
   eos_pthread_set_manifest_cfg(bin);
 
-  // Create joinable thread using stack_size and preference from the ebin manifest
+  // Create detached thread using stack_size and preference from the ebin manifest
   int rc = pthread_create(&thread, &attr, exec_thread_entry, ex);
   pthread_attr_destroy(&attr);
   if (rc != 0) {
+    eos_proc_exit(child_pid, -1);
+    int dummy = 0;
+    waitpid(child_pid, &dummy, WNOHANG);
     for (int i = 0; i < argc; i++)
       free(dup_argv[i]);
     free(dup_argv);
@@ -147,11 +174,6 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     errno = ENOMEM;
     return -1;
   }
-
-  pthread_mutex_lock(&exec_mutex);
-  last_child_thread = thread;
-  has_child_thread = true;
-  pthread_mutex_unlock(&exec_mutex);
 
   return 0;
 }
@@ -201,26 +223,13 @@ int execvp(const char *file, char *const argv[]) {
 }
 
 int eos_wait(int *status) {
-  pthread_t thread_to_join = 0;
-  pthread_mutex_lock(&exec_mutex);
-  if (!has_child_thread) {
-    pthread_mutex_unlock(&exec_mutex);
-    errno = ECHILD;
+  int raw_status = 0;
+  pid_t pid = waitpid(-1, &raw_status, 0);
+  if (pid < 0) {
     return -1;
   }
-  thread_to_join = last_child_thread;
-  has_child_thread = false;
-  pthread_mutex_unlock(&exec_mutex);
-
-  void *retval = NULL;
-  int rc = pthread_join(thread_to_join, &retval);
-  if (rc != 0) {
-    errno = EINVAL;
-    return -1;
-  }
-
   if (status) {
-    *status = (int)(intptr_t)retval;
+    *status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
   }
   return 0;
 }

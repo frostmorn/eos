@@ -1,7 +1,7 @@
 #include "ecore/binfs.h"
 #include "ecore/elf.h"
 #include "ecore/pipefs.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 // This call isn't implemented in picolib, but cause it have a declaration
@@ -42,6 +43,10 @@ typedef struct {
   char *in_file;
   char *out_file;
   bool out_append;
+  pid_t pid;
+  pid_t ppid;
+  pid_t pgid;
+  pid_t sid;
 } eos_stage_exec_t;
 
 static void resolve_path(const char *name, char *out, size_t len) {
@@ -72,10 +77,9 @@ static void resolve_path(const char *name, char *out, size_t len) {
     char candidate[EOS_MID_STR_LEN];
     snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
 
-    // Test if file exists / can be opened
-    FILE *f = fopen(candidate, "r");
-    if (f) {
-      fclose(f);
+    // Test if file exists / is a regular file
+    struct stat st;
+    if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode)) {
       strlcpy(out, candidate, len);
       return;
     }
@@ -101,8 +105,8 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
 
   if (*p == '?') {
     p++;
-    eos_tctx_t *tctx = eos_tctx_get();
-    int status = tctx ? tctx->last_exit_status : 0;
+    eos_proc_t *proc = eos_proc_current();
+    int status = proc ? proc->last_exit_status : 0;
     size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
     if (avail > 1) {
       int len = snprintf(w, avail, "%d", status);
@@ -128,7 +132,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     if (name_len < sizeof(name_buf)) {
       memcpy(name_buf, name_start, name_len);
       name_buf[name_len] = '\0';
-      char *val = eos_tctx_getenv(name_buf);
+      char *val = eos_proc_getenv(name_buf);
       if (val) {
         size_t vlen = strlen(val);
         size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
@@ -153,7 +157,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
   }
   name_buf[i] = '\0';
   if (i > 0) {
-    char *val = eos_tctx_getenv(name_buf);
+    char *val = eos_proc_getenv(name_buf);
     if (val) {
       size_t vlen = strlen(val);
       size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
@@ -656,34 +660,33 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
   char path[EOS_MID_STR_LEN];
   resolve_path(cmd, path, sizeof(path));
 
-  FILE *f = fopen(path, "r");
-  if (!f) {
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) {
     EOS_LOGE("eos_system() not found: %s (errno=%d: %s)", path, errno, strerror(errno));
-    errno = ENOENT;
     return -1;
   }
 
   uint32_t magic = 0;
-  if (fread(&magic, sizeof(magic), 1, f) != 1) {
-    fclose(f);
+  if (read(fd, &magic, sizeof(magic)) != (ssize_t)sizeof(magic)) {
+    close(fd);
     EOS_LOGE("eos_system() empty file: %s", path);
     errno = ENOEXEC;
     return -1;
   }
 
   if (magic == EOS_BIN_MAGIC) {
-    rewind(f);
-    if (fread(manifest_out, sizeof(*manifest_out), 1, f) != 1) {
-      fclose(f);
+    lseek(fd, 0, SEEK_SET);
+    if (read(fd, manifest_out, sizeof(*manifest_out)) != (ssize_t)sizeof(*manifest_out)) {
+      close(fd);
       errno = EIO;
       return -1;
     }
-    fclose(f);
+    close(fd);
     return 0;
   }
 
   if (magic == EOS_ELF_MAGIC) {
-    fclose(f);
+    close(fd);
     memset(manifest_out, 0, sizeof(*manifest_out));
     manifest_out->magic = EOS_BIN_MAGIC;
     manifest_out->flags = EOS_BIN_FLAG_STACK_SRAM;
@@ -696,7 +699,7 @@ static int load_bin_manifest(const char *cmd, eos_bin_t *manifest_out) {
     return 0;
   }
 
-  fclose(f);
+  close(fd);
   EOS_LOGE("eos_system() unknown format: %s (magic=0x%08lX)", path, (unsigned long)magic);
   errno = ENOEXEC;
   return -1;
@@ -718,7 +721,7 @@ static int builtin_env_entry(int argc, char **argv) {
 
   if (strcmp(argv[0], "env") == 0 || strcmp(argv[0], "printenv") == 0 ||
       (strcmp(argv[0], "export") == 0 && argc == 1)) {
-    char **envp = eos_tctx_get_environ();
+    char **envp = eos_proc_get_environ();
     if (envp) {
       for (int i = 0; envp[i] != NULL; i++) {
         printf("%s\n", envp[i]);
@@ -737,10 +740,10 @@ static int builtin_env_entry(int argc, char **argv) {
         if (klen > 0 && klen < sizeof(key)) {
           memcpy(key, argv[i], klen);
           key[klen] = '\0';
-          eos_tctx_setenv(key, eq + 1, 1);
+          eos_proc_setenv(key, eq + 1, 1);
         }
       } else if (i + 1 < argc) {
-        eos_tctx_setenv(argv[i], argv[i + 1], 1);
+        eos_proc_setenv(argv[i], argv[i + 1], 1);
         i++;
       }
     }
@@ -752,12 +755,12 @@ static int builtin_env_entry(int argc, char **argv) {
       printf("Usage: setenv <NAME> <VALUE>\n");
       return -1;
     }
-    return eos_tctx_setenv(argv[1], argv[2], 1);
+    return eos_proc_setenv(argv[1], argv[2], 1);
   }
 
   if (strcmp(argv[0], "unset") == 0 || strcmp(argv[0], "unsetenv") == 0) {
     for (int i = 1; i < argc; i++) {
-      eos_tctx_unsetenv(argv[i]);
+      eos_proc_unsetenv(argv[i]);
     }
     return 0;
   }
@@ -771,7 +774,7 @@ static int builtin_env_entry(int argc, char **argv) {
       if (klen > 0 && klen < sizeof(key)) {
         memcpy(key, argv[i], klen);
         key[klen] = '\0';
-        eos_tctx_setenv(key, eq + 1, 1);
+        eos_proc_setenv(key, eq + 1, 1);
       }
     }
   }
@@ -817,9 +820,6 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
   }
   if (st->pipe_out_fd >= 0) {
     dup2(st->pipe_out_fd, STDOUT_FILENO);
-    if (stdout && fileno(stdout) >= 0) {
-      dup2(st->pipe_out_fd, fileno(stdout));
-    }
   }
 
   // 2. Explicit input redirection (< file)
@@ -845,9 +845,6 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
     }
     opened_fds[1] = fd;
     dup2(fd, STDOUT_FILENO);
-    if (stdout && fileno(stdout) >= 0) {
-      dup2(fd, fileno(stdout));
-    }
   }
 
   clearerr(stdin);
@@ -859,8 +856,7 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
 static void close_stage_fds(int opened_fds[2], int pipe_in_fd,
                             int pipe_out_fd) {
   fflush(stdout);
-  clearerr(stdin);
-  clearerr(stdout);
+  fsync(STDOUT_FILENO);
 
   for (int i = 0; i < 2; i++) {
     if (opened_fds[i] >= 0) {
@@ -879,14 +875,12 @@ static void *pipeline_stage_thread(void *arg) {
   int opened_fds[2] = {-1, -1};
   int ret = -1;
 
-  // Transfer ownership of the inherited pipe descriptors into this stage's
-  // thread context so closing them on stage completion unregisters cleanly.
-  eos_tctx_t *tctx = eos_tctx_get();
-  if (tctx) {
+  if (st->pid > 0) {
+    eos_proc_set_thread(st->pid, xTaskGetCurrentTaskHandle());
     if (st->pipe_in_fd >= 0)
-      eos_tctx_reg_fd(st->pipe_in_fd, tctx);
+      eos_proc_reg_fd(st->pipe_in_fd);
     if (st->pipe_out_fd >= 0)
-      eos_tctx_reg_fd(st->pipe_out_fd, tctx);
+      eos_proc_reg_fd(st->pipe_out_fd);
   }
 
   if (apply_stage_redirections(st, opened_fds) == 0) {
@@ -894,41 +888,47 @@ static void *pipeline_stage_thread(void *arg) {
   }
 
   fflush(stdout);
-  fflush(stderr);
 
-  // Clear thread-local stdio mappings before closing underlying fds
-  if (tctx) {
+  fflush(stdout);
+  fflush(stderr);
+  fsync(STDOUT_FILENO);
+
+  close_stage_fds(opened_fds, st->pipe_in_fd, st->pipe_out_fd);
+
+  // Clear process stdio mappings after closing stage fds
+  eos_proc_t *proc = eos_proc_current();
+  if (proc) {
     for (int i = 0; i < 16; i++) {
-      tctx->fd_map[i] = -1;
+      proc->fd_map[i] = -1;
     }
   }
 
-  close_stage_fds(opened_fds, st->pipe_in_fd, st->pipe_out_fd);
+  if (st->pid > 0) {
+    eos_proc_exit(st->pid, ret);
+  }
+
   return (void *)(intptr_t)ret;
 }
 
 static int eval_ast(eos_ast_node_t *node);
 
-static char *dup_str_untracked(const char *str, eos_tctx_t *parent_tctx) {
+static char *dup_str_untracked(const char *str) {
   if (!str) return NULL;
   char *copy = strdup(str);
-  if (copy && parent_tctx) {
-    eos_tctx_unreg_memblock(copy, parent_tctx);
+  if (copy) {
+    eos_proc_unreg_memblock(copy);
   }
   return copy;
 }
 
-static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src,
-                                      eos_tctx_t *parent_tctx) {
+static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src) {
   if (!src) return NULL;
   eos_ast_node_t *dst = alloc_ast_node(src->type);
   if (!dst) return NULL;
-  if (parent_tctx) {
-    eos_tctx_unreg_memblock(dst, parent_tctx);
-  }
+  eos_proc_unreg_memblock(dst);
 
-  dst->left = clone_ast_node(src->left, parent_tctx);
-  dst->right = clone_ast_node(src->right, parent_tctx);
+  dst->left = clone_ast_node(src->left);
+  dst->right = clone_ast_node(src->right);
 
   for (size_t i = 0; i < kv_size(src->stages); i++) {
     const eos_cmd_stage_t *st_src = &kv_A(src->stages, i);
@@ -939,12 +939,12 @@ static eos_ast_node_t *clone_ast_node(const eos_ast_node_t *src,
       argc--;
     }
     for (size_t j = 0; j < argc; j++) {
-      char *dup_arg = dup_str_untracked(kv_A(st_src->argv, j), parent_tctx);
+      char *dup_arg = dup_str_untracked(kv_A(st_src->argv, j));
       kv_push(char *, st_dst.argv, dup_arg);
     }
     kv_push(char *, st_dst.argv, NULL);
-    st_dst.in_file = dup_str_untracked(st_src->in_file, parent_tctx);
-    st_dst.out_file = dup_str_untracked(st_src->out_file, parent_tctx);
+    st_dst.in_file = dup_str_untracked(st_src->in_file);
+    st_dst.out_file = dup_str_untracked(st_src->out_file);
     st_dst.out_append = st_src->out_append;
     kv_push(eos_cmd_stage_t, dst->stages, st_dst);
   }
@@ -989,15 +989,14 @@ static bool check_shebang_script(const char *cmd, char *interp_out, size_t inter
   char path[EOS_MID_STR_LEN];
   resolve_path(cmd, path, sizeof(path));
 
-  FILE *f = fopen(path, "r");
-  if (!f) return false;
+  int fd = open(path, O_RDONLY);
+  if (fd < 0) return false;
 
   char line[256];
-  if (!fgets(line, sizeof(line), f)) {
-    fclose(f);
-    return false;
-  }
-  fclose(f);
+  ssize_t n = read(fd, line, sizeof(line) - 1);
+  close(fd);
+  if (n <= 2) return false;
+  line[n] = '\0';
 
   if (line[0] != '#' || line[1] != '!') {
     return false;
@@ -1201,10 +1200,20 @@ static int eval_command_node(eos_ast_node_t *node) {
   if (stage_count == 1) {
     if (!exec_stages[0].is_builtin &&
         eos_bin_prefers_psram_stack(&exec_stages[0].manifest)) {
+      eos_proc_t *parent_proc = eos_proc_current();
+      pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
+      pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
+      const char *pname = exec_stages[0].argv && exec_stages[0].argv[0] ? exec_stages[0].argv[0] : "psram_stage";
+      pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
+      exec_stages[0].pid = spid;
+      exec_stages[0].ppid = parent_pid;
+      exec_stages[0].pgid = spid;
+      exec_stages[0].sid = parent_sid;
+
       pthread_t thread;
       pthread_attr_t attr;
       pthread_attr_init(&attr);
-      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
       pthread_attr_setstacksize(
           &attr, eos_bin_effective_stack_size(&exec_stages[0].manifest));
 
@@ -1214,21 +1223,26 @@ static int eval_command_node(eos_ast_node_t *node) {
       pthread_attr_destroy(&attr);
 
       if (rc == 0) {
-        void *retval = NULL;
-        if (pthread_join(thread, &retval) == 0) {
-          ret = (int)(intptr_t)retval;
+        int raw_status = 0;
+        if (waitpid(spid, &raw_status, 0) == spid) {
+          ret = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
         }
       } else {
         EOS_LOGE("eos_system() failed to spawn PSRAM thread for %s: %d",
                  exec_stages[0].argv[0], rc);
+        if (spid > 0) {
+          eos_proc_exit(spid, -1);
+          int dummy = 0;
+          waitpid(spid, &dummy, WNOHANG);
+        }
         ret = -1;
       }
     } else {
-      eos_tctx_t *tctx = eos_tctx_get();
-      eos_tctx_fd_snapshot_t fd_snap = eos_tctx_snapshot_fds(tctx);
+      eos_proc_t *proc = eos_proc_current();
+      eos_proc_fd_snapshot_t fd_snap = eos_proc_snapshot_fds();
       int saved_map[16];
       for (int i = 0; i < 16; i++) {
-        saved_map[i] = tctx ? tctx->fd_map[i] : -1;
+        saved_map[i] = proc ? proc->fd_map[i] : -1;
       }
 
       fflush(stdout);
@@ -1245,31 +1259,52 @@ static int eval_command_node(eos_ast_node_t *node) {
       clearerr(stdout);
 
       if (redir) {
-        if (tctx) {
+        if (proc) {
           for (int i = 0; i < 16; i++)
-            tctx->fd_map[i] = saved_map[i];
+            proc->fd_map[i] = saved_map[i];
         }
 
         close_stage_fds(opened_fds, -1, -1);
       }
 
       // Clean up any leaked file descriptors or directory handles from the executed command
-      eos_tctx_cleanup_leaked_fds(tctx, &fd_snap);
+      eos_proc_cleanup_leaked_fds(&fd_snap);
     }
   } else {
-    eos_tctx_t *parent_tctx = eos_tctx_get();
+    eos_proc_t *parent_proc = eos_proc_current();
+    pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
+    pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
+    pid_t pipeline_pgid = 0;
+
+    for (size_t i = 0; i < stage_count; i++) {
+      const char *pname = exec_stages[i].argv && exec_stages[i].argv[0] ? exec_stages[i].argv[0] : "stage";
+      pid_t spid = eos_proc_create(pname, NULL, parent_pid, pipeline_pgid);
+      if (i == 0 && spid > 0) {
+        pipeline_pgid = spid;
+      }
+      exec_stages[i].pid = spid;
+      exec_stages[i].ppid = parent_pid;
+      exec_stages[i].pgid = pipeline_pgid;
+      exec_stages[i].sid = parent_sid;
+    }
+
     for (size_t i = 0; i < stage_count - 1; i++) {
       int pfd[2] = {-1, -1};
       if (pipe(pfd) < 0) {
         EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
         for (size_t j = 0; j < stage_count; j++) {
           if (exec_stages[j].pipe_in_fd >= 0) {
-            if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_in_fd, parent_tctx);
+            eos_proc_reg_fd(exec_stages[j].pipe_in_fd);
             close(exec_stages[j].pipe_in_fd);
           }
           if (exec_stages[j].pipe_out_fd >= 0) {
-            if (parent_tctx) eos_tctx_reg_fd(exec_stages[j].pipe_out_fd, parent_tctx);
+            eos_proc_reg_fd(exec_stages[j].pipe_out_fd);
             close(exec_stages[j].pipe_out_fd);
+          }
+          if (exec_stages[j].pid > 0) {
+            eos_proc_exit(exec_stages[j].pid, -1);
+            int dummy = 0;
+            waitpid(exec_stages[j].pid, &dummy, WNOHANG);
           }
         }
         for (size_t j = 0; j < stage_count; j++) {
@@ -1282,10 +1317,8 @@ static int eval_command_node(eos_ast_node_t *node) {
         free(exec_stages);
         return -1;
       }
-      if (parent_tctx) {
-        eos_tctx_unreg_fd(pfd[0], parent_tctx);
-        eos_tctx_unreg_fd(pfd[1], parent_tctx);
-      }
+      eos_proc_unreg_fd(pfd[0]);
+      eos_proc_unreg_fd(pfd[1]);
       exec_stages[i].pipe_out_fd = pfd[1];
       exec_stages[i + 1].pipe_in_fd = pfd[0];
     }
@@ -1299,7 +1332,7 @@ static int eval_command_node(eos_ast_node_t *node) {
     for (size_t i = 0; i < stage_count; i++) {
       pthread_attr_t attr;
       pthread_attr_init(&attr);
-      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
       pthread_attr_setstacksize(
           &attr, eos_bin_effective_stack_size(&exec_stages[i].manifest));
 
@@ -1309,6 +1342,11 @@ static int eval_command_node(eos_ast_node_t *node) {
 
       if (rc != 0) {
         EOS_LOGE("eos_system() failed to spawn thread for stage %u", (unsigned)i);
+        if (exec_stages[i].pid > 0) {
+          eos_proc_exit(exec_stages[i].pid, -1);
+          int dummy = 0;
+          waitpid(exec_stages[i].pid, &dummy, WNOHANG);
+        }
       } else {
         spawned[i] = true;
       }
@@ -1317,9 +1355,10 @@ static int eval_command_node(eos_ast_node_t *node) {
     int last_status = -1;
     for (size_t i = 0; i < stage_count; i++) {
       if (spawned[i]) {
-        void *retval = NULL;
-        if (pthread_join(threads[i], &retval) == 0) {
-          last_status = (int)(intptr_t)retval;
+        int raw_status = 0;
+        pid_t w = waitpid(exec_stages[i].pid, &raw_status, 0);
+        if (w == exec_stages[i].pid) {
+          last_status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
         }
       }
     }
@@ -1345,7 +1384,6 @@ static int eval_ast(eos_ast_node_t *node) {
   if (!node) return 0;
 
   int status = 0;
-  eos_tctx_t *tctx = eos_tctx_get();
 
   switch (node->type) {
     case EOS_NODE_COMMAND:
@@ -1374,10 +1412,8 @@ static int eval_ast(eos_ast_node_t *node) {
         bool bg_psram = ast_prefers_psram_stack(node->left);
         bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
         if (bg) {
-          if (tctx) {
-            eos_tctx_unreg_memblock(bg, tctx);
-          }
-          bg->node = clone_ast_node(node->left, tctx);
+          eos_proc_unreg_memblock(bg);
+          bg->node = clone_ast_node(node->left);
           if (bg->node) {
             pthread_t t;
             pthread_attr_t attr;
@@ -1405,8 +1441,9 @@ static int eval_ast(eos_ast_node_t *node) {
     }
   }
 
-  if (tctx) {
-    tctx->last_exit_status = status;
+  eos_proc_t *proc = eos_proc_current();
+  if (proc) {
+    proc->last_exit_status = status;
   }
   return status;
 }
@@ -1424,14 +1461,13 @@ int __wrap_system(const char *cmdline) {
     return -1;
   }
 
-  eos_tctx_t *tctx = eos_tctx_get();
-  eos_tctx_fd_snapshot_t snap = eos_tctx_snapshot_fds(tctx);
+  eos_proc_fd_snapshot_t snap = eos_proc_snapshot_fds();
 
   size_t cmd_len = strlen(cmdline);
   size_t arena_size = cmd_len * 2 + EOS_LARGE_STR_LEN;
   char *arena_buf = (char *)eos_psram_malloc_prefer(arena_size);
   if (!arena_buf) {
-    eos_tctx_cleanup_leaked_fds(tctx, &snap);
+    eos_proc_cleanup_leaked_fds(&snap);
     return -1;
   }
   const char *arena_end = arena_buf + arena_size - 1;
@@ -1457,7 +1493,7 @@ int __wrap_system(const char *cmdline) {
   if (kv_size(tokens) == 0) {
     kv_destroy(tokens);
     eos_psram_free(arena_buf);
-    eos_tctx_cleanup_leaked_fds(tctx, &snap);
+    eos_proc_cleanup_leaked_fds(&snap);
     return 0;
   }
 
@@ -1475,10 +1511,14 @@ int __wrap_system(const char *cmdline) {
   eos_psram_free(arena_buf);
 
   // Perform leak check: verify and close any descriptors left unclosed by commands
-  eos_tctx_cleanup_leaked_fds(tctx, &snap);
+  eos_proc_cleanup_leaked_fds(&snap);
   return ret;
 }
 
 int eos_system(const char *cmdline) {
   return __wrap_system(cmdline);
+}
+
+pid_t __wrap_getpid(void) {
+  return eos_getpid();
 }

@@ -1,5 +1,5 @@
 #include "ecore/elf.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 #include "emisc/strlimits.h"

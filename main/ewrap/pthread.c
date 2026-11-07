@@ -1,5 +1,5 @@
 #include "ecore/bin.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include <esp_heap_caps.h>
 #include <esp_pthread.h>
@@ -46,8 +46,8 @@ void eos_pthread_set_manifest_cfg(const eos_bin_t *bin) {
 int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                           void *(*start_routine)(void *), void *arg) {
 
-  eos_twrap_t *twrap = eos_twrap_prepare(start_routine, arg);
-  if (!twrap) {
+  eos_pwrap_t *pwrap = eos_proc_wrap_prepare(start_routine, arg);
+  if (!pwrap) {
     EOS_LOGE("Failed to allocate thread wrap data\n");
     return -1;
   }
@@ -72,9 +72,8 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     }
   }
 
-  EOS_LOGI("Launching new thread\n");
   // Launch thread
-  int rc = __real_pthread_create(thread, use_attr, eos_twrap_pthread, twrap);
+  int rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
 
   // If PSRAM allocation failed, fallback gracefully to internal SRAM
   if (rc != 0) {
@@ -84,7 +83,7 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
       EOS_LOGW("PSRAM stack allocation failed (%d); falling back to internal SRAM\n", rc);
       cur_cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
       esp_pthread_set_cfg(&cur_cfg);
-      rc = __real_pthread_create(thread, use_attr, eos_twrap_pthread, twrap);
+      rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
     }
   }
 
@@ -97,13 +96,7 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   }
 
   if (rc != 0) {
-    if (twrap->env_copy) {
-      for (size_t i = 0; i < twrap->env_count; i++) {
-        free(twrap->env_copy[i]);
-      }
-      free(twrap->env_copy);
-    }
-    free(twrap);
+    free(pwrap);
   }
 
   return rc;

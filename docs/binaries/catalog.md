@@ -34,8 +34,8 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 ### `cd` — Change Working Directory
 * **Syntax:** `cd [path]`
 * **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
-* **Function:** Updates the calling thread's Current Working Directory (`cwd`) in `eos_tctx_t`. If no argument is provided, changes to `/`.
-* **Capabilities:** Thread context manipulation, directory traversal (`stat`, `chdir`).
+* **Function:** Updates the calling process's Current Working Directory (`cwd`) in `eos_proc_t`. If no argument is provided, changes to `/`.
+* **Capabilities:** Process context manipulation, directory traversal (`stat`, `chdir`).
 * **Examples:**
   ```sh
   cd /dev

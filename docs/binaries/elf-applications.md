@@ -66,7 +66,7 @@ When MicroShell (`ush`) or `system()` launches a command:
    manifest->stack_size = 32 * 1024; // 32 KB PSRAM Stack
    manifest->entry_point = eos_elf_stage_entry;
    ```
-4. The standard process execution engine spawns the task with reentrant thread context (`eos_tctx_t`), file descriptor redirection, and signal handling.
+4. The standard process execution engine spawns the task with dedicated process context (`eos_proc_t`), file descriptor redirection, and process lifecycle tracking.
 
 ---
 

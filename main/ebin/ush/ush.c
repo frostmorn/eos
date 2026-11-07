@@ -1,6 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/log.h"
-#include "ecore/threadctx.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
 #include <ctype.h>
@@ -21,8 +21,8 @@ static int ush_readline(char *buf, size_t size) {
   size_t len = 0;
 
   for (;;) {
-    eos_tctx_t *tctx = eos_tctx_get();
-    bool is_console = (!tctx || tctx->fd_map[STDIN_FILENO] < 0);
+    eos_proc_t *proc = eos_proc_current();
+    bool is_console = (!proc || proc->fd_map[STDIN_FILENO] < 0);
 
     // When booted without UART / USB-Serial-JTAG connected, wait calmly
     // instead of spinning on read() or returning -1 (which would exit ush

@@ -649,7 +649,6 @@ void eos_pipefs_init(void) {
       .closedir_p = pipefs_closedir,
   };
 
-  mkdir(EOS_PIPEFS_ROOT, 0755);
   esp_vfs_register(EOS_PIPEFS_ROOT, &vfs, NULL);
   pipefs_initialized = true;
   EOS_LOGI("pipefs mounted at %s\n", EOS_PIPEFS_ROOT);
