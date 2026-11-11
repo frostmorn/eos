@@ -800,7 +800,7 @@ int lvgl_term_main(int argc, char **argv) {
 
   // Check if stdin is redirected from a pipe or file (`cmd | lvgl_term`)
   eos_proc_t *proc = eos_proc_current();
-  bool stdin_redirected = (proc && proc->fd_map[STDIN_FILENO] >= 0);
+  bool stdin_redirected = (proc && eos_proc_fd_map_get(proc, STDIN_FILENO) >= 0);
 
   if (run_cmd_arg) {
     term_execute_cmd_to_file(st, st->active_cmd);

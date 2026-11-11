@@ -131,6 +131,7 @@ typedef enum {
   // spi role:
   EOS_SPI_IOCTL_SET_ROLE_MASTER,    // no args
   EOS_SPI_IOCTL_SET_ROLE_SLAVE,
+  EOS_SPI_IOCTL_GET_HOST,           // void *out_host (spi_host_device_t *)
   // spi pins:
   EOS_SPI_IOCTL_SET_MOSI,           // int pinNo, -1 if unused
   EOS_SPI_IOCTL_SET_MISO,           // int pinNo, -1 if unused

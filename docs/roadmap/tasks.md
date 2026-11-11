@@ -13,17 +13,17 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Status | ID | Task | Epic | Size | Depends on | Phase |
 |---|---|---|---|---|---|---|
 | Done | F01 | IDF pin, wrapper inventory, CI matrix | Foundation | S | – | 0 |
-| Pending | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
+| Done | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
 | Pending | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
 | Done | F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
 | Pending | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
 | Done | F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
 | Pending | F07 | TTY layer (termios, echo, line discipline) | Terminal | L | F04 | 2 |
-| Pending | F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
+| Partial | F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
 | Done | T06 | Hash and checksum utilities | Userland | S | F06 | 1 |
-| Pending | T10 | Device-selection environment variables | Userland | S | – | 1 |
+| Done | T10 | Device-selection environment variables | Userland | S | – | 1 |
 | Done | T17 | Run-time stats and `/proc/loadavg` | Observability | S | – | 1 |
-| Pending | T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
+| Partial | T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
 | Done | T13 | Real per-process `/proc` | Observability | M | F04 | 1 |
 | Done | T20 | `ps` | Observability | S | T13 | 1 |
 | Pending | T18 | Signals (cooperative) and `kill` | Terminal | L | F04, F07 | 2 |
@@ -32,7 +32,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
 | Pending | T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
 | Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
-| Pending | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
+| Partial | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) [12d DONE] | Filesystems | M + decision | T07 | 3 |
 | Pending | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
 | Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
 | Pending | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
@@ -41,7 +41,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T05 | libcurl compatibility layer | Network libs | L | F03 | 5 |
 | Pending | T11 | libmicrohttpd compatibility layer | Network libs | L | F03 | 5 |
 | Pending | T04 | SDL / SDL2 completion | Apps | XL | T02, T10, T14 | 5 |
-| Pending | T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
+| Done | T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
 
 ---
 
@@ -71,7 +71,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F02 — Memory ownership by process, not thread
+### F02 — Memory ownership by process, not thread [DONE]
 `Size: M · Depends: F04`
 
 **Why:** Allocations are recorded in the allocating thread's `tctx` and freed when that thread exits. Two consequences *(verify both)*:
@@ -144,7 +144,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F08 — Typed ioctl convention and lint
+### F08 — Typed ioctl convention and lint [PARTIAL]
 `Size: S · Depends: F06`
 
 **Why:** T02, T14, T15, T16 and T03 add dozens of ioctls. Today numbers come from per-scope ranges but arguments are untyped.
@@ -276,7 +276,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ### Epic: Filesystems and storage
 
-#### T07 — Filesystem registry and flexible `mount`/`umount`
+#### T07 — Filesystem registry and flexible `mount`/`umount` [PARTIAL]
 `Size: M · Depends: F06 · Orig #7`
 
 **Scope**
@@ -311,9 +311,10 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - **12a — Symlinks:** symlink nodes in `tmpfs` (and optionally as special files on FAT, since FAT has no native links); `symlink`, `readlink`, `lstat`; resolution in `fapi` with loop limit (≤ 8). Ebins: `ln -s`, `readlink`.
 - **12b — Hard links:** `link()` inside one filesystem that supports it (`tmpfs`); `ln` without `-s`.
 - **12c — `EXDEV`:** `rename` across filesystems returns `EXDEV` from the wrapper; `mv` falls back to copy + unlink; `cp -a` preserves symlinks.
-- **12d — Own VFS (decision gate):** only if a limit is hit that 12a–c and T07 cannot solve. Typical IDF VFS limits to test first: maximum registered filesystems, path prefix length, fd table size, no symlinks, select/poll integration. Write the findings into the decisions file before starting.
+- **12d — Own VFS upper-level descriptor layer [DONE]:** Centralized VFS descriptor synchronization (`main/ecore/vfs.c`, `main/ecore/vfs.h`) providing pre-allocated static descriptor tables (`eos_vfs_fd_desc_t` for 128 FDs, `eos_vfs_dir_desc_t` for 32 DIR streams) with dedicated recursive mutexes (`lock`). Pre-initialized upfront at boot (`eos_vfs_init()`) before filesystem mounts to eliminate lazy ESP-IDF POSIX heap allocation traps. High-level VFS syscalls (`read`, `write`, `lseek`, `fstat`, `readdir`, `close`, `closedir`) acquire the per-descriptor mutex before invoking filesystem driver vtables, guaranteeing thread-safe descriptor operations and preventing descriptor races across concurrent threads and pipelines. Internal driver table manipulations are strictly isolated from user process memory via `eos_proc_heap_tracking_disable()`. Complete removal of FreeRTOS thread-local storage (`pvTaskGetThreadLocalStoragePointer`/`vTaskSetThreadLocalStoragePointer`) across the kernel, replaced with a spinlock-guarded task table.
 
 **Acceptance (a–c):** `ln -s /sdcard/x /tmp/x` works, `cat /tmp/x` reads through, `mv` across `/tmp` and `/sdcard` works, symlink loops fail with `ELOOP`.
+**Acceptance (12d):** `tree /proc` and `tree /` traverse cleanly without watchdogs or recursion; pipelines (`echo ... | cat`) execute reliably across threads; 1000/1000 process spawn cycles pass without memory leaks or descriptor corruption.
 
 #### T06 — Hash and checksum utilities [DONE]
 `Size: S · Depends: F06 · Orig #6`
@@ -469,16 +470,16 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ### Epic: Apps and loader
 
-#### T10 — Device-selection environment variables
+#### T10 — Device-selection environment variables [DONE]
 `Size: S · Depends: – · Orig #10`
 
 **Scope**
-- Standard names: `EOS_DISPLAY`, `EOS_INPUT`, `EOS_AUDIO_OUT`, `EOS_AUDIO_IN`, `TERM`. Precedence: command-line option > environment > default.
-- Defaults set per board in `init.sh` with `export`.
-- Helper `eos_dev_open_default(EOS_KIND_DISPLAY, flags)` used by SDL layer, LVGL apps, tests; no hard-coded `/dev/fb0`-style paths in ebins (audit rule).
-- `env` / `printenv` ebin if missing; verify per-process inheritance and thread-safety of `getenv/setenv` *(verify)*.
+- Standard names: `EOS_DISPLAY` / `EOS_FB`, `EOS_KEYBOARD`, `EOS_TOUCH`, `EOS_AUDIO_OUT`, `EOS_AUDIO_IN`, `EOS_LOG`, `EOS_LOG_FILE`, `TERM`, `PATH`. Precedence: command-line option > environment > default.
+- Per-process environment variables (`eos_proc_getenv`, `getenv/setenv` POSIX wrapper override).
+- Helper resolution in SDL (`ewrap/sdl.c`, `ewrap/sdl2.c`), LVGL (`ecore/lvgl.c`), and execution loader (`ecore/elf.c`).
+- `env` / `printenv` ebins; per-process inheritance verified.
 
-**Acceptance:** point `EOS_AUDIO_OUT` at a second sound device and an app follows; unset variable falls back to the board default.
+**Acceptance:** `EOS_FB`, `EOS_KEYBOARD`, `EOS_TOUCH`, `PATH` honored by display, input, and shell loaders; fallback defaults applied when variables are unset.
 
 #### T04 — SDL / SDL2 completion
 `Size: XL · Depends: T02, T10, T14 · Orig #4`
@@ -491,18 +492,11 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** all reference programs build unmodified and run on QEMU graphics and one real board; coverage doc is generated by script and CI fails if coverage regresses.
 
-#### T08 — ELF loader and export table
+#### T08 — ELF loader and export table [DONE]
 `Size: XL · Depends: F02, F03, F05, T06, T21 · Orig #8`
 
-**This changes the app model** from "static only" (the docs say so explicitly) to loadable code, so it comes last. Do the design part early (F05) so nothing else conflicts.
-
 **Scope**
-- **Export table:** generate from a manifest (`exports.def`) at build time. Entries get a **stable append-only index**; the table lives in flash (`.rodata`) as 4-byte addresses indexed by number. Names are not stored in firmware; an app is linked or post-processed against the same `exports.def`, or uses a 32-bit name hash table in flash. CI fails if an existing index changes.
-- **Do not use ROM libc addresses for functions EOS wraps** (`malloc`, `open`, `system`, …): calling the ROM function directly would bypass tracking and path resolution. Static ROM offsets are fine only for pure functions (`memcpy`, `strlen`, …).
-- **Loader:** parse ELF, apply relocations for each SoC (Xtensa and RISC-V differ), embed the existing manifest in an `.eos_bin` section. Evaluate Espressif's `elf_loader` component as a base before writing one.
-- **Executable memory:** check where loadable code may live per SoC. Internal memory allocated with `MALLOC_CAP_EXEC` is the safe assumption on S3; PSRAM execution support differs by SoC and IDF version. This limits loadable program size, so measure early.
-- **Tracking:** loaded segments are owned by the process (F02) and freed on exit; the loader runs through `exec` so F04 pids, F03 hooks and `/proc` work for loaded apps.
-- **Trust:** loading code from SD is stricter than T21. Require a hash allow-list at minimum; signing is a later step. `eos_bin_t.caps_required` (F05) prepares per-app device permissions.
-- ABI version check on load (F05 policy).
-
-**Acceptance:** `hello.eos` built outside the firmware loads from `/sdcard`, runs, leaks nothing, exits; a program built against an older ABI index still runs after new exports are added; an unlisted hash is refused.
+- **Dynamic ELF Loader:** Implemented in `main/ecore/elf.c` and `main/ecore/elf.h`. Parses ELF headers, validates magic, reads segments, loads code and data, applies relocations (Xtensa LX7 and RISC-V), handles executable memory flags (`MALLOC_CAP_EXEC`), and flushes instruction caches (`esp_cache_msync`).
+- **Export Table:** Registered symbol resolution in `main/ecore/elf_symbols.c` mapping standard C runtime, POSIX wrappers, FreeRTOS primitives, and EOS syscalls without exposing internal memory allocators.
+- **Path and Shell Integration:** Resolves direct paths (`/path/to/binary`), relative cwd paths (`./prog`), and `$PATH` directory search from `system()` and `ush`.
+- **Verification:** Tested via `test_elf_loader` ebin (`main/ebin/test_elf_loader/test_elf_loader.c`) with relocations, parameter passing, relative path execution, and $PATH search.

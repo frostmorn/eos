@@ -1,4 +1,5 @@
 #include "tmpfs.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/fancytree.h"
 #include "emisc/fnv-1a-32.h"
@@ -197,8 +198,10 @@ static tmpfs_fnode_t *tmpfs_create_node(const char *name, mode_t mode,
     return NULL;
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   tmpfs_fnode_t *node = eos_psram_malloc_prefer(sizeof(tmpfs_fnode_t));
   if (!node) {
+    eos_proc_leave_kernel(prev_k);
     errno = ENOMEM;
     return NULL;
   }
@@ -211,6 +214,7 @@ static tmpfs_fnode_t *tmpfs_create_node(const char *name, mode_t mode,
   kv_init(node->blocks);
 
   tmpfs_fnode_t_tree_attach(node, parent);
+  eos_proc_leave_kernel(prev_k);
 
   return node;
 }
@@ -218,13 +222,16 @@ static tmpfs_fnode_t *tmpfs_create_node(const char *name, mode_t mode,
 static void tmpfs_delete_node(tmpfs_fnode_t *node) {
   if (!node)
     return;
+  bool prev_k = eos_proc_enter_kernel();
   tmpfs_fnode_t_tree_detach(node);
   kv_destroy(node->blocks);
   free(node);
+  eos_proc_leave_kernel(prev_k);
 }
 
 static int tmpfs_alloc_fd(tmpfs_state_t *state, tmpfs_fnode_t *node,
                           int flags) {
+  bool prev_k = eos_proc_enter_kernel();
   // Reuse a slot left behind by a closed fd, if one exists - avoids
   // the vector growing forever under open/close churn.
   for (size_t i = 0; i < kv_size(state->fds); i++) {
@@ -233,6 +240,7 @@ static int tmpfs_alloc_fd(tmpfs_state_t *state, tmpfs_fnode_t *node,
       kv_A(state->fds, i).offset = 0;
       kv_A(state->fds, i).flags = flags;
       node->refcount++;
+      eos_proc_leave_kernel(prev_k);
       return (int)i;
     }
   }
@@ -242,7 +250,9 @@ static int tmpfs_alloc_fd(tmpfs_state_t *state, tmpfs_fnode_t *node,
   tmpfs_fd_t desc = {.pNode = node, .flags = flags, .offset = 0};
   kv_push(tmpfs_fd_t, state->fds, desc);
   node->refcount++;
-  return (int)kv_size(state->fds) - 1;
+  int ret = (int)kv_size(state->fds) - 1;
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 static void tmpfs_fill_stat(const tmpfs_fnode_t *node, struct stat *st) {
@@ -289,11 +299,13 @@ static ssize_t tmpfs_write(void *ctx, int fd, const void *data, size_t size) {
   size_t writeEnd = (size_t)desc->offset + size;
   size_t blocksNeeded = (writeEnd + TMP_SECTOR_SIZE - 1) / TMP_SECTOR_SIZE;
 
+  bool prev_k = eos_proc_enter_kernel();
   while (kv_size(node->blocks) < blocksNeeded) {
     tmpfs_fblock_t blk;
     memset(&blk, 0, sizeof(blk));
     kv_push(tmpfs_fblock_t, node->blocks, blk);
   }
+  eos_proc_leave_kernel(prev_k);
 
   size_t remaining = size, srcOff = 0, pos = (size_t)desc->offset;
   const uint8_t *src = (const uint8_t *)data;
@@ -449,8 +461,10 @@ static int tmpfs_open(void *ctx, const char *path, int flags, int mode) {
   }
 
   if (flags & O_TRUNC) {
+    bool prev_k = eos_proc_enter_kernel();
     kv_destroy(node->blocks);
     kv_init(node->blocks);
+    eos_proc_leave_kernel(prev_k);
     node->fsize = 0;
     node->atime = node->ctime = time(NULL);
   }
@@ -631,8 +645,10 @@ static DIR *tmpfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   tmpfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(tmpfs_dir_t));
   if (!dir) {
+    eos_proc_leave_kernel(prev_k);
     errno = ENOMEM;
     return NULL;
   }
@@ -640,6 +656,7 @@ static DIR *tmpfs_opendir(void *ctx, const char *path) {
   dir->dir = node;
   dir->cur = node->child;
   node->refcount++;
+  eos_proc_leave_kernel(prev_k);
 
   return (DIR *)dir;
 }
@@ -700,6 +717,7 @@ static int tmpfs_closedir(void *ctx, DIR *pdir) {
     return -1;
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   tmpfs_dir_t *dir = (tmpfs_dir_t *)pdir;
   tmpfs_fnode_t *node = dir->dir;
   node->refcount--;
@@ -707,6 +725,7 @@ static int tmpfs_closedir(void *ctx, DIR *pdir) {
 
   if (node->unlinked && node->refcount == 0)
     tmpfs_delete_node(node);
+  eos_proc_leave_kernel(prev_k);
 
   return 0;
 }
@@ -831,8 +850,10 @@ static int tmpfs_utime(void *ctx, const char *path,
 ///////////////////////////////////////////////////////////////////
 
 tmpfs_state_t * eos_tmpfs_mount(const char *path) {
+  bool prev_k = eos_proc_enter_kernel();
   tmpfs_state_t *state = eos_psram_malloc_prefer(sizeof(tmpfs_state_t));
   if (!state) {
+    eos_proc_leave_kernel(prev_k);
     EOS_LOGE("Failed to allocate tmpfs state for mount at %s\n", path);
     return NULL;
   }
@@ -842,6 +863,7 @@ tmpfs_state_t * eos_tmpfs_mount(const char *path) {
   if (!state->root) {
     EOS_LOGE("Failed to allocate tmpfs root node for mount at %s\n", path);
     free(state);
+    eos_proc_leave_kernel(prev_k);
     return NULL;
   }
   memset(state->root, 0, sizeof(tmpfs_fnode_t));
@@ -850,6 +872,7 @@ tmpfs_state_t * eos_tmpfs_mount(const char *path) {
   state->root->mode = TMP_DIR_MODE;
   state->root->atime = state->root->mtime = state->root->ctime = time(NULL);
   kv_init(state->root->blocks);
+  eos_proc_leave_kernel(prev_k);
   // root->parent/child/next stay NULL from the memset above - no
   // self-referential-root trick needed, since tmpfs_find_node checks
   // node->parent directly for ".." and treats NULL as "stay put".

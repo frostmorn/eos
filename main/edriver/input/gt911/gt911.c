@@ -66,8 +66,8 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   }
 
   i2c_master_bus_handle_t bus_handle = NULL;
-  if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_GET_BUS_HANDLE,
-                         &bus_handle) != 0 ||
+  if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_GET_BUS_HANDLE,
+                    &bus_handle) != 0 ||
       !bus_handle) {
     EOS_LOGE("gt911: failed to query I2C bus handle from parent");
     free(st);
@@ -76,8 +76,8 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   }
 
   // Probe touch controller on the I2C bus
-  if (eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_PROBE, addr,
-                         50) == 0) {
+  if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_PROBE, addr,
+                    50) == 0) {
     EOS_LOGI("gt911: detected device at I2C address 0x%02X", (unsigned)addr);
   } else {
     EOS_LOGW("gt911: probe at I2C address 0x%02X returned NACK (proceeding with init)",

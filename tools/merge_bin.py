@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
+import binascii
 import json
 import os
+import struct
 import subprocess
 import sys
+
+def ensure_valid_otadata(file_path):
+    if not os.path.exists(file_path):
+        return
+    with open(file_path, "rb") as f:
+        data = f.read()
+    if len(data) >= 32 and data[:4] == b"\xff\xff\xff\xff":
+        sector = bytearray(data)
+        struct.pack_into("<I", sector, 0, 1)  # ota_seq = 1
+        crc = binascii.crc32(struct.pack("<I", 1), 0xffffffff) % (1 << 32)
+        struct.pack_into("<I", sector, 28, crc)
+        with open(file_path, "wb") as f:
+            f.write(sector)
 
 def merge_firmware(build_dir="build", output_path=None):
     flasher_args_path = os.path.join(build_dir, "flasher_args.json")
@@ -26,6 +41,7 @@ def merge_firmware(build_dir="build", output_path=None):
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
+    pad_arg = "--fill-flash-size"
     cmd = [
         sys.executable, "-m", "esptool",
         "--chip", chip,
@@ -34,12 +50,15 @@ def merge_firmware(build_dir="build", output_path=None):
         "--flash_mode", flash_mode,
         "--flash_freq", flash_freq,
         "--flash_size", flash_size,
+        pad_arg, flash_size,
     ]
 
     flash_files = cfg.get("flash_files", {})
     for offset in sorted(flash_files.keys(), key=lambda x: int(x, 0)):
         relpath = flash_files[offset]
         file_path = os.path.join(build_dir, relpath)
+        if "ota_data" in relpath:
+            ensure_valid_otadata(file_path)
         if not os.path.exists(file_path):
             print(f"Error: Binary file {file_path} not found.")
             sys.exit(1)

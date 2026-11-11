@@ -4,13 +4,16 @@
 #include <driver/sdspi_host.h>
 #include <driver/spi_master.h>
 #include <sdmmc_cmd.h>
+#if SOC_SDMMC_HOST_SUPPORTED
+#include <driver/sdmmc_default_configs.h>
+#include <driver/sdmmc_host.h>
+#endif
 
 #include "ecore/capsmgr.h"
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
-#include "edriver/bus/sdio/sdio.h"
 #include "emisc/psram_alloc.h"
 
 #include <errno.h>
@@ -59,11 +62,11 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
       host_cfg.max_freq_khz = freq / 1000;
     }
 
-    if (dev->parent->state) {
-      sdio_state_t *sdio_st = (sdio_state_t *)dev->parent->state;
-      host_cfg = sdio_st->host_cfg;
-      if (freq > 0) {
-        host_cfg.max_freq_khz = freq / 1000;
+    if (dev->parent) {
+      if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SDIO_IOCTL_GET_HOST, &host_cfg) == 0) {
+        if (freq > 0) {
+          host_cfg.max_freq_khz = freq / 1000;
+        }
       }
     }
 
@@ -85,8 +88,13 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
       return false;
     }
 
-    state->host =
-        (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+    state->host = SPI2_HOST;
+    if (dev->parent) {
+      if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SPI_IOCTL_GET_HOST, &state->host) != 0) {
+        state->host =
+            (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+      }
+    }
 
     int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_20M);
 

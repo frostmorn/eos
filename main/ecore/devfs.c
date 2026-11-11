@@ -1,6 +1,7 @@
 #include "devfs.h"
 #include "ecore/dev.h"
 #include "ecore/driver.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 
@@ -128,7 +129,9 @@ static int devfs_alloc_fd(devfs_state_t *dstate, eos_dev_t *dev, int drvfd) {
       .dev = dev,
   };
 
+  bool prev_k = eos_proc_enter_kernel();
   kv_push(devfs_fdmap_t, dstate->fds, fdmap);
+  eos_proc_leave_kernel(prev_k);
 
   return fd;
 }
@@ -143,7 +146,7 @@ ssize_t eos_devfs_write(devfs_state_t *dstate, int fd, void *data,
   if (!fdmap)
     return -1;
 
-  return eos_drv_write(fdmap->dev, fdmap->drvfd, data, size);
+  return eos_dev_write(fdmap->dev, fdmap->drvfd, data, size);
 }
 
 off_t eos_devfs_lseek(devfs_state_t *dstate, int fd, off_t offset, int whence) {
@@ -151,7 +154,7 @@ off_t eos_devfs_lseek(devfs_state_t *dstate, int fd, off_t offset, int whence) {
   if (!fdmap)
     return -1;
 
-  return eos_drv_lseek(fdmap->dev, fdmap->drvfd, offset, whence);
+  return eos_dev_lseek(fdmap->dev, fdmap->drvfd, offset, whence);
 }
 
 ssize_t eos_devfs_read(devfs_state_t *dstate, int fd, void *dst, size_t size) {
@@ -159,7 +162,7 @@ ssize_t eos_devfs_read(devfs_state_t *dstate, int fd, void *dst, size_t size) {
   if (!fdmap)
     return -1;
 
-  return eos_drv_read(fdmap->dev, fdmap->drvfd, dst, size);
+  return eos_dev_read(fdmap->dev, fdmap->drvfd, dst, size);
 }
 
 ssize_t eos_devfs_pread(devfs_state_t *dstate, int fd, void *dst, size_t size,
@@ -168,7 +171,7 @@ ssize_t eos_devfs_pread(devfs_state_t *dstate, int fd, void *dst, size_t size,
   if (!fdmap)
     return -1;
 
-  return eos_drv_pread(fdmap->dev, fdmap->drvfd, dst, size, offset);
+  return eos_dev_pread(fdmap->dev, fdmap->drvfd, dst, size, offset);
 }
 
 ssize_t eos_devfs_pwrite(devfs_state_t *dstate, int fd, void *src, size_t size,
@@ -177,7 +180,7 @@ ssize_t eos_devfs_pwrite(devfs_state_t *dstate, int fd, void *src, size_t size,
   if (!fdmap)
     return -1;
 
-  return eos_drv_pwrite(fdmap->dev, fdmap->drvfd, src, size, offset);
+  return eos_dev_pwrite(fdmap->dev, fdmap->drvfd, src, size, offset);
 }
 int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
                    int mode) {
@@ -221,7 +224,7 @@ int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
     return -1;
   }
 
-  int drvfd = eos_drv_open(dev, slash ? slash : "", flags, mode);
+  int drvfd = eos_dev_open(dev, slash ? slash : "", flags, mode);
 
   // EOS_LOGI("DEVFS OPEN: driver fd=%d\n", drvfd);
 
@@ -238,7 +241,7 @@ int eos_devfs_close(devfs_state_t *dstate, int fd) {
     if (fdmap->fd != fd)
       continue;
 
-    int rc = eos_drv_close(fdmap->dev, fdmap->drvfd);
+    int rc = eos_dev_close(fdmap->dev, fdmap->drvfd);
 
     /*
      * Keep the mapping if the driver failed to close.
@@ -414,9 +417,11 @@ int eos_devfs_utime(devfs_state_t *dstate, const char *path,
 DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
   (void)dstate;
 
+  bool prev_k = eos_proc_enter_kernel();
   devfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(*dir));
 
   if (!dir) {
+    eos_proc_leave_kernel(prev_k);
     errno = ENOMEM;
     return NULL;
   }
@@ -426,6 +431,7 @@ DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
    */
   if (devfs_is_root(path)) {
     dir->root_listing = true;
+    eos_proc_leave_kernel(prev_k);
     return (DIR *)dir;
   }
 
@@ -433,6 +439,7 @@ DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
 
   if (!dev) {
     free(dir);
+    eos_proc_leave_kernel(prev_k);
     errno = ENOENT;
     return NULL;
   }
@@ -444,13 +451,15 @@ DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
    * The driver's opendir implementation decides whether it can
    * actually be opened as a directory.
    */
-  dir->drvdir = eos_drv_opendir(dev, "");
+  dir->drvdir = eos_dev_opendir(dev, "");
 
   if (!dir->drvdir) {
     free(dir);
+    eos_proc_leave_kernel(prev_k);
     return NULL;
   }
 
+  eos_proc_leave_kernel(prev_k);
   return (DIR *)dir;
 }
 
@@ -465,12 +474,11 @@ struct dirent *eos_devfs_readdir(devfs_state_t *dstate, DIR *pdir) {
   }
 
   if (!dir->root_listing)
-    return eos_drv_readdir(dir->dev, dir->drvdir);
+    return eos_dev_readdir(dir->dev, dir->drvdir);
 
-  while (dir->index < EOS_MAX_DEVICES) {
-    eos_dev_t *dev = &eos_devices[dir->index++];
-
-    if (!dev->in_use)
+  while (dir->index < eos_dev_count()) {
+    eos_dev_t *dev = eos_dev_get(dir->index++);
+    if (!dev || !dev->in_use)
       continue;
 
     if (!dev->driver)
@@ -512,7 +520,7 @@ long eos_devfs_telldir(devfs_state_t *dstate, DIR *pdir) {
   if (dir->root_listing)
     return (long)dir->index;
 
-  return eos_drv_telldir(dir->dev, dir->drvdir);
+  return eos_dev_telldir(dir->dev, dir->drvdir);
 }
 
 void eos_devfs_seekdir(devfs_state_t *dstate, DIR *pdir, long offset) {
@@ -528,7 +536,7 @@ void eos_devfs_seekdir(devfs_state_t *dstate, DIR *pdir, long offset) {
     return;
   }
 
-  eos_drv_seekdir(dir->dev, dir->drvdir, offset);
+  eos_dev_seekdir(dir->dev, dir->drvdir, offset);
 }
 
 int eos_devfs_closedir(devfs_state_t *dstate, DIR *pdir) {
@@ -544,10 +552,12 @@ int eos_devfs_closedir(devfs_state_t *dstate, DIR *pdir) {
   int rc = 0;
 
   if (!dir->root_listing) {
-    rc = eos_drv_closedir(dir->dev, dir->drvdir);
+    rc = eos_dev_closedir(dir->dev, dir->drvdir);
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   free(dir);
+  eos_proc_leave_kernel(prev_k);
 
   return rc;
 }

@@ -73,3 +73,31 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 | `/proc/tasks` | Displays active thread contexts, thread IDs, stack sizes, and CWDs. | System monitors |
 
 Dynamic string buffers inside `procfs` allocate from external PSRAM via `kvec_psram_t` / `MALLOC_CAP_SPIRAM`, ensuring diagnostic queries never consume scarce internal SRAM.
+
+---
+
+## 7. Unified Upper-Level VFS Descriptor Synchronization (`ecore/vfs.c`, `ecore/vfs.h`)
+
+EOS enforces centralized synchronization at the Virtual File System (VFS) descriptor level rather than delegating concurrency control to each lower-level filesystem driver:
+
+### 7.1 Architecture & Descriptor Structures
+- **File Descriptors (`eos_vfs_fd_desc_t`):** Pre-allocated static table supporting up to `EOS_VFS_MAX_FDS` (128) descriptors. Each active file descriptor contains its own dedicated recursive mutex (`lock`), atomic reference count (`ref_count`), and open flags (`flags`).
+- **Directory Streams (`eos_vfs_dir_desc_t`):** Pre-allocated static table supporting up to `EOS_VFS_MAX_DIRS` (32) concurrent open directory streams (`DIR*`), guarded by per-stream recursive mutexes (`lock`).
+
+### 7.2 Boot Invariant & Static Allocation
+ESP-IDF POSIX emulation dynamically allocates memory upon the first lock/wait operation of statically initialized primitives (`PTHREAD_MUTEX_INITIALIZER`). If triggered inside a transient child process, the primitive's memory is recorded into the child's allocation registry and prematurely destroyed upon process exit (`waitpid()`).
+To prevent this failure mode:
+1. `eos_vfs_init()` runs upfront during early kernel startup in `eos_main()` before any filesystem mounts.
+2. All 128 file descriptor mutexes and 32 directory mutexes are explicitly initialized with `PTHREAD_MUTEX_RECURSIVE`.
+3. Standard streams 0, 1, and 2 (`stdin`, `stdout`, `stderr`) are registered and validated during boot.
+
+### 7.3 Concurrency Control & Descriptors Lifecycle
+- **Serialized I/O Dispatch:** Every VFS wrapper (`read`, `write`, `lseek`, `fstat`, `readdir`) locks the per-descriptor mutex before invoking the underlying filesystem driver callback, guaranteeing race-free multi-threaded I/O and serialized directory traversal.
+- **Atomic Reference Tracking:** File descriptor sharing via `dup` and `dup2` updates the underlying descriptor's `ref_count`. Closing a descriptor decrements `ref_count` and invokes the underlying filesystem driver's `close` only when the count reaches zero.
+- **Driver Allocation Bypassing:** All filesystem driver internal allocations (`pipefs_open`, `procfs_open`, `devfs_open`, `pipe_alloc_node_locked`) execute with `eos_proc_heap_tracking_disable()` active. Driver internal structures and dynamic table expansions are never attributed to user process memory blocks.
+
+### 7.4 BinFS Concurrency & Multi-Thread Execution (`ecore/binfs.c`)
+- **Serialized Dynamic Descriptor Allocation:** To support concurrent background tasks (`&`), pipelines (`|`), and subshells executing multiple native binaries simultaneously, `binfs` protects its dynamic descriptor pool (`binfs_fds`) with `s_binfs_mutex`.
+- **Race-Free Resizing:** Reallocations of the underlying `kvec_psram_t` table during `binfs_open` are synchronized across cores, preventing descriptor slot corruption or empty-file reads (`load_bin_manifest()`) when multiple commands are spawned in parallel.
+- **Thread-Safe Seeking and Reading:** Operations on open binfs descriptors (`binfs_read`, `binfs_lseek`, `binfs_fstat`, `binfs_close`) lock `s_binfs_mutex` throughout data copying and position clamping.
+

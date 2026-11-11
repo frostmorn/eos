@@ -17,6 +17,8 @@
 #include <strings.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <freertos/semphr.h>
+#include <pthread.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -35,26 +37,9 @@ extern int __real__fstat_r(struct _reent *r, int fd, struct stat *st);
 
 static vprintf_like_t s_prev_vprintf = NULL;
 static bool s_log_initialized = false;
-static inline bool is_in_log_hook(void) {
-  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
-    return false;
-  }
-  uintptr_t flags = (uintptr_t)pvTaskGetThreadLocalStoragePointer(NULL, 1);
-  return (flags & 1) != 0;
-}
-
-static inline void set_in_log_hook(bool val) {
-  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
-    return;
-  }
-  uintptr_t flags = (uintptr_t)pvTaskGetThreadLocalStoragePointer(NULL, 1);
-  if (val) {
-    flags |= 1;
-  } else {
-    flags &= ~1;
-  }
-  vTaskSetThreadLocalStoragePointer(NULL, 1, (void *)flags);
-}
+static StaticSemaphore_t s_log_mutex_buffer;
+static SemaphoreHandle_t s_log_mutex = NULL;
+static TaskHandle_t s_log_owner = NULL;
 
 // Global synced state for EOS_LOG and EOS_LOG_FILE across all threads
 static bool s_global_log_enabled = false;
@@ -192,14 +177,26 @@ static void write_log_to_file(const char *path, const char *buf, size_t len) {
 }
 
 static int eos_log_vprintf(const char *fmt, va_list ap) {
-  if (is_in_log_hook()) {
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
     if (eos_console_is_connected() && s_prev_vprintf) {
       return s_prev_vprintf(fmt, ap);
     }
     return 0;
   }
 
-  set_in_log_hook(true);
+  TaskHandle_t cur_task = xTaskGetCurrentTaskHandle();
+  if (s_log_owner == cur_task) {
+    if (eos_console_is_connected() && s_prev_vprintf) {
+      return s_prev_vprintf(fmt, ap);
+    }
+    return 0;
+  }
+
+  if (!s_log_mutex) {
+    s_log_mutex = xSemaphoreCreateMutexStatic(&s_log_mutex_buffer);
+  }
+  xSemaphoreTake(s_log_mutex, portMAX_DELAY);
+  s_log_owner = cur_task;
 
   char buf[512];
   va_list ap_copy;
@@ -225,7 +222,8 @@ static int eos_log_vprintf(const char *fmt, va_list ap) {
     }
   }
 
-  set_in_log_hook(false);
+  s_log_owner = NULL;
+  xSemaphoreGive(s_log_mutex);
   return ret;
 }
 
@@ -233,5 +231,8 @@ void eos_log_init(void) {
   if (s_log_initialized)
     return;
   s_log_initialized = true;
+  if (!s_log_mutex) {
+    s_log_mutex = xSemaphoreCreateMutexStatic(&s_log_mutex_buffer);
+  }
   s_prev_vprintf = esp_log_set_vprintf(eos_log_vprintf);
 }

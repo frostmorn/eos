@@ -28,6 +28,9 @@ static bool should_wrap_task(const char *const pcName, uint32_t stack_depth) {
   if (strncmp(pcName, "ipc", 3) == 0 ||
       strncmp(pcName, "esp_", 4) == 0 ||
       strncmp(pcName, "IDLE", 4) == 0 ||
+      strncmp(pcName, "sdio_", 5) == 0 ||
+      strncmp(pcName, "rpc_", 4) == 0 ||
+      strcmp(pcName, "main") == 0 ||
       strcmp(pcName, "tiT") == 0 ||
       strcmp(pcName, "sys_evt") == 0 ||
       strcmp(pcName, "wifi") == 0) {
@@ -45,9 +48,13 @@ BaseType_t __wrap_xTaskCreatePinnedToCore(
   if (!should_wrap_task(pcName, (uint32_t)usStackDepth) ||
       pxTaskCode == eos_proc_wrap_freertos ||
       (void *)pxTaskCode == (void *)eos_proc_wrap_pthread) {
-    return __real_xTaskCreatePinnedToCore(pxTaskCode, pcName, usStackDepth,
-                                          pvParameters, uxPriority,
-                                          pvCreatedTask, xCoreID);
+    BaseType_t ret = __real_xTaskCreatePinnedToCore(pxTaskCode, pcName, usStackDepth,
+                                                    pvParameters, uxPriority,
+                                                    pvCreatedTask, xCoreID);
+    if (ret == pdPASS && pvCreatedTask && *pvCreatedTask) {
+      eos_proc_task_classify(*pvCreatedTask, pcName);
+    }
+    return ret;
   }
 
   eos_pwrap_t *pwrap = eos_proc_wrap_prepare((void *)pxTaskCode, pvParameters);
@@ -59,12 +66,16 @@ BaseType_t __wrap_xTaskCreatePinnedToCore(
   EOS_LOGW("Runing RTOS task %s: core=%d,stack=%d,priority=%d\n",
            pcName ? pcName : "unnamed", (int)xCoreID, (int)usStackDepth,
            (int)uxPriority);
+  bool prev_h = eos_proc_heap_tracking_disable();
   BaseType_t rc =
       __real_xTaskCreatePinnedToCore(eos_proc_wrap_freertos, pcName, usStackDepth,
                                      pwrap, uxPriority, pvCreatedTask, xCoreID);
+  eos_proc_heap_tracking_restore(prev_h);
 
   if (rc != pdPASS) {
     free(pwrap);
+  } else if (pvCreatedTask && *pvCreatedTask) {
+    eos_proc_task_classify(*pvCreatedTask, pcName);
   }
 
   return rc;
@@ -79,9 +90,13 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
   if (!should_wrap_task(pcName, ulStackDepth) ||
       pxTaskCode == eos_proc_wrap_freertos ||
       (void *)pxTaskCode == (void *)eos_proc_wrap_pthread) {
-    return __real_xTaskCreateStaticPinnedToCore(
+    TaskHandle_t h = __real_xTaskCreateStaticPinnedToCore(
         pxTaskCode, pcName, ulStackDepth, pvParameters, uxPriority,
         pxStackBuffer, pxTaskBuffer, xCoreID);
+    if (h) {
+      eos_proc_task_classify(h, pcName);
+    }
+    return h;
   }
 
   eos_pwrap_t *pwrap = eos_proc_wrap_prepare((void *)pxTaskCode, pvParameters);
@@ -93,12 +108,16 @@ TaskHandle_t __wrap_xTaskCreateStaticPinnedToCore(
   EOS_LOGW("Runing RTOS task %s: core=%d,stack=%d,priority=%d\n",
            pcName ? pcName : "unnamed", (int)xCoreID, (int)ulStackDepth,
            (int)uxPriority);
+  bool prev_hs = eos_proc_heap_tracking_disable();
   TaskHandle_t handle = __real_xTaskCreateStaticPinnedToCore(
       eos_proc_wrap_freertos, pcName, ulStackDepth, pwrap, uxPriority,
       pxStackBuffer, pxTaskBuffer, xCoreID);
+  eos_proc_heap_tracking_restore(prev_hs);
 
   if (!handle) {
     free(pwrap);
+  } else {
+    eos_proc_task_classify(handle, pcName);
   }
 
   return handle;

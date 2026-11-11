@@ -26,6 +26,13 @@ typedef enum {
 
 typedef struct eos_proc_t eos_proc_t;
 
+// Process memory tracking entry
+typedef struct {
+  void *ptr;
+  size_t size;
+  bool is_psram;
+} eos_memblock_t;
+
 struct eos_proc_t {
   // Identification & Hierarchy
   pid_t pid;
@@ -50,11 +57,13 @@ struct eos_proc_t {
   // File descriptors in use (PSRAM-backed) & mapping
   kvec_psram_t(int) fds;
   kvec_psram_t(DIR *) dirs;
-  int fd_map[FD_SETSIZE];
+  kvec_psram_t(int) fd_map;
 
   // Memory block allocations (Internal SRAM kvec_t for low-latency allocation tracking)
-  kvec_t(void *) memblocks;
+  kvec_t(eos_memblock_t) memblocks;
   pthread_mutex_t mem_mutex;
+  size_t heap_sram;
+  size_t heap_psram;
 
   // Thread membership & Synchronization
   TaskHandle_t main_thread;
@@ -109,9 +118,40 @@ int eos_proc_setenv(const char *name, const char *value, int overwrite);
 int eos_proc_unsetenv(const char *name);
 char **eos_proc_get_environ(void);
 
-// Memory block allocation tracking
+// Memory block allocation tracking & registry
 void eos_proc_reg_memblock(void *block);
 void eos_proc_unreg_memblock(void *block);
+void eos_proc_mem_insert(eos_proc_t *proc, void *ptr, size_t size, bool is_psram);
+void eos_proc_mem_realloc(eos_proc_t *proc, void *old_ptr, void *new_ptr, size_t new_size, bool is_psram);
+void eos_proc_mem_remove(eos_proc_t *proc, void *ptr);
+int eos_mem_adopt(void *ptr, pid_t target_pid);
+
+// Task flags bitmask representation
+#define EOS_TASK_FLAG_IN_HEAP_WRAP   (1U << 0)
+#define EOS_TASK_FLAG_SYSTEM         (1U << 1)
+#define EOS_TASK_FLAG_LWIP           (1U << 2)
+#define EOS_TASK_FLAG_CLASSIFIED     (1U << 3)
+#define EOS_TASK_KERNEL_DEPTH_SHIFT  4
+#define EOS_TASK_KERNEL_DEPTH_MASK   0x3FFU
+#define EOS_TASK_HEAP_DIS_SHIFT      14
+#define EOS_TASK_HEAP_DIS_MASK       0x3FFU
+
+bool eos_proc_task_is_lwip(void);
+bool eos_proc_task_is_system(void);
+void eos_proc_task_classify(TaskHandle_t task, const char *name);
+
+// Kernel execution context
+bool eos_proc_enter_kernel(void);
+void eos_proc_leave_kernel(bool prev);
+bool eos_proc_is_kernel(void);
+
+// Process heap tracking toggle helpers (controls tracking of internal metadata)
+bool eos_proc_heap_tracking_disable(void);
+void eos_proc_heap_tracking_restore(bool prev);
+bool eos_proc_heap_tracking_is_disabled(void);
+bool eos_proc_in_heap_wrap(void);
+void eos_proc_set_in_heap_wrap(bool val);
+void eos_proc_task_flags_cleanup(void *task);
 
 // File descriptor & directory tracking
 void eos_proc_reg_fd(int fd);
@@ -133,6 +173,8 @@ eos_proc_fd_snapshot_t eos_proc_snapshot_fds(void);
 void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap);
 
 // Thread management & wrapping
+int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
+                          uint32_t stack_size, bool prefer_psram, pthread_t *thread_out);
 void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread);
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread);
 uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc);
@@ -148,3 +190,27 @@ eos_pwrap_t *eos_proc_wrap_prepare(void *thread_start, void *thread_data);
 void *eos_proc_wrap_pthread(void *data);
 void eos_proc_wrap_freertos(void *data);
 size_t eos_thread_stack_high_water_mark(void);
+
+// PSRAM kvec FD mapping helpers
+static inline int eos_proc_fd_map_get(const eos_proc_t *proc, int fd) {
+  if (!proc || fd < 0 || (size_t)fd >= kv_size(proc->fd_map))
+    return -1;
+  return kv_A(proc->fd_map, fd);
+}
+
+static inline void eos_proc_fd_map_set(eos_proc_t *proc, int fd, int real_fd) {
+  if (!proc || fd < 0) return;
+  bool prev_h = eos_proc_heap_tracking_disable();
+  while (kv_size(proc->fd_map) <= (size_t)fd) {
+    kv_push(int, proc->fd_map, -1);
+  }
+  kv_A(proc->fd_map, fd) = real_fd;
+  eos_proc_heap_tracking_restore(prev_h);
+}
+
+static inline void eos_proc_fd_map_reset(eos_proc_t *proc) {
+  if (!proc) return;
+  for (size_t i = 0; i < kv_size(proc->fd_map); i++) {
+    kv_A(proc->fd_map, i) = -1;
+  }
+}

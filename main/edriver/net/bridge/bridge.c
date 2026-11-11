@@ -14,7 +14,7 @@
 static int bridge_set_napt(bool enable) {
   eos_dev_t *wdev = eos_dev_find_by_name("wifi0");
   if (wdev) {
-    return eos_dev_ioctl_call(wdev, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_NAPT, enable);
+    return eos_dev_ioctl(wdev, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_NAPT, enable);
   }
   return 0;
 }

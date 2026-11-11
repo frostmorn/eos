@@ -48,5 +48,5 @@ EOS provides declarative board configurations under `main/eboard/`:
 
 ## Topic Index
 
-*   [Development Guide](./DEVELOPMENT.md) — Environment setup, target board configuration, build commands, and debugging workflows.
+*   [Development & Agent Guide](./AGENTS.md) — Environment setup, target board configuration, build commands, architecture guidelines, and debugging workflows.
 *   [Documentation Center](./docs/Readme.md) — Comprehensive architecture and driver scope guides.

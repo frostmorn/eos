@@ -163,6 +163,107 @@ static void test_kvec(test_ctx_t *ctx) {
   kv_init_caps(vc, 0x1234);
   report_test(ctx, "kvec: kv_init_caps sets custom capabilities", vc.caps == 0x1234);
   kv_destroy(vc);
+
+  // kv_pushp and kv_last tests
+  kvec_t(int) vp_test;
+  kv_init(vp_test);
+  int *p_elem = kv_pushp(int, vp_test);
+  report_test(ctx, "kvec: kv_pushp returns valid pointer and increments size", p_elem != NULL && kv_size(vp_test) == 1);
+  *p_elem = 777;
+  report_test(ctx, "kvec: kv_last retrieves element pushed via pushp", kv_last(vp_test) == 777);
+  kv_last(vp_test) = 888;
+  report_test(ctx, "kvec: kv_last lvalue assignment updates value", kv_A(vp_test, 0) == 888);
+  kv_destroy(vp_test);
+
+  // kvec_insert and kvec_drop order preservation
+  kvec_t(int) v_order;
+  kv_init(v_order);
+  kv_push(int, v_order, 10);
+  kv_push(int, v_order, 20);
+  kv_push(int, v_order, 30);
+  // Insert in middle (index 1 -> 15)
+  kv_insert(int, v_order, 1, 15);
+  report_test(ctx, "kvec: kv_insert in middle shifts right [10, 15, 20, 30]",
+              kv_size(v_order) == 4 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 15 &&
+              kv_A(v_order, 2) == 20 && kv_A(v_order, 3) == 30);
+  // Insert at front (index 0 -> 5)
+  kv_insert(int, v_order, 0, 5);
+  report_test(ctx, "kvec: kv_insert at index 0 shifts right [5, 10, 15, 20, 30]",
+              kv_size(v_order) == 5 && kv_A(v_order, 0) == 5 && kv_A(v_order, 1) == 10);
+  // Insert at end (index == size -> 35)
+  kv_insert(int, v_order, kv_size(v_order), 35);
+  report_test(ctx, "kvec: kv_insert at end appends [..., 30, 35]",
+              kv_size(v_order) == 6 && kv_last(v_order) == 35);
+
+  // Drop from middle (index 2: removes 15, leaves [5, 10, 20, 30, 35])
+  kv_drop(int, v_order, 2);
+  report_test(ctx, "kvec: kv_drop from middle preserves order [5, 10, 20, 30, 35]",
+              kv_size(v_order) == 5 && kv_A(v_order, 0) == 5 && kv_A(v_order, 1) == 10 &&
+              kv_A(v_order, 2) == 20 && kv_A(v_order, 3) == 30 && kv_A(v_order, 4) == 35);
+  // Drop from front (index 0: removes 5, leaves [10, 20, 30, 35])
+  kv_drop(int, v_order, 0);
+  report_test(ctx, "kvec: kv_drop from front preserves order [10, 20, 30, 35]",
+              kv_size(v_order) == 4 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 20);
+  // Drop from back (index size - 1: removes 35, leaves [10, 20, 30])
+  kv_drop(int, v_order, kv_size(v_order) - 1);
+  report_test(ctx, "kvec: kv_drop from back preserves order [10, 20, 30]",
+              kv_size(v_order) == 3 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 20 && kv_A(v_order, 2) == 30);
+  kv_destroy(v_order);
+
+  // kv_shrink test
+  kvec_t(int) v_shrink;
+  kv_init(v_shrink);
+  for (int i = 0; i < 20; i++) {
+    kv_push(int, v_shrink, i + 1);
+  }
+  kv_resize(int, v_shrink, 64);
+  size_t old_max = kv_max(v_shrink);
+  kv_shrink(int, v_shrink);
+  report_test(ctx, "kvec: kv_shrink compacts capacity to exact size",
+              old_max == 64 && kv_size(v_shrink) == 20 && kv_max(v_shrink) == 20 &&
+              kv_A(v_shrink, 0) == 1 && kv_last(v_shrink) == 20);
+  // kv_shrink on empty vector
+  kvec_t(int) v_empty_shrink;
+  kv_init(v_empty_shrink);
+  kv_shrink(int, v_empty_shrink);
+  report_test(ctx, "kvec: kv_shrink on empty vector leaves size 0 and capacity 0",
+              kv_size(v_empty_shrink) == 0 && kv_max(v_empty_shrink) == 0);
+  kv_destroy(v_shrink);
+  kv_destroy(v_empty_shrink);
+
+  // kv_opt capacity compaction test
+  kvec_t(int) v_opt;
+  kv_init(v_opt);
+  for (int i = 0; i < 48; i++) {
+    kv_push(int, v_opt, i);
+  }
+  size_t opt_cap_before = kv_max(v_opt);
+  // Pop down to 4 elements so n * 3 (12) < m (>48) and m > 8
+  while (kv_size(v_opt) > 4) {
+    (void)kv_pop(v_opt);
+  }
+  kv_opt(int, v_opt);
+  report_test(ctx, "kvec: kv_opt shrinks over-allocated capacity when n * 3 < m",
+              opt_cap_before >= 48 && kv_max(v_opt) < opt_cap_before && kv_size(v_opt) == 4 &&
+              kv_A(v_opt, 0) == 0 && kv_A(v_opt, 3) == 3);
+  kv_destroy(v_opt);
+
+  // PSRAM vector operations: insert, drop, shrink, opt
+  kvec_psram_t(int) v_psram;
+  kv_init(v_psram);
+  for (int i = 0; i < 10; i++) {
+    kv_push(int, v_psram, i * 100);
+  }
+  kv_insert(int, v_psram, 5, 555);
+  report_test(ctx, "kvec: PSRAM kv_insert preserves SPIRAM caps and order",
+              (v_psram.caps & MALLOC_CAP_SPIRAM) != 0 && kv_size(v_psram) == 11 && kv_A(v_psram, 5) == 555);
+  kv_drop(int, v_psram, 5);
+  report_test(ctx, "kvec: PSRAM kv_drop restores order and size",
+              kv_size(v_psram) == 10 && kv_A(v_psram, 5) == 500);
+  kv_shrink(int, v_psram);
+  report_test(ctx, "kvec: PSRAM kv_shrink sets capacity to exact size in PSRAM",
+              kv_max(v_psram) == 10 && (v_psram.caps & MALLOC_CAP_SPIRAM) != 0);
+  kv_destroy(v_psram);
 }
 
 // ── 3. fancytree Generic Hierarchy Tests ───────────────────────

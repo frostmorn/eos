@@ -64,10 +64,8 @@ typedef struct {
   procfs_node_type_t dir_type;
   pid_t pid;
   uint32_t index;
-  pid_t pids[EOS_MAX_PROCS];
-  size_t num_pids;
-  int fds[EOS_MAX_PROCS];
-  size_t num_fds;
+  kvec_psram_t(pid_t) pids;
+  kvec_psram_t(int) fds;
   struct dirent entry;
 } procfs_dir_t;
 
@@ -221,9 +219,9 @@ static char *procfs_gen_devices(void) {
   if (!sb.buf) return NULL;
 
   sbuf_printf(&sb, "%-4s %-14s %-20s %s\n", "ID", "NAME", "DRIVER", "PARENT");
-  for (size_t i = 0; i < EOS_MAX_DEVICES; i++) {
-    eos_dev_t *dev = &eos_devices[i];
-    if (!dev->in_use) continue;
+  for (size_t i = 0; i < eos_dev_count(); i++) {
+    eos_dev_t *dev = eos_dev_get(i);
+    if (!dev || !dev->in_use) continue;
 
     char drv_str[48];
     if (dev->driver) {
@@ -613,7 +611,7 @@ static bool procfs_parse_path(const char *path, procfs_parsed_path_t *out) {
     }
   }
 
-  if (target_pid > 0 && sub) {
+  if (target_pid >= 0 && sub) {
     while (*sub == '/') sub++;
     if (*sub == '\0') {
       out->type = PROCFS_NODE_PID_DIR;
@@ -681,6 +679,10 @@ static char *procfs_gen_pid_status(eos_proc_t *p) {
   sbuf_printf(&sb, "Threads:\t%zu\n", kv_size(p->threads) ? kv_size(p->threads) : (size_t)1);
   sbuf_printf(&sb, "CPUTime:\t%llu\n", (unsigned long long)eos_proc_get_cpu_time_us(p));
   sbuf_printf(&sb, "StartTime:\t%llu\n", (unsigned long long)p->start_time);
+  sbuf_printf(&sb, "FDSize:\t%zu\n", kv_size(p->fds));
+  sbuf_printf(&sb, "VmData:\t%zu kB\n", (p->heap_sram + p->heap_psram) / 1024);
+  sbuf_printf(&sb, "HeapSRAM:\t%zu\n", p->heap_sram);
+  sbuf_printf(&sb, "HeapPSRAM:\t%zu\n", p->heap_psram);
 
   return sb.buf;
 }
@@ -751,8 +753,9 @@ static char *procfs_gen_pid_fd_info(eos_proc_t *p, int fd) {
   if (!sb.buf) return NULL;
 
   int real_fd = fd;
-  if (fd >= 0 && fd < FD_SETSIZE && p->fd_map[fd] >= 0) {
-    real_fd = p->fd_map[fd];
+  int mfd = eos_proc_fd_map_get(p, fd);
+  if (mfd >= 0) {
+    real_fd = mfd;
   }
 
   sbuf_printf(&sb, "pos:\t0\nflags:\t0%o\nreal_fd:\t%d\n", O_RDWR, real_fd);
@@ -1062,23 +1065,27 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
   dir->dir_type = parsed.type;
   dir->pid = parsed.pid;
   dir->index = 0;
+  kv_init(dir->pids);
+  kv_init(dir->fds);
 
   if (parsed.type == PROCFS_NODE_ROOT) {
-    dir->num_pids = eos_proc_get_all_pids(dir->pids, EOS_MAX_PROCS);
+    pid_t temp_pids[EOS_MAX_PROCS];
+    size_t count = eos_proc_get_all_pids(temp_pids, EOS_MAX_PROCS);
+    for (size_t i = 0; i < count; i++) {
+      kv_push(pid_t, dir->pids, temp_pids[i]);
+    }
   } else if (parsed.type == PROCFS_NODE_PID_FD_DIR) {
     eos_proc_t p;
     if (eos_proc_get_copy(parsed.pid, &p)) {
-      size_t count = 0;
-      for (int fd = 0; fd < 3 && count < EOS_MAX_PROCS; fd++) {
-        dir->fds[count++] = fd;
+      for (int fd = 0; fd < 3; fd++) {
+        kv_push(int, dir->fds, fd);
       }
-      for (size_t i = 0; i < kv_size(p.fds) && count < EOS_MAX_PROCS; i++) {
+      for (size_t i = 0; i < kv_size(p.fds); i++) {
         int v = kv_A(p.fds, i);
         if (v >= 3) {
-          dir->fds[count++] = v;
+          kv_push(int, dir->fds, v);
         }
       }
-      dir->num_fds = count;
     }
   }
 
@@ -1110,8 +1117,8 @@ static struct dirent *procfs_readdir(void *ctx, DIR *pdir) {
     }
 
     size_t pid_idx = dir->index - PROC_ENTRY_COUNT;
-    if (pid_idx < dir->num_pids) {
-      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", (int)dir->pids[pid_idx]);
+    if (pid_idx < kv_size(dir->pids)) {
+      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", (int)kv_A(dir->pids, pid_idx));
       dir->entry.d_type = DT_DIR;
       dir->index++;
       return &dir->entry;
@@ -1149,8 +1156,8 @@ static struct dirent *procfs_readdir(void *ctx, DIR *pdir) {
       return &dir->entry;
     }
     size_t fd_idx = dir->index - 2;
-    if (fd_idx < dir->num_fds) {
-      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", dir->fds[fd_idx]);
+    if (fd_idx < kv_size(dir->fds)) {
+      snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", kv_A(dir->fds, fd_idx));
       dir->entry.d_type = DT_CHR;
       dir->index++;
       return &dir->entry;
@@ -1177,7 +1184,12 @@ static void procfs_seekdir(void *ctx, DIR *pdir, long offset) {
 
 static int procfs_closedir(void *ctx, DIR *pdir) {
   (void)ctx;
-  if (pdir) free(pdir);
+  if (pdir) {
+    procfs_dir_t *dir = (procfs_dir_t *)pdir;
+    kv_destroy(dir->pids);
+    kv_destroy(dir->fds);
+    free(dir);
+  }
   return 0;
 }
 

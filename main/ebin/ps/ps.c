@@ -215,6 +215,7 @@ int ps_main(int argc, char **argv) {
     }
   }
 
+  closedir(d);
   free(procs);
   return 0;
 }

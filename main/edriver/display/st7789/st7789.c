@@ -139,8 +139,12 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
     vTaskDelay(pdMS_TO_TICKS(10));
   }
 
-  spi_host_device_t host =
-      (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+  spi_host_device_t host = SPI2_HOST;
+  if (dev->parent) {
+    if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SPI_IOCTL_GET_HOST, &host) != 0) {
+      host = (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+    }
+  }
   int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_40M);
 
   // Create LCD SPI IO — esp_lcd handles DC toggling internally

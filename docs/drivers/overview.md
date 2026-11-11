@@ -98,18 +98,29 @@ When a device is detached (`devctl detach <name>` or recursive tree teardown), `
 
 ---
 
-## 4. Cross-Driver Communication via IOCTL
+## 4. Cross-Driver & Bus Communication via Device Tree (`eos_dev_*`)
 
-To enforce strict architectural decoupling:
-* Drivers must **never invoke loose C functions** in other drivers directly.
-* All parent-child and peer-device interactions must proceed through `eos_dev_ioctl_call()`:
+To enforce strict architectural decoupling and prevent bypasses of the device hierarchy:
+* **Zero Public Device or Bus APIs:** There are no standalone C library functions or header APIs for interacting with buses or devices (such as `scan_i2c_bus` or `sdio_*`).
+* **Userspace Interacts Strictly via VFS:** User applications, utilities (`ebin`), and shell scripts communicate with devices exclusively via standard POSIX file operations (`open`, `read`, `write`, `close`, `ioctl`, `opendir`, `closedir`).
+* **Kernel & Inter-Driver Interactions via Device Tree:** Communication between drivers (e.g. child device to parent bus, or between cooperating drivers) must **never open files via VFS** (`open("/dev/...")`) and must never invoke direct driver functions. Instead, drivers interact strictly through `eos_dev_*` operations on device tree nodes (`dev->parent`):
 ```c
-int eos_dev_ioctl_call(eos_dev_t *dev, int req, void *arg);
+// Device tree operations (main/ecore/dev.h):
+int eos_dev_open(eos_dev_t *dev, const char *path, int flags, int mode);
+int eos_dev_close(eos_dev_t *dev, int fd);
+ssize_t eos_dev_read(eos_dev_t *dev, int fd, void *dst, size_t size);
+ssize_t eos_dev_write(eos_dev_t *dev, int fd, const void *data, size_t size);
+off_t eos_dev_lseek(eos_dev_t *dev, int fd, off_t offset, int whence);
+ssize_t eos_dev_pread(eos_dev_t *dev, int fd, void *dst, size_t size, off_t offset);
+ssize_t eos_dev_pwrite(eos_dev_t *dev, int fd, const void *src, size_t size, off_t offset);
+int eos_dev_ioctl(eos_dev_t *dev, int fd, int cmd, ...);
+int eos_dev_ioctl_call(eos_dev_t *dev, int fd, int cmd, ...);
+DIR *eos_dev_opendir(eos_dev_t *dev, const char *path);
+struct dirent *eos_dev_readdir(eos_dev_t *dev, DIR *pdir);
+int eos_dev_closedir(eos_dev_t *dev, DIR *pdir);
 ```
-* Example: Child Wi-Fi station driver (`sta0`) configuring its parent radio (`wifi0`):
-```c
-eos_dev_ioctl_call(dev->parent, EOS_WIFI_IOCTL_SET_MODE, (void *)WIFI_MODE_STA);
-```
+* **Bus Attachment & Child Protocol:** A child driver communicates with its parent controller using `eos_dev_read`, `eos_dev_write`, and `eos_dev_ioctl` on `dev->parent`. For example, an I2C sensor driver writes transactions to its parent I2C bus via `eos_dev_write(dev->parent, ...)`, and a Wi-Fi station driver configures mode via `eos_dev_ioctl(dev->parent, EOS_DEV_IOCTL_FD_UNUSED, EOS_WIFI_IOCTL_SET_MODE, (void *)WIFI_MODE_STA)`.
+* **Device Enumeration via `opendir`/`readdir`:** Device discovery on a bus or `/dev` is performed strictly by opening and reading the directory (`opendir`, `readdir`), triggered after initiating bus probing via an `ioctl` (e.g. `EOS_I2C_IOCTL_PROBE`).
 
 ---
 

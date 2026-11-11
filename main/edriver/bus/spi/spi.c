@@ -63,62 +63,21 @@ bool driver_bus_spi_init(eos_dev_t *dev) {
 
 // ── ioctl ─────────────────────────────────────────────────────
 
-/*
-int driver_bus_spi_ioctl(eos_dev_t *dev_bus, int cmd, va_list args) {
-  spi_state_t *state = dev_bus->state;
+int driver_bus_spi_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
+  (void)fd;
+  spi_state_t *state = dev->state;
+  if (!state) return -1;
 
   switch (cmd) {
-  case EOS_BUS_IOCTL_KID_ATTACH: {
-    // eos_dev_t *child = va_arg(args, eos_dev_t *);
-
-    // // Claim CS pin for child
-    // int32_t cs = eos_pin_get_no(child->pins, "cs_ena_pretrans");
-    // if (!eos_cap_alloc(EOS_CAPS_GPIO, cs, child)) {
-    //   return false;
-    // }
-
-    // // Add device to SPI bus
-    // spi_dev_state_t *dev_state = malloc(sizeof(spi_dev_state_t));
-    // if (!dev_state) {
-    //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
-    //   return false;
-    // }
-
-    // dev_state->dev_cfg = (spi_device_interface_config_t){
-    //     .clock_speed_hz =
-    //         eos_cfg_get_i(child->cfg, "clock_speed_hz", SPI_MASTER_FREQ_8M),
-    //     .spics_io_num = cs,
-    //     .queue_size = 1,
-    // };
-
-    // esp_err_t err = spi_bus_add_device(state->host, &dev_state->dev_cfg,
-    //                                    &dev_state->handle);
-    // if (err != ESP_OK) {
-    //   eos_cap_free(EOS_CAPS_GPIO, cs, child);
-    //   free(dev_state);
-    //   return false;
-    // }
-
-    // child->state = dev_state;
-    return true;
-  }
-
-  case EOS_BUS_IOCTL_KID_DETACH: {
-    eos_dev_t *child = va_arg(args, eos_dev_t *);
-    spi_dev_state_t *dev_state = child->state;
-    if (dev_state) {
-      spi_bus_remove_device(dev_state->handle);
-      eos_cap_free(EOS_CAPS_GPIO, eos_pin_get_no(child->pins, "cs"), child);
-      free(dev_state);
-      child->state = NULL;
+    case EOS_SPI_IOCTL_GET_HOST: {
+      spi_host_device_t *out = va_arg(args, spi_host_device_t *);
+      if (out) *out = state->host;
+      return 0;
     }
-    return true;
+    default:
+      return -1;
   }
-  }
-
-  return 0;
 }
-*/
 
 void driver_bus_spi_shutdown(eos_dev_t *dev) {
   spi_state_t *state = dev->state;
@@ -135,12 +94,11 @@ void driver_bus_spi_shutdown(eos_dev_t *dev) {
 }
 
 EOS_DRV_ATTR eos_drv_t driver_bus_spi = {EOS_DRV_INIT,
-                                               .scope = "bus",
-                                               .name = "spi",
-                                               .devname = "spi",
-                                               .init = driver_bus_spi_init,
-                                              // .ioctl = driver_bus_spi_ioctl,
-                                               .shutdown =
-                                                   driver_bus_spi_shutdown};
+                                         .scope = "bus",
+                                         .name = "spi",
+                                         .devname = "spi",
+                                         .init = driver_bus_spi_init,
+                                         .ioctl = driver_bus_spi_ioctl,
+                                         .shutdown = driver_bus_spi_shutdown};
 
 #endif

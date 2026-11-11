@@ -1,4 +1,5 @@
 #include "pipefs.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
@@ -52,7 +53,7 @@ typedef struct {
 
 static kvec_psram_t(pipe_node_t) pipe_nodes;
 static kvec_psram_t(pipe_fd_t) pipe_fds;
-static pthread_mutex_t pipe_table_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t pipe_table_lock;
 static uint32_t pipe_auto_seq = 0;
 static bool pipefs_initialized = false;
 
@@ -110,6 +111,7 @@ static int pipe_alloc_node_locked(const char *name) {
   }
 
   // Push new node dynamically in PSRAM
+  bool prev_h = eos_proc_heap_tracking_disable();
   pipe_node_t new_node;
   memset(&new_node, 0, sizeof(new_node));
   pthread_mutex_init(&new_node.lock, NULL);
@@ -123,6 +125,7 @@ static int pipe_alloc_node_locked(const char *name) {
   }
   int idx = (int)kv_size(pipe_nodes);
   kv_push(pipe_node_t, pipe_nodes, new_node);
+  eos_proc_heap_tracking_restore(prev_h);
   return idx;
 }
 
@@ -163,8 +166,10 @@ static int pipe_alloc_fd_locked(int pipe_idx, int flags) {
       .pipe_idx = pipe_idx,
       .flags = flags,
   };
+  bool prev_h = eos_proc_heap_tracking_disable();
   int fd = (int)kv_size(pipe_fds);
   kv_push(pipe_fd_t, pipe_fds, new_fd);
+  eos_proc_heap_tracking_restore(prev_h);
   return fd;
 }
 
@@ -630,8 +635,16 @@ void eos_pipefs_init(void) {
   if (pipefs_initialized)
     return;
 
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&pipe_table_lock, &attr);
+  pthread_mutexattr_destroy(&attr);
+
+  bool prev_h = eos_proc_heap_tracking_disable();
   kv_init(pipe_nodes);
   kv_init(pipe_fds);
+  eos_proc_heap_tracking_restore(prev_h);
 
   static const esp_vfs_t vfs = {
       .flags = ESP_VFS_FLAG_CONTEXT_PTR,

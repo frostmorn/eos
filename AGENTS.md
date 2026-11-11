@@ -1,6 +1,8 @@
-# EOS (ESP Operating System) Development Guide
+# EOS (ESP Operating System) Development & Agent Guide
 
 EOS is a lightweight RTOS/OS abstraction layer for ESP32 microcontrollers (ESP32-S3 and ESP32-P4) implementing a **Unified Device Model** (Everything is a file via `/dev` VFS).
+
+This document serves as the authoritative specification, agent guidelines, and architectural rulebook for working with the EOS codebase.
 
 ---
 
@@ -11,16 +13,20 @@ EOS is a lightweight RTOS/OS abstraction layer for ESP32 microcontrollers (ESP32
 *   **Build / Reconfigure / Clean:** `make build`, `make reconfigure`, `make clean`
 *   **Flash / Monitor / QEMU / Debug:** `make flash`, `make monitor`, `make qemu`, `make qemu_graphics`, `make debug`
 *   **Code Generation:** `make driver` (`edriver`), `make bin` (`ebin`) via `tools/codegen.py`
-*   **Audit & Analysis:** `make symbols`, `python3 tools/layer_audit.py`
+*   **Audit & Analysis:** `make symbols`, `python3 tools/layer_audit.py`, `python3 tools/wrapcheck.py`
 
 ---
 
-## 2. Core Development & Design Rules
+## 2. Core Development & Agent Guardrails
 
 1.  **Planning Mode:** Use planning mode (`enter_plan_mode`) for designing and drafting new features before implementation.
-2.  **Mandatory Testing:** Every new feature or bug fix requires corresponding automated tests in `tools/hardware_test.py`.
+2.  **Mandatory Automated Testing:** Every new feature, driver, or bug fix requires corresponding automated tests in `tools/hardware_test.py` with zero regressions across target boards.
 3.  **KISS & Occam's Razor:** Keep solutions simple, direct, and free of over-engineering or redundant fallback paths. Prioritize code reuse via `emisc/`.
 4.  **Universal & Iterative Approach:** Prefer universal, robust abstractions and adopt an iterative refinement process over monolithic changes.
+5.  **Strict Git Commit Prohibition:** The agent must **NEVER** run `git commit`. All changes must be left in the working tree or staged (`git add`) for human review and commit.
+6.  **Continuous Architectural Audit:** All modifications must maintain zero violations across repository audits:
+    *   `python3 tools/wrapcheck.py` (28/28 linker wrapped symbols accounted for and documented).
+    *   `python3 tools/layer_audit.py` (all 15 declarative layer separation rules passed).
 
 ---
 
@@ -62,6 +68,11 @@ Physical targets (ESP32-P4 and ESP32-S3) connect via built-in USB-Serial-JTAG (`
     *   Host serial write calls without non-blocking mode or timeouts lock up inside the Linux kernel `tty_write` when endpoints are unserviced.
 *   **NEVER leave orphaned OpenOCD or GDB processes running in the background**:
     *   OpenOCD claims the USB JTAG interface (`usbfs`). Orphaned processes block all subsequent JTAG access with `LIBUSB_ERROR_IO`.
+
+### Automated & Headless Testing Policy (Zero User Attention)
+*   **No Human Attention:** All tests invoked via `tools/hardware_test.py` or ebin test utilities must execute 100% headlessly and automatically without requiring user attention, button presses, or manual interaction.
+*   **Bounded Timeouts & Self-Tests:** Any diagnostic binary that listens on an input stream or can wait for events (e.g. `test_input`, `test_sound`) must implement an automated self-test mode (`--auto`) and bounded timeouts (`-t <ms>`). It must never block indefinitely.
+*   **Single-Consumer Peripheral Race Prevention:** When testing shared device streams (e.g. `/dev/keyboard0`) while a background consumer (such as `launcher` or the LVGL task) is active, never rely on delayed multi-step scripts (`echo ...; test_input`) or sleep yields (`usleep`). Background consumers will race and dequeue the event. Synthetic injection and read verification must execute atomically within the same process.
 
 ### OpenOCD Standard Procedures
 Always use OpenOCD JTAG commands to control the target hardware:

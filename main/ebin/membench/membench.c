@@ -279,6 +279,49 @@ static int membench_main(int argc, char **argv) {
     printf("\n");
   }
 
+  // ── Allocation Registry Overhead Benchmark (F02) ───────────
+  printf("** Allocation Registry Overhead (F02 O(log n) tracking)\n\n");
+  printf("+----------+--------------+--------------+--------------+\n");
+  printf("|  blocks  | alloc us/op  |  free us/op  | total us/op  |\n");
+  printf("+----------+--------------+--------------+--------------+\n");
+
+  static const size_t counts[] = {10, 50, 100, 250, 500};
+  for (size_t c = 0; c < sizeof(counts) / sizeof(counts[0]); c++) {
+    size_t count = counts[c];
+    void **ptrs = (void **)malloc(count * sizeof(void *));
+    if (!ptrs) continue;
+
+    const int iterations = 20;
+    int64_t total_alloc_time = 0;
+    int64_t total_free_time = 0;
+
+    for (int it = 0; it < iterations; it++) {
+      int64_t t0 = esp_timer_get_time();
+      for (size_t i = 0; i < count; i++) {
+        ptrs[i] = malloc(64);
+      }
+      int64_t t1 = esp_timer_get_time();
+      total_alloc_time += (t1 - t0);
+
+      int64_t t2 = esp_timer_get_time();
+      for (size_t i = 0; i < count; i++) {
+        free(ptrs[i]);
+      }
+      int64_t t3 = esp_timer_get_time();
+      total_free_time += (t3 - t2);
+    }
+
+    free(ptrs);
+
+    double alloc_us_per_op = (double)total_alloc_time / (double)(iterations * count);
+    double free_us_per_op = (double)total_free_time / (double)(iterations * count);
+    double total_us_per_op = alloc_us_per_op + free_us_per_op;
+
+    printf("|   %4u   | %12.2f | %12.2f | %12.2f |\n",
+           (unsigned)count, alloc_us_per_op, free_us_per_op, total_us_per_op);
+  }
+  printf("+----------+--------------+--------------+--------------+\n\n");
+
   printf("Benchmark complete.\n\n");
 
   return 0;

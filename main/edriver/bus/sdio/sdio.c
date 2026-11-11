@@ -31,18 +31,47 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
-#include "edriver/bus/sdio/sdio.h"
 #include "emisc/psram_alloc.h"
 
+typedef struct {
+  int slot;
+  int width;
+  uint32_t freq_khz;
+  int clk_pin;
+  int cmd_pin;
+  int d0_pin;
+  int d1_pin;
+  int d2_pin;
+  int d3_pin;
+  int cd_pin;
+  int wp_pin;
+  int rst_pin;
+  int ldo_chan;
+  bool host_initialized;
+  bool slot_initialized;
 #if SOC_SDMMC_HOST_SUPPORTED
-esp_err_t eos_sdio_get_host(eos_dev_t *dev, sdmmc_host_t *out_host) {
+  sdmmc_host_t host_cfg;
+  sdmmc_slot_config_t slot_cfg;
+#if defined(SOC_SDMMC_IO_POWER_EXTERNAL) && SOC_SDMMC_IO_POWER_EXTERNAL
+  sd_pwr_ctrl_handle_t pwr_ctrl_handle;
+#endif
+  sdmmc_card_t card;
+#endif
+  bool card_probed;
+  SemaphoreHandle_t mutex;
+  int attached_count;
+  off_t offset;
+} sdio_state_t;
+
+#if SOC_SDMMC_HOST_SUPPORTED
+static esp_err_t sdio_get_host(eos_dev_t *dev, sdmmc_host_t *out_host) {
   if (!dev || !dev->state || !out_host) return ESP_ERR_INVALID_ARG;
   sdio_state_t *st = (sdio_state_t *)dev->state;
   *out_host = st->host_cfg;
   return ESP_OK;
 }
 
-esp_err_t eos_sdio_get_card(eos_dev_t *dev, sdmmc_card_t **out_card) {
+static esp_err_t sdio_get_card(eos_dev_t *dev, sdmmc_card_t **out_card) {
   if (!dev || !dev->state || !out_card) return ESP_ERR_INVALID_ARG;
   sdio_state_t *st = (sdio_state_t *)dev->state;
   if (!st->card_probed) return ESP_ERR_NOT_FOUND;
@@ -50,7 +79,7 @@ esp_err_t eos_sdio_get_card(eos_dev_t *dev, sdmmc_card_t **out_card) {
   return ESP_OK;
 }
 
-esp_err_t eos_sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
+static esp_err_t sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
   if (!dev || !dev->state) return ESP_ERR_INVALID_ARG;
   sdio_state_t *st = (sdio_state_t *)dev->state;
   if (!st->slot_initialized) return ESP_ERR_INVALID_STATE;
@@ -73,7 +102,7 @@ esp_err_t eos_sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
 }
 #endif
 
-esp_err_t eos_sdio_reset_slave(eos_dev_t *dev) {
+static esp_err_t sdio_reset_slave(eos_dev_t *dev) {
   if (!dev || !dev->state) return ESP_ERR_INVALID_ARG;
   sdio_state_t *st = (sdio_state_t *)dev->state;
   if (st->rst_pin < 0) return ESP_ERR_NOT_SUPPORTED;
@@ -422,13 +451,13 @@ int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 #endif
     }
     case EOS_SDIO_IOCTL_RESET: {
-      return (eos_sdio_reset_slave(dev) == ESP_OK) ? 0 : -1;
+      return (sdio_reset_slave(dev) == ESP_OK) ? 0 : -1;
     }
     case EOS_SDIO_IOCTL_GET_CARD: {
 #if SOC_SDMMC_HOST_SUPPORTED
       sdmmc_card_t **out = va_arg(args, sdmmc_card_t **);
       if (!out) { errno = EINVAL; return -1; }
-      return (eos_sdio_get_card(dev, out) == ESP_OK) ? 0 : -1;
+      return (sdio_get_card(dev, out) == ESP_OK) ? 0 : -1;
 #else
       errno = ENOTSUP;
       return -1;
@@ -437,7 +466,7 @@ int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_SDIO_IOCTL_PROBE_CARD: {
 #if SOC_SDMMC_HOST_SUPPORTED
       sdmmc_card_t *out = va_arg(args, sdmmc_card_t *);
-      return (eos_sdio_probe_card(dev, out) == ESP_OK) ? 0 : -1;
+      return (sdio_probe_card(dev, out) == ESP_OK) ? 0 : -1;
 #else
       errno = ENOTSUP;
       return -1;

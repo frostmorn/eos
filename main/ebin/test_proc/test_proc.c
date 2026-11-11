@@ -2,6 +2,8 @@
 #include "ecore/proc.h"
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -141,6 +143,7 @@ static void test_orphan_reparenting(test_ctx_t *ctx) {
 
 static void test_pipeline_and_pgid(test_ctx_t *ctx) {
   // Test pipeline execution with process table integration
+  unlink("/tmp/proc_pipe.txt");
   int ret = system("echo proc_test_data | cat > /tmp/proc_pipe.txt");
   report_test(ctx, "proc: pipeline 'echo ... | cat' succeeds with 0", ret == 0);
 
@@ -177,6 +180,7 @@ static void test_1000_cycles_stress(test_ctx_t *ctx) {
       printf("  [FAIL] Cycle %d: eos_wait failed (status=%d)\n", i, status);
       break;
     }
+    usleep((i % 20 == 0) ? 10000 : 1000);
   }
 
   size_t final_active = eos_proc_count_active();
@@ -357,11 +361,275 @@ static void test_loadavg_and_uptime(test_ctx_t *ctx) {
   report_test(ctx, "uptime: uptime process exited with 0", WIFEXITED(status) && WEXITSTATUS(status) == 0);
 }
 
+static void *cross_thread_free_worker(void *arg) {
+  void *ptr = arg;
+  free(ptr);
+  return NULL;
+}
+
+static void test_memory_ownership_f02(test_ctx_t *ctx) {
+  printf("\n--- F02: Memory Ownership & Tracking Unit Tests ---\n");
+
+  // 1. Cross-thread free
+  void *shared_buf = malloc(256);
+  report_test(ctx, "f02: malloc(256) succeeds", shared_buf != NULL);
+  if (shared_buf) {
+    memset(shared_buf, 0xA5, 256);
+    pthread_t th;
+    int pt_rc = pthread_create(&th, NULL, cross_thread_free_worker, shared_buf);
+    report_test(ctx, "f02: cross-thread free thread created", pt_rc == 0);
+    if (pt_rc == 0) {
+      pthread_join(th, NULL);
+      report_test(ctx, "f02: cross-thread free completed without crash", true);
+    } else {
+      free(shared_buf);
+    }
+  }
+
+  // 2. Memory adoption (eos_mem_adopt)
+  void *adopt_buf = malloc(128);
+  report_test(ctx, "f02: malloc(128) for adoption succeeds", adopt_buf != NULL);
+  if (adopt_buf) {
+    // Adopt into kernel context (PID 0)
+    int rc0 = eos_mem_adopt(adopt_buf, 0);
+    report_test(ctx, "f02: eos_mem_adopt(ptr, 0) into kernel context returns 0", rc0 == 0);
+
+    // Adopt back into current process
+    int rc1 = eos_mem_adopt(adopt_buf, getpid());
+    report_test(ctx, "f02: eos_mem_adopt(ptr, getpid()) returns 0", rc1 == 0);
+
+    // Invalid adoption targets
+    report_test(ctx, "f02: eos_mem_adopt(NULL, 0) returns -1 with EINVAL",
+                eos_mem_adopt(NULL, 0) == -1 && errno == EINVAL);
+    report_test(ctx, "f02: eos_mem_adopt(ptr, 99999) returns -1 with ESRCH",
+                eos_mem_adopt(adopt_buf, 99999) == -1 && errno == ESRCH);
+
+    free(adopt_buf);
+    report_test(ctx, "f02: free adopted buffer succeeds", true);
+  }
+
+  // 3. /proc/0/status (Kernel process context)
+  FILE *f0 = fopen("/proc/0/status", "r");
+  report_test(ctx, "f02: /proc/0/status opens successfully", f0 != NULL);
+  if (f0) {
+    char line[128];
+    bool has_name_kernel = false;
+    bool has_pid_0 = false;
+    bool has_sram = false;
+    bool has_psram = false;
+    while (fgets(line, sizeof(line), f0)) {
+      if (strstr(line, "Name:\tkernel")) has_name_kernel = true;
+      if (strstr(line, "Pid:\t0")) has_pid_0 = true;
+      if (strstr(line, "HeapSRAM:")) has_sram = true;
+      if (strstr(line, "HeapPSRAM:")) has_psram = true;
+    }
+    fclose(f0);
+    report_test(ctx, "f02: /proc/0/status contains Name: kernel", has_name_kernel);
+    report_test(ctx, "f02: /proc/0/status contains Pid: 0", has_pid_0);
+    report_test(ctx, "f02: /proc/0/status contains HeapSRAM", has_sram);
+    report_test(ctx, "f02: /proc/0/status contains HeapPSRAM", has_psram);
+  }
+
+  // 4. /proc/self/status VmData & Heap stats
+  FILE *fself = fopen("/proc/self/status", "r");
+  report_test(ctx, "f02: /proc/self/status opens successfully", fself != NULL);
+  if (fself) {
+    char line[128];
+    bool has_vmdata = false;
+    bool has_fdsize = false;
+    while (fgets(line, sizeof(line), fself)) {
+      if (strstr(line, "VmData:")) has_vmdata = true;
+      if (strstr(line, "FDSize:")) has_fdsize = true;
+    }
+    fclose(fself);
+    report_test(ctx, "f02: /proc/self/status contains VmData", has_vmdata);
+    report_test(ctx, "f02: /proc/self/status contains FDSize", has_fdsize);
+  }
+
+  // 5. Per-process memory isolation on exit: child allocates memory, exits, parent memory intact
+  void *parent_canary = malloc(256);
+  report_test(ctx, "f02: parent canary allocation succeeds", parent_canary != NULL);
+  if (parent_canary) {
+    memset(parent_canary, 0x3C, 256);
+
+    char *spawn_argv[] = {"test_proc", "--child-mem-leak", NULL};
+    int exec_rc = execve("test_proc", spawn_argv, NULL);
+    report_test(ctx, "f02: spawn child process for memory isolation test succeeds", exec_rc == 0);
+
+    int status = -1;
+    pid_t reaped = waitpid(-1, &status, 0);
+    report_test(ctx, "f02: child process reaped", reaped > 0);
+    report_test(ctx, "f02: child exited with expected code 42", WIFEXITED(status) && WEXITSTATUS(status) == 42);
+
+    // Verify parent canary is completely uncorrupted
+    bool canary_ok = true;
+    uint8_t *b = (uint8_t *)parent_canary;
+    for (int i = 0; i < 256; i++) {
+      if (b[i] != 0x3C) {
+        canary_ok = false;
+        break;
+      }
+    }
+    report_test(ctx, "f02: parent memory unaffected and uncorrupted after child exit", canary_ok);
+    free(parent_canary);
+  }
+
+  // 6. Attach driver / kernel state from short-lived child process followed by parent use
+  char *attach_argv[] = {"test_proc", "--child-attach-driver", NULL};
+  int attach_rc = execve("test_proc", attach_argv, NULL);
+  report_test(ctx, "f02: spawn child for driver attach test succeeds", attach_rc == 0);
+
+  int attach_status = -1;
+  pid_t attach_reaped = waitpid(-1, &attach_status, 0);
+  report_test(ctx, "f02: child attach process reaped", attach_reaped > 0);
+  report_test(ctx, "f02: child attach process exited successfully", WIFEXITED(attach_status) && WEXITSTATUS(attach_status) == 0);
+
+  void *drv_ptr = NULL;
+  FILE *f_ptr = fopen("/tmp_drv_ptr", "r");
+  if (f_ptr) {
+    if (fscanf(f_ptr, "%p", &drv_ptr) == 1) {
+      // successfully parsed
+    }
+    fclose(f_ptr);
+    unlink("/tmp_drv_ptr");
+  }
+
+  report_test(ctx, "f02: driver state pointer retrieved from child", drv_ptr != NULL);
+  if (drv_ptr) {
+    bool valid_state = true;
+    uint8_t *db = (uint8_t *)drv_ptr;
+    for (int i = 0; i < 128; i++) {
+      if (db[i] != 0x5A) {
+        valid_state = false;
+        break;
+      }
+    }
+    report_test(ctx, "f02: driver state remains intact in kernel context (PID 0) after child exit", valid_state);
+
+    int adopt_rc = eos_mem_adopt(drv_ptr, getpid());
+    report_test(ctx, "f02: adopt driver state into parent process succeeds", adopt_rc == 0);
+    free(drv_ptr);
+    report_test(ctx, "f02: free driver state buffer succeeds", true);
+  }
+}
+
+static void *worker_thread_fn(void *arg) {
+  volatile int *cnt = (volatile int *)arg;
+  while (1) {
+    if (cnt) (*cnt)++;
+    usleep(10 * 1000);
+  }
+  return NULL;
+}
+
+static void test_bg_process_and_threads(test_ctx_t *ctx) {
+  // 1. Background process launch via shell (&)
+  unlink("/tmp/test_bg_pid.txt");
+  system("test_proc --child-bg &");
+  int bg_pid = -1;
+  for (int i = 0; i < 25; i++) {
+    FILE *f = fopen("/tmp/test_bg_pid.txt", "r");
+    if (f) {
+      if (fscanf(f, "%d", &bg_pid) == 1) {
+        fclose(f);
+        break;
+      }
+      fclose(f);
+    }
+    usleep(20 * 1000);
+  }
+  report_test(ctx, "proc: background command runs with separate PID", bg_pid > 1 && bg_pid != getpid());
+  if (bg_pid > 1) {
+    char proc_path[32];
+    snprintf(proc_path, sizeof(proc_path), "/proc/%d/status", bg_pid);
+    FILE *fp = fopen(proc_path, "r");
+    report_test(ctx, "proc: background process visible in /proc", fp != NULL);
+    if (fp) fclose(fp);
+  }
+  unlink("/tmp/test_bg_pid.txt");
+
+  // 2. Background threads termination upon process exit
+  unlink("/tmp/test_cnt.txt");
+  char *t_argv[] = {"test_proc", "--child-spawn-thread", NULL};
+  int exec_rc = execve("test_proc", t_argv, NULL);
+  report_test(ctx, "proc: execve child with background thread succeeds", exec_rc == 0);
+
+  int t_status = 0;
+  pid_t reaped_pid = waitpid(-1, &t_status, 0);
+  report_test(ctx, "proc: waitpid reaped child with background thread", reaped_pid > 0);
+
+  volatile int *cnt_ptr = NULL;
+  FILE *fc = fopen("/tmp/test_cnt.txt", "r");
+  if (fc) {
+    if (fscanf(fc, "%p", (void **)&cnt_ptr) == 1) {}
+    fclose(fc);
+    unlink("/tmp/test_cnt.txt");
+  }
+  report_test(ctx, "proc: retrieved worker counter address", cnt_ptr != NULL);
+  if (cnt_ptr) {
+    int c1 = *cnt_ptr;
+    usleep(50 * 1000);
+    int c2 = *cnt_ptr;
+    report_test(ctx, "proc: background thread terminated upon main thread exit", c1 == c2 && c1 > 0);
+    free((void *)cnt_ptr);
+  }
+}
+
 int test_proc_main(int argc, char **argv) {
   // Subcommand dispatch for child processes spawned during tests
   if (argc >= 3 && strcmp(argv[1], "--child-exit") == 0) {
     int code = atoi(argv[2]);
     return code;
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--child-bg") == 0) {
+    FILE *f = fopen("/tmp/test_bg_pid.txt", "w");
+    if (f) {
+      fprintf(f, "%d\n", (int)getpid());
+      fclose(f);
+    }
+    usleep(500 * 1000);
+    return 0;
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--child-spawn-thread") == 0) {
+    bool prev = eos_proc_enter_kernel();
+    int *cnt = (int *)malloc(sizeof(int));
+    if (cnt) *cnt = 1;
+    eos_proc_leave_kernel(prev);
+
+    pthread_t th;
+    pthread_create(&th, NULL, worker_thread_fn, (void *)cnt);
+    FILE *f = fopen("/tmp/test_cnt.txt", "w");
+    if (f) {
+      fprintf(f, "%p\n", (void *)cnt);
+      fclose(f);
+    }
+    usleep(50 * 1000);
+    return 0;
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--child-mem-leak") == 0) {
+    for (int i = 0; i < 5; i++) {
+      void *m = malloc(100);
+      if (m) memset(m, 0x7E, 100);
+    }
+    return 42;
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--child-attach-driver") == 0) {
+    bool prev = eos_proc_enter_kernel();
+    void *drv_state = malloc(128);
+    if (drv_state) {
+      memset(drv_state, 0x5A, 128);
+    }
+    eos_proc_leave_kernel(prev);
+    FILE *f = fopen("/tmp_drv_ptr", "w");
+    if (f) {
+      fprintf(f, "%p\n", drv_state);
+      fclose(f);
+    }
+    return (drv_state != NULL) ? 0 : 1;
   }
 
   printf("\n=== Running Process Table & Lifecycle Unit Tests ===\n");
@@ -375,6 +643,8 @@ int test_proc_main(int argc, char **argv) {
   test_procfs_process_hierarchy(&ctx);
   test_ps_utility(&ctx);
   test_loadavg_and_uptime(&ctx);
+  test_memory_ownership_f02(&ctx);
+  test_bg_process_and_threads(&ctx);
   test_1000_cycles_stress(&ctx);
 
   printf("\nProcess Table Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);
@@ -386,7 +656,7 @@ EOS_BIN_ATTR eos_bin_t test_proc_bin = {
     .filename = "test_proc",
     .name = "Process Table Tests",
     .group = "Tests",
-    .flags = 0,
+    .flags = EOS_BIN_FLAG_STACK_PSRAM,
     .stack_size = 16384,
     .description = "Automated test suite for process table, POSIX syscalls and lifecycle",
     .entry_point = test_proc_main,

@@ -1,5 +1,6 @@
 #include "dev.h"
 #include "ecore/driver.h"
+#include "ecore/proc.h"
 #include <errno.h>
 #include <stdlib.h>
 
@@ -9,22 +10,31 @@
 // contexts).
 EOS_TREE_DEFINE(eos_dev_t);
 
-#define EOS_ROOT_DEV eos_devices[0]
+static kvec_psram_t(eos_dev_t *) s_devices;
 
-EXT_RAM_BSS_ATTR eos_dev_t eos_devices[EOS_MAX_DEVICES];
+size_t eos_dev_count(void) {
+  return kv_size(s_devices);
+}
+
+eos_dev_t *eos_dev_get(size_t index) {
+  if (index >= kv_size(s_devices))
+    return NULL;
+  return kv_A(s_devices, index);
+}
 
 // Assings per scope id to device
 static bool eos_dev_id_used(eos_dev_t *dev, uint32_t id) {
-  for (uint32_t i = 0; i < EOS_MAX_DEVICES; i++) {
-    eos_dev_t *other = &eos_devices[i];
+  for (size_t i = 0; i < kv_size(s_devices); i++) {
+    eos_dev_t *other = kv_A(s_devices, i);
 
-    if (!other->in_use || other == dev)
+    if (!other || !other->in_use || other == dev)
       continue;
 
     if (other->id != id)
       continue;
 
-    if (strcmp(other->driver->devname, dev->driver->devname) != 0)
+    if (!other->driver || !dev->driver ||
+        strcmp(other->driver->devname, dev->driver->devname) != 0)
       continue;
 
     return true;
@@ -57,33 +67,57 @@ void eos_dev_assign_name(eos_dev_t *dev) {
 }
 
 void eos_devtree_init() {
-  // Inital cleanup
-  bzero(eos_devices, sizeof(eos_devices));
+  bool prev_h = eos_proc_heap_tracking_disable();
+  kv_init(s_devices);
 
-  // Setup root device
-  EOS_ROOT_DEV.driver = eos_drv_find("bus", "root");
-  EOS_ROOT_DEV.in_use = true;
-  eos_dev_assign_id(&EOS_ROOT_DEV);
-  eos_dev_assign_name(&EOS_ROOT_DEV);
+  // Setup root device in PSRAM heap
+  eos_dev_t *root = (eos_dev_t *)eos_psram_calloc_prefer(1, sizeof(eos_dev_t));
+  if (!root) {
+    root = (eos_dev_t *)calloc(1, sizeof(eos_dev_t));
+  }
+  root->driver = eos_drv_find("bus", "root");
+  root->in_use = true;
+  root->fd = -1;
+  kv_push(eos_dev_t *, s_devices, root);
+  eos_dev_assign_id(root);
+  eos_dev_assign_name(root);
+  eos_proc_heap_tracking_restore(prev_h);
 }
 
-eos_dev_t *eos_devtree_root() { return &EOS_ROOT_DEV; }
+eos_dev_t *eos_devtree_root() {
+  if (kv_size(s_devices) == 0) return NULL;
+  return kv_A(s_devices, 0);
+}
 
 eos_dev_t *eos_dev_alloc() {
-  // Find empty device slot
-  for (size_t i = 1; i < EOS_MAX_DEVICES; i++)
-    if (eos_devices[i].in_use == false) {
-      // Prepare slot for usage
-      bzero(&eos_devices[i], sizeof(eos_dev_t));
-      eos_devices[i].in_use = true;
-      eos_devices[i].fd = -1; // indicates not in use
-
-      return &eos_devices[i];
+  bool prev_h = eos_proc_heap_tracking_disable();
+  // Find empty reused device slot (slot 0 is reserved for root)
+  for (size_t i = 1; i < kv_size(s_devices); i++) {
+    eos_dev_t *dev = kv_A(s_devices, i);
+    if (dev && !dev->in_use) {
+      memset(dev, 0, sizeof(eos_dev_t));
+      dev->in_use = true;
+      dev->fd = -1; // indicates not in use
+      eos_proc_heap_tracking_restore(prev_h);
+      return dev;
     }
+  }
 
-  // No slot found
-  errno = ENFILE;
-  return NULL;
+  // Allocate new slot dynamically in PSRAM heap
+  eos_dev_t *dev = (eos_dev_t *)eos_psram_calloc_prefer(1, sizeof(eos_dev_t));
+  if (!dev) {
+    dev = (eos_dev_t *)calloc(1, sizeof(eos_dev_t));
+  }
+  if (!dev) {
+    eos_proc_heap_tracking_restore(prev_h);
+    errno = ENOMEM;
+    return NULL;
+  }
+  dev->in_use = true;
+  dev->fd = -1;
+  kv_push(eos_dev_t *, s_devices, dev);
+  eos_proc_heap_tracking_restore(prev_h);
+  return dev;
 }
 
 static bool eos_dev_is_same_device(eos_dev_t *existing, eos_dev_t *dev) {
@@ -140,8 +174,8 @@ static bool eos_dev_is_same_device(eos_dev_t *existing, eos_dev_t *dev) {
   return true;
 }
 
-// Attaches device to EOS device tree
-int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
+// Attaches device to EOS device tree (internal implementation)
+static int eos_dev_attach_internal(eos_dev_t *dev, eos_dev_t *parent) {
   // Args check
   if (dev == NULL || (!dev->in_use) || dev->driver == NULL) {
     errno = EINVAL;
@@ -164,8 +198,9 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
 
   // Check if driver is a singleton without index and already attached anywhere in devtree
   if (dev->driver->flags & EOS_DRV_FLAG_NO_INDEX) {
-    for (size_t i = 0; i < EOS_MAX_DEVICES; i++) {
-      if (eos_devices[i].in_use && eos_devices[i].driver == dev->driver && &eos_devices[i] != dev) {
+    for (size_t i = 0; i < kv_size(s_devices); i++) {
+      eos_dev_t *d = kv_A(s_devices, i);
+      if (d && d->in_use && d->driver == dev->driver && d != dev) {
         errno = EEXIST;
         return -1;
       }
@@ -203,10 +238,11 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   eos_dev_assign_name(dev);
 
   // Prevent name collisions in devfs
-  for (size_t i = 0; i < EOS_MAX_DEVICES; i++) {
-    if (eos_devices[i].in_use && &eos_devices[i] != dev &&
-        eos_devices[i].name[0] != '\0' &&
-        strcmp(eos_devices[i].name, dev->name) == 0) {
+  for (size_t i = 0; i < kv_size(s_devices); i++) {
+    eos_dev_t *d = kv_A(s_devices, i);
+    if (d && d->in_use && d != dev &&
+        d->name[0] != '\0' &&
+        strcmp(d->name, dev->name) == 0) {
       eos_dev_t_tree_detach(dev);
       errno = EEXIST;
       return -1;
@@ -223,8 +259,35 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
   return 0;
 }
 
-// Detaches device and all it's childs from EOS device tree
-int eos_dev_detach(eos_dev_t *dev) {
+int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent) {
+  // Adopt dynamic pins and config arrays into kernel context (PID 0)
+  // so driver configuration survives calling process exit
+  if (dev) {
+    if (dev->pins) eos_mem_adopt(dev->pins, 0);
+    if (dev->dynamic_pins && dev->pins) {
+      for (eos_pin_t *p = dev->pins; p->key != NULL; p++) {
+        if (p->key) eos_mem_adopt((void *)p->key, 0);
+      }
+    }
+    if (dev->cfg) eos_mem_adopt(dev->cfg, 0);
+    if (dev->dynamic_cfg && dev->cfg) {
+      for (eos_cfg_t *c = dev->cfg; c->key != NULL; c++) {
+        if (c->key) eos_mem_adopt((void *)c->key, 0);
+        if (c->type == EOS_CFG_STR && c->val.s) {
+          eos_mem_adopt((void *)c->val.s, 0);
+        }
+      }
+    }
+  }
+
+  bool prev_kernel = eos_proc_enter_kernel();
+  int res = eos_dev_attach_internal(dev, parent);
+  eos_proc_leave_kernel(prev_kernel);
+  return res;
+}
+
+// Detaches device and all it's childs from EOS device tree (internal implementation)
+static int eos_dev_detach_internal(eos_dev_t *dev) {
   if (dev == NULL || (!dev->in_use)) {
     errno = EINVAL;
     return -1;
@@ -246,7 +309,7 @@ int eos_dev_detach(eos_dev_t *dev) {
   eos_dev_t *child = dev->child;
   while (child != NULL) {
     eos_dev_t *next = child->next;
-    eos_dev_detach(child);
+    eos_dev_detach_internal(child);
     child = next;
   }
 
@@ -283,47 +346,109 @@ int eos_dev_detach(eos_dev_t *dev) {
   return 0;
 }
 
+int eos_dev_detach(eos_dev_t *dev) {
+  bool prev_kernel = eos_proc_enter_kernel();
+  int res = eos_dev_detach_internal(dev);
+  eos_proc_leave_kernel(prev_kernel);
+  return res;
+}
+
 eos_dev_t *eos_dev_find_by_name(const char *name){
   // Obviously invalid params
   if (!name || name[0] == '\0') return NULL;
 
-  for (int i = 0; i < EOS_MAX_DEVICES; i++){
-    if (strcmp(eos_devices[i].name, name) == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "i2c0") == 0 && strcmp(eos_devices[i].name, "i2c") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "gpio0") == 0 && strcmp(eos_devices[i].name, "gpio") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "wifi") == 0 && strcmp(eos_devices[i].name, "wifi0") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "wifi0") == 0 && strcmp(eos_devices[i].name, "wifi") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "sta") == 0 && strcmp(eos_devices[i].name, "sta0") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "sta0") == 0 && strcmp(eos_devices[i].name, "sta") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "ap") == 0 && strcmp(eos_devices[i].name, "ap0") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "ap0") == 0 && strcmp(eos_devices[i].name, "ap") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "br") == 0 && strcmp(eos_devices[i].name, "br0") == 0)
-      return &(eos_devices[i]);
-    if (strcmp(name, "br0") == 0 && strcmp(eos_devices[i].name, "br") == 0)
-      return &(eos_devices[i]);
+  for (size_t i = 0; i < kv_size(s_devices); i++){
+    eos_dev_t *dev = kv_A(s_devices, i);
+    if (!dev || !dev->in_use) continue;
+    if (strcmp(dev->name, name) == 0)
+      return dev;
+    if (strcmp(name, "i2c0") == 0 && strcmp(dev->name, "i2c") == 0)
+      return dev;
+    if (strcmp(name, "gpio0") == 0 && strcmp(dev->name, "gpio") == 0)
+      return dev;
+    if (strcmp(name, "wifi") == 0 && strcmp(dev->name, "wifi0") == 0)
+      return dev;
+    if (strcmp(name, "wifi0") == 0 && strcmp(dev->name, "wifi") == 0)
+      return dev;
+    if (strcmp(name, "sta") == 0 && strcmp(dev->name, "sta0") == 0)
+      return dev;
+    if (strcmp(name, "sta0") == 0 && strcmp(dev->name, "sta") == 0)
+      return dev;
+    if (strcmp(name, "ap") == 0 && strcmp(dev->name, "ap0") == 0)
+      return dev;
+    if (strcmp(name, "ap0") == 0 && strcmp(dev->name, "ap") == 0)
+      return dev;
+    if (strcmp(name, "br") == 0 && strcmp(dev->name, "br0") == 0)
+      return dev;
+    if (strcmp(name, "br0") == 0 && strcmp(dev->name, "br") == 0)
+      return dev;
   }
   return NULL;
 }
 
-// Bridges the va_list-based driver->ioctl() signature back to a normal
-// call site. devfs_ioctl() gets its va_list "for free" from the VFS
-// syscall layer; internal driver-to-driver calls (e.g. a partition
-// asking its parent for its sector size) don't have that, so they need
-// a small variadic shim to open one.
-// TODO: should be a part of ecore/driver ? 
+// Device operations on device tree nodes
+int eos_dev_open(eos_dev_t *dev, const char *path, int flags, int mode) {
+  return eos_drv_open(dev, path, flags, mode);
+}
+
+int eos_dev_close(eos_dev_t *dev, int fd) {
+  return eos_drv_close(dev, fd);
+}
+
+ssize_t eos_dev_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
+  return eos_drv_read(dev, fd, dst, size);
+}
+
+ssize_t eos_dev_write(eos_dev_t *dev, int fd, const void *data, size_t size) {
+  return eos_drv_write(dev, fd, data, size);
+}
+
+off_t eos_dev_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
+  return eos_drv_lseek(dev, fd, offset, whence);
+}
+
+ssize_t eos_dev_pread(eos_dev_t *dev, int fd, void *dst, size_t size,
+                      off_t offset) {
+  return eos_drv_pread(dev, fd, dst, size, offset);
+}
+
+ssize_t eos_dev_pwrite(eos_dev_t *dev, int fd, const void *src, size_t size,
+                       off_t offset) {
+  return eos_drv_pwrite(dev, fd, (void *)src, size, offset);
+}
+
+int eos_dev_ioctl(eos_dev_t *dev, int fd, int cmd, ...) {
+  va_list args;
+  va_start(args, cmd);
+  int ret = eos_drv_ioctl(dev, fd, cmd, args);
+  va_end(args);
+  return ret;
+}
+
 int eos_dev_ioctl_call(eos_dev_t *dev, int fd, int cmd, ...) {
   va_list args;
   va_start(args, cmd);
   int ret = eos_drv_ioctl(dev, fd, cmd, args);
   va_end(args);
   return ret;
+}
+
+DIR *eos_dev_opendir(eos_dev_t *dev, const char *path) {
+  return eos_drv_opendir(dev, path);
+}
+
+struct dirent *eos_dev_readdir(eos_dev_t *dev, DIR *pdir) {
+  return eos_drv_readdir(dev, pdir);
+}
+
+long eos_dev_telldir(eos_dev_t *dev, DIR *pdir) {
+  return eos_drv_telldir(dev, pdir);
+}
+
+void eos_dev_seekdir(eos_dev_t *dev, DIR *pdir, long offset) {
+  eos_drv_seekdir(dev, pdir, offset);
+}
+
+int eos_dev_closedir(eos_dev_t *dev, DIR *pdir) {
+  return eos_drv_closedir(dev, pdir);
 }

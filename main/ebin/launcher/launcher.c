@@ -249,7 +249,7 @@ static void launcher_update_details(launcher_state_t *st) {
     bool has_kbd = (eos_lvgl_get_indev() != NULL);
     if (st->has_launched) {
       if (has_kbd) {
-        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | A:Run B:Exit",
+        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | A:Run",
                  st->last_launched, st->last_exit_code);
       } else {
         snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | Tap app to run",
@@ -257,7 +257,7 @@ static void launcher_update_details(launcher_state_t *st) {
       }
     } else {
       if (has_kbd) {
-        snprintf(sbuf, sizeof(sbuf), "U/D:App L/R:Grp A/ENT:Run C:Mode B:Quit");
+        snprintf(sbuf, sizeof(sbuf), "U/D:App L/R:Grp A/ENT:Run C:Mode");
       } else {
         snprintf(sbuf, sizeof(sbuf), "Tap app to run | Tap grp bar to switch");
       }
@@ -527,7 +527,7 @@ static void launcher_handle_key(launcher_state_t *st, uint16_t key) {
 
   case KEY_ESC:
   case KEY_B:
-    st->should_exit = true;
+    // Dedicated kiosk launcher does not exit on ESC/B
     break;
 
   default:
@@ -687,15 +687,6 @@ int launcher_main(int argc, char **argv) {
   bool launcher_is_active = (access(LAUNCHER_ACTIVE_FILE, F_OK) == 0);
   if (!list_only && launcher_is_active) {
     if (app_to_launch) {
-      if (strcmp(app_to_launch, "-q") == 0 || strcmp(app_to_launch, "--quit") == 0) {
-        FILE *fp = fopen(LAUNCHER_CMD_FILE, "w");
-        if (fp) {
-          fprintf(fp, "QUIT\n");
-          fclose(fp);
-        }
-        printf("launcher: stopping...\n");
-        return 0;
-      }
       FILE *fp = fopen(LAUNCHER_CMD_FILE, "w");
       if (fp) {
         fprintf(fp, "%s\n", app_to_launch);
@@ -779,11 +770,6 @@ int launcher_main(int argc, char **argv) {
         fclose(fp);
       }
       unlink(LAUNCHER_CMD_FILE);
-
-      if (strcmp(target_name, "QUIT") == 0) {
-        st->should_exit = true;
-        break;
-      }
 
       if (target_name[0] != '\0') {
         for (int i = 0; i < st->bin_count; i++) {

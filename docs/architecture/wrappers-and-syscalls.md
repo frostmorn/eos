@@ -33,6 +33,7 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 | `_unlink_r` | `main/ewrap/reent_syscalls.c` | Normalizes path and unlinks files. | Newlib reentrant unlink handler. | `tools/hardware_test.py --suite coreutils` |
 | `_rename_r` | `main/ewrap/reent_syscalls.c` | Normalizes source/destination paths across VFS nodes. | Newlib reentrant rename handler. | `tools/hardware_test.py --suite coreutils` |
 | `opendir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via process CWD and registers `DIR*` handle for auto-close tracking. | Standard POSIX directory open. | `tools/hardware_test.py --suite coreutils` |
+| `readdir` | `main/ewrap/reent_syscalls.c` | Serializes directory traversal using per-stream descriptor lock and disables heap tracking. | Standard POSIX directory entry read. | `tools/hardware_test.py --suite coreutils` |
 | `closedir` | `main/ewrap/reent_syscalls.c` | Untracks directory handle from process context and invokes underlying close. | Standard POSIX directory close. | `tools/hardware_test.py --suite coreutils` |
 | `mkdir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via process CWD. | Standard POSIX directory creation. | `tools/hardware_test.py --suite coreutils` |
 | `chdir` | `main/ewrap/realpath.c` | Updates process Current Working Directory in process context (`eos_proc_t`). | POSIX directory change. | `tools/hardware_test.py --suite coreutils` |
@@ -43,7 +44,9 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 | `pthread_create` | `main/ewrap/pthread.c` | Injects thread wrapper (`eos_twrap`), process context inheritance, and manifest PSRAM stack attributes. | ESP-IDF pthread implementation. | `main/ebin/test_sdl`, GUI ebin launches |
 | `xTaskCreatePinnedToCore` | `main/ewrap/freertos_tasks.c` | Captures FreeRTOS tasks spawned dynamically, initializing EOS process context association. | FreeRTOS task creation primitive. | Thread tracking & cleanup tests |
 | `xTaskCreateStaticPinnedToCore` | `main/ewrap/freertos_tasks.c` | Captures statically allocated FreeRTOS tasks to attach EOS process context. | FreeRTOS static task creation primitive. | Thread tracking & cleanup tests |
-| `heap_caps_aligned_alloc_base` | `main/ewrap/heap_caps.c` | Tracks dynamic memory allocations per process in `memblocks` for leak prevention. | Core ESP-IDF heap allocator backend for all malloc calls. | `tools/hardware_test.py --suite emisc` |
+| `heap_caps_malloc_base` | `main/ewrap/heap_caps.c` | Tracks dynamic memory allocations per process in `memblocks` for leak prevention. | Core ESP-IDF heap allocator backend for malloc calls. | `tools/hardware_test.py --suite proc` |
+| `heap_caps_calloc_base` | `main/ewrap/heap_caps.c` | Tracks dynamic memory allocations per process in `memblocks` for leak prevention. | Core ESP-IDF heap allocator backend for calloc calls. | `tools/hardware_test.py --suite proc` |
+| `heap_caps_aligned_alloc_base` | `main/ewrap/heap_caps.c` | Tracks dynamic memory allocations per process in `memblocks` for leak prevention. | Core ESP-IDF heap allocator backend for all aligned malloc calls. | `tools/hardware_test.py --suite emisc` |
 | `heap_caps_realloc_base` | `main/ewrap/heap_caps.c` | Updates tracked allocation pointers in process context upon reallocation. | Core ESP-IDF heap reallocator backend. | `tools/hardware_test.py --suite emisc` |
 | `heap_caps_free` | `main/ewrap/heap_caps.c` | Removes tracked memory block from process context and frees underlying heap memory. | Core ESP-IDF heap free backend. | `tools/hardware_test.py --suite emisc` |
 | `usb_serial_jtag_is_connected` | `main/ewrap/reent_syscalls.c` | Overrides ESP-IDF USB Serial/JTAG SOF monitor to keep console VFS active across JTAG resets. | ESP-IDF USB Serial/JTAG connection monitor. | Hardware testing on ESP32-S3 / ESP32-P4 |
@@ -53,6 +56,8 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 ## 2. Memory Allocation Tracking (`ewrap/heap_caps.c`)
 
 EOS wraps Espressif's underlying heap allocators:
+* `__wrap_heap_caps_malloc_base`
+* `__wrap_heap_caps_calloc_base`
 * `__wrap_heap_caps_aligned_alloc_base`
 * `__wrap_heap_caps_free`
 * `__wrap_heap_caps_realloc_base`
@@ -88,3 +93,41 @@ EOS provides built-in compatibility layers that emulate SDL 1.2 and SDL 2.0 APIs
 
 * **Video Surface & Framebuffer Blitting:** Translates `SDL_SetVideoMode`, `SDL_UpdateRect`, `SDL_CreateWindow`, `SDL_CreateRenderer`, and `SDL_RenderPresent` directly into `/dev/fb0` window IOCTLs and raw RGB565 `write()` streams.
 * **Input Event Translation:** Translates `SDL_PollEvent` by non-blocking polling `/dev/keyboard0` via `EOS_KEYBOARD_IOCTL_POLL`, mapping EOS input keycodes directly into `SDLK_*` events.
+
+---
+
+## 6. Early-Boot, System Tasks & Memory Tracking Invariants (`ewrap/heap_caps.c`)
+
+To guarantee absolute memory isolation, prevent memory tracking recursion, and avoid heap corruption, heap tracking must adhere to strict rules:
+
+### Allocation Tracking Gate Conditions
+Heap allocation tracking into `proc->memblocks` occurs **only** when all of the following conditions are met:
+1. `xTaskGetSchedulerState() == taskSCHEDULER_RUNNING` (FreeRTOS scheduler is active).
+2. `!xPortInIsrContext()` (Not executing within an interrupt service routine).
+3. `!is_system_task()`: Excludes early system tasks (`"main"`, `"IDLE"`, `"ipc*"`, `"sdio_*"`, `"rpc_*"`, `"Tmr Svc"`, `"sys_evt"`, `"wifi"`).
+4. `!eos_proc_in_heap_wrap()`: Thread is not already inside a heap wrapper call (reentrancy lock).
+5. `!eos_proc_heap_tracking_is_disabled()`: Internal kernel operations (such as `kvec` table resizes) explicitly disable tracking via `eos_proc_heap_tracking_disable()`.
+6. `proc != NULL`: An active process context exists for the calling thread.
+
+### Pre-Scheduler & Kernel Process Isolation
+- During early boot before `app_main` initializes the process subsystem, allocations directly route to `__real_heap_caps_*` with zero tracking overhead.
+- Allocations made by the kernel (`s_kernel_proc`, PID 0) are stored in `s_kernel_proc.memblocks` and are **never reaped** by `waitpid()`. When driver state or memory is handed over across processes, `eos_mem_adopt(ptr, target_pid)` safely migrates the ownership record without double-freeing or leaking.
+
+---
+
+## 7. FreeRTOS & POSIX Synchronization Primitives Lifecycle
+
+In ESP-IDF, POSIX `pthread_mutex_t` and `pthread_cond_t` lazily allocate memory dynamically on their first use when initialized with `PTHREAD_MUTEX_INITIALIZER` or `PTHREAD_COND_INITIALIZER`:
+- **The Lazy Allocation Pitfall:** If a static kernel mutex is first locked from within a child process context, the internal `esp_pthread_mutex_t` structure is allocated via `malloc()` and tracked into that child's `memblocks`. When the child process terminates and is reaped via `waitpid()`, the kernel mutex is destroyed and its memory freed, causing subsequent lock operations on other threads to crash on corrupted memory.
+- **The Upfront Initialization Rule:** All kernel-level mutexes and condition variables (`pipe_table_lock`, `s_proc_table_cond`, `s_proc_mutex`, process slot `mem_mutex`, etc.) **must be initialized explicitly during subsystem boot** (`eos_pipefs_init()`, `eos_proc_init()`) before any user processes execute. No static kernel synchronization primitive may rely on lazy runtime initialization.
+
+---
+
+## 8. Unified VFS & Upper-Level Locking Architecture
+
+EOS enforces centralized synchronization at the Virtual File System (VFS) descriptor level (`main/ecore/vfs.c`, `main/ecore/vfs.h`):
+- Open file descriptors (`eos_vfs_fd_desc_t`) and directories (`eos_vfs_dir_desc_t`) are first-class kernel objects containing dedicated recursive mutexes (`lock`).
+- High-level VFS entrypoints (`read`, `write`, `lseek`, `fstat`, `readdir`, `closedir`) acquire the per-descriptor mutex before invoking the underlying filesystem driver vtable.
+- This upper-level locking ensures that filesystem drivers (`pipefs`, `devfs`, `procfs`, `tmpfs`) do not require intricate internal locks for routine I/O operations, completely eliminating multi-thread deadlocks, race conditions on shared ring-buffers, and descriptor reuse hazards.
+- All descriptor allocations and mutex initializations occur statically upfront during boot (`eos_vfs_init()`), avoiding runtime POSIX emulation heap allocations within user contexts.
+- Driver internal bookkeeping during `open()`, `close()`, `opendir()`, and `closedir()` is performed under `eos_proc_heap_tracking_disable()`, ensuring driver internal buffers are never recorded into user process memory tables.

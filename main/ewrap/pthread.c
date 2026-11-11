@@ -16,6 +16,7 @@ extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
 void eos_pthread_set_stack_cfg(uint32_t stack_size, bool prefer_psram,
                                const char *name) {
+  bool prev_h = eos_proc_heap_tracking_disable();
   esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
   if (stack_size >= EOS_BIN_MIN_STACK_SIZE) {
     cfg.stack_size = stack_size;
@@ -30,6 +31,7 @@ void eos_pthread_set_stack_cfg(uint32_t stack_size, bool prefer_psram,
     cfg.thread_name = name;
   }
   esp_pthread_set_cfg(&cfg);
+  eos_proc_heap_tracking_restore(prev_h);
 }
 
 void eos_pthread_set_manifest_cfg(const eos_bin_t *bin) {
@@ -72,7 +74,8 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
     }
   }
 
-  // Launch thread
+  // Launch thread with heap tracking disabled for thread control blocks & stack
+  bool prev_h = eos_proc_heap_tracking_disable();
   int rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
 
   // If PSRAM allocation failed, fallback gracefully to internal SRAM
@@ -86,10 +89,13 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
       rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
     }
   }
+  eos_proc_heap_tracking_restore(prev_h);
 
   // Restore default pthread configuration on calling thread
+  bool prev_hd = eos_proc_heap_tracking_disable();
   esp_pthread_cfg_t default_cfg = esp_pthread_get_default_config();
   esp_pthread_set_cfg(&default_cfg);
+  eos_proc_heap_tracking_restore(prev_hd);
 
   if (destroy_local) {
     pthread_attr_destroy(&local_attr);

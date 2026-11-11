@@ -136,4 +136,4 @@ python3 -u tools/hardware_test.py -p /dev/ttyACM0 --suite all  # Run hardware te
 ```
 
 ---
-[Back to Project Root](../Readme.md) | [See Development Guide](../DEVELOPMENT.md)
+[Back to Project Root](../Readme.md) | [See Development Guide](../AGENTS.md)

@@ -364,8 +364,8 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
 ### `lsi2c` — I2C Bus Scanner & Device Identification
 * **Syntax:** `lsi2c [device_path]`
 * **Flags:** `0` | **Stack:** Default (8 KB SRAM)
-* **Function:** Probes I2C 7-bit addresses (0x03 to 0x77) on specified bus (default: auto-detects `/dev/i2c*`), prints hex detection grid, and matches ACKs against built-in database of 80+ known sensors/codecs/controllers.
-* **Capabilities:** I2C ioctl (`EOS_I2C_IOCTL_GET_PINS`, `EOS_I2C_IOCTL_TRANSACT`), bus locking.
+* **Function:** Probes I2C 7-bit addresses (0x03 to 0x77) on specified bus (default: auto-detects `/dev/i2c*` via `opendir`), prints hex detection grid using `EOS_I2C_IOCTL_PROBE`, enumerates attached child devices via `opendir`/`readdir`, and matches ACKs against built-in database of 80+ known sensors/codecs/controllers.
+* **Capabilities:** Standard VFS ioctl (`EOS_I2C_IOCTL_GET_PINS`, `EOS_I2C_IOCTL_PROBE`), directory traversal via `opendir`/`readdir`.
 * **Examples:**
   ```sh
   lsi2c

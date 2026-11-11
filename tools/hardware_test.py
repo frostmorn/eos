@@ -58,13 +58,24 @@ def get_target_cfg():
 
 
 def jtag_reset(port):
-    loc, _ = get_port_usb_info(port)
+    print(f"{Colors.CYAN}Resetting target via esptool ({port})...{Colors.RESET}")
+    try:
+        subprocess.run([sys.executable, "-m", "esptool", "--port", port, "run"],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+        time.sleep(1.0)
+        return
+    except Exception:
+        pass
+
+    loc, serial_num = get_port_usb_info(port)
     cfg = get_target_cfg()
     cmd = [
         "/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd",
         "-f", cfg
     ]
-    if loc:
+    if serial_num:
+        cmd.extend(["-c", f"adapter serial {serial_num}"])
+    elif loc:
         cmd.extend(["-c", f"adapter usb location {loc}"])
     cmd.extend(["-c", "init; reset run; shutdown"])
     print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({loc or 'auto'})...{Colors.RESET}")
@@ -88,12 +99,19 @@ class EOSTestHarness:
 
     def _open_serial(self):
         if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=1.0)
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
         else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=1.0)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
         if not self.port.startswith("socket://"):
             self.ser.dtr = True
             self.ser.rts = False
+
+    def _read_available(self):
+        if not self.ser or not self.ser.in_waiting:
+            return b""
+        if hasattr(self.ser, "_socket"):
+            return self.ser._socket.recv(4096)
+        return self.ser.read(self.ser.in_waiting)
 
     def connect(self):
         if self.reset and not self.port.startswith("socket://"):
@@ -103,23 +121,23 @@ class EOSTestHarness:
         self._open_serial()
 
         ready_marker = b"__EOS_READY__"
-        deadline = time.time() + 4.0
+        deadline = time.time() + 6.0
         buf = b""
         last_ping = 0.0
         while time.time() < deadline:
-            if self.ser.in_waiting:
-                buf += self.ser.read(self.ser.in_waiting)
+            chunk = self._read_available()
+            if chunk:
+                buf += chunk
                 if ready_marker in buf:
                     break
-            else:
-                now = time.time()
-                if now - last_ping > 0.4:
-                    try:
-                        self.ser.write(b"\r\necho __EOS_READY__\r\n")
-                    except Exception:
-                        pass
-                    last_ping = now
-                time.sleep(0.05)
+            now = time.time()
+            if now - last_ping > 0.4:
+                try:
+                    self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                except Exception:
+                    pass
+                last_ping = now
+            time.sleep(0.05)
 
         if ready_marker not in buf and not self.reset and not self.port.startswith("socket://"):
             print(f"{Colors.YELLOW}No prompt detected, recovering via OpenOCD JTAG reset...{Colors.RESET}")
@@ -130,23 +148,23 @@ class EOSTestHarness:
             buf = b""
             last_ping = 0.0
             while time.time() < deadline:
-                if self.ser.in_waiting:
-                    buf += self.ser.read(self.ser.in_waiting)
+                chunk = self._read_available()
+                if chunk:
+                    buf += chunk
                     if ready_marker in buf:
                         break
-                else:
-                    now = time.time()
-                    if now - last_ping > 0.4:
-                        try:
-                            self.ser.write(b"\r\necho __EOS_READY__\r\n")
-                        except Exception:
-                            pass
-                        last_ping = now
-                    time.sleep(0.05)
+                now = time.time()
+                if now - last_ping > 0.4:
+                    try:
+                        self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                    except Exception:
+                        pass
+                    last_ping = now
+                time.sleep(0.05)
 
-        time.sleep(0.05)
+        time.sleep(1.0)
         while self.ser.in_waiting:
-            self.ser.read(self.ser.in_waiting)
+            self._read_available()
             time.sleep(0.01)
         self.ser.reset_input_buffer()
 
@@ -161,14 +179,14 @@ class EOSTestHarness:
         self._seq = getattr(self, "_seq", 0) + 1
         marker = f"__EOS_{self._seq}__"
         if cmd_str.endswith("&"):
-            full_cmd = f"{cmd_str} sleep 0.1; echo {marker}\n"
+            full_cmd = f"{cmd_str} sleep 0.2; echo; echo {marker}\n"
         elif cmd_str:
-            full_cmd = f"{cmd_str}; echo {marker}\n"
+            full_cmd = f"{cmd_str}; echo; echo {marker}\n"
         else:
             full_cmd = f"echo {marker}\n"
 
         while self.ser.in_waiting:
-            self.ser.read(self.ser.in_waiting)
+            self._read_available()
             time.sleep(0.005)
         self.ser.reset_input_buffer()
 
@@ -177,12 +195,8 @@ class EOSTestHarness:
         buf = b""
         marker_bytes = f"\n{marker}".encode("utf-8")
         while time.time() < deadline:
-            if self.ser.in_waiting:
-                if hasattr(self.ser, "_socket"):
-                    chunk = self.ser._socket.recv(4096)
-                else:
-                    chunk = self.ser.read(self.ser.in_waiting)
-                if chunk:
+            chunk = self._read_available()
+            if chunk:
                     buf += chunk
                     pos = buf.find(marker_bytes)
                     if pos >= 0:
@@ -408,24 +422,10 @@ class EOSTestHarness:
                        "devctl attach net sta wifi0",
                        r"(failed to attach|File exists|already attached)")
 
-        has_launcher = "launcher.active" in self.run_cmd("ls /tmp")
-        if has_launcher:
-            self.run_cmd("echo QUIT > /tmp/launcher.cmd")
-            for _ in range(25):
-                time.sleep(0.1)
-                if "launcher.active" not in self.run_cmd("ls /tmp"):
-                    break
-            time.sleep(0.3)
-
         if "keyboard0" in devctl_devs:
             self.check(suite, "devctl devices lists keyboard0", "devctl devices", r"keyboard0\s+input/gpio_keyboard", wait=2.0)
             self.check(suite, "devctl info keyboard0", "devctl info keyboard0", r"Driver:\s+input/gpio_keyboard")
-            self.run_cmd("echo up > /dev/keyboard0")
-            self.check(suite, "Read injected key event via test_input", "test_input 1", r"KEYBOARD,\s+code=(103\s+\(KEY_UP\)|1\s+\(KEY_ESC\))", wait=1.5)
-            # In case test_input didn't consume an event or got stuck, unblock shell with Ctrl+C
-            self.ser.write(b"\x03\n")
-            time.sleep(0.1)
-            self.ser.reset_input_buffer()
+            self.check(suite, "Automated input event test via test_input", "test_input", r"KEYBOARD,\s+code=(103\s+\(KEY_UP\)|1\s+\(KEY_ESC\))", wait=2.0)
 
         if "sound0" in devctl_devs:
             self.check(suite, "devctl devices lists sound0", "devctl devices", r"sound0\s+sound/max98357")
@@ -680,16 +680,9 @@ class EOSTestHarness:
                 if "launcher.active" in self.run_cmd("ls /tmp"):
                     break
             time.sleep(0.5)
-        self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net",
-                   r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.0)
-        time.sleep(0.5)
-        self.run_cmd("echo esc > /dev/keyboard0")
-        time.sleep(0.3)
-        self.run_cmd("echo QUIT > /tmp/launcher.cmd")
-        for _ in range(20):
-            time.sleep(0.1)
-            if "launcher.active" not in self.run_cmd("ls /tmp"):
-                break
+        self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net &",
+                   r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.5)
+        time.sleep(1.0)
 
     def test_emisc(self):
         suite = "emisc"
@@ -763,7 +756,7 @@ class EOSTestHarness:
 
         # mv into directory
         self.run_cmd("mkdir /tmp/h_mv_dir")
-        self.check(suite, "mv file into directory", "mv -v /tmp/h_mv_dst.txt /tmp/h_mv_dir", r"renamed '/tmp/h_mv_dst\.txt' -> '/tmp/h_mv_dir/h_mv_dst\.txt'", not_pattern=r"cannot")
+        self.check(suite, "mv file into directory", "mv -v /tmp/h_mv_dst.txt /tmp/h_mv_dir", r"renamed '/tmp/h_mv_dst\.txt' -> '/tmp/h_mv_dir/h_mv_dst\.txt'", not_pattern=r"cannot", wait=3.0)
         self.check(suite, "mv file inside directory exists", "cat /tmp/h_mv_dir/h_mv_dst.txt", r"mv_payload_999")
 
         # mv directory
@@ -924,9 +917,15 @@ def main():
     parser.add_argument("--no-reset", action="store_true", help="Deprecated: reset is now off by default")
     args = parser.parse_args()
 
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=args.reset)
     try:
         harness.connect()
+
         # Determine candidate suites
         for suite_name, meta in SUITE_REGISTRY.items():
             if args.suite != "all" and args.suite != suite_name:

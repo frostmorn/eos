@@ -15,21 +15,29 @@
 
 #define EOS_FAPI_COUNT_BUFFERS 2
 
-char eos_fapi_buffer[SOC_CPU_CORES_NUM * EOS_FAPI_COUNT_BUFFERS][PATH_MAX];
+static char (*s_fapi_buffers)[PATH_MAX] = NULL;
 
 char *eos_fapi_get_buffer(size_t index) {
-
   if (index >= EOS_FAPI_COUNT_BUFFERS) {
-    EOS_LOGE("eos_fapi_get_buffer: trying to use inacessible buffer %d\n",
-             index);
-    // of course we can return null, but imagine amount of situations we had
-    // to handle, we already fucked up since it used wrong way
+    EOS_LOGE("eos_fapi_get_buffer: trying to use inaccessible buffer %d\n",
+             (int)index);
     abort();
+  }
+
+  if (!s_fapi_buffers) {
+    bool prev_h = eos_proc_heap_tracking_disable();
+    s_fapi_buffers = (char (*)[PATH_MAX])eos_psram_calloc_prefer(
+        SOC_CPU_CORES_NUM * EOS_FAPI_COUNT_BUFFERS, PATH_MAX);
+    if (!s_fapi_buffers) {
+      s_fapi_buffers = (char (*)[PATH_MAX])calloc(
+          SOC_CPU_CORES_NUM * EOS_FAPI_COUNT_BUFFERS, PATH_MAX);
+    }
+    eos_proc_heap_tracking_restore(prev_h);
   }
 
   uint8_t core = esp_cpu_get_core_id();
 
-  return eos_fapi_buffer[core * EOS_FAPI_COUNT_BUFFERS + index];
+  return s_fapi_buffers[core * EOS_FAPI_COUNT_BUFFERS + index];
 }
 
 // Collapses "." and ".." segments out of an absolute path, in place,

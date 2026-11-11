@@ -61,8 +61,9 @@ def run_rule_forbidden_patterns(rule):
                         stripped = line.strip()
                         if not stripped or stripped.startswith(("//", "/*", "*")):
                             continue
+                        code_part = line.split("//")[0]
                         for pat in compiled:
-                            if pat.search(line):
+                            if pat.search(code_part):
                                 print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
                                 print(f"    Match: {stripped}")
                                 violations += 1

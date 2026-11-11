@@ -114,8 +114,12 @@ static inline void *eos_kvec_realloc(void *ptr, size_t size, uint32_t caps) {
 #define kv_destroy(v) free((v).a)
 #define kv_A(v, i) ((v).a[(i)])
 #define kv_pop(v) ((v).a[--(v).n])
+#define kv_last(v) ((v).a[(v).n - 1])
+#define kvec_last(v) kv_last(v)
 #define kv_size(v) ((v).n)
 #define kv_max(v) ((v).m)
+#define kv_data(v) ((v).a)
+#define kv_owns_buffer(v, ptr) ((const void *)(v).a == (const void *)(ptr))
 
 #define kv_resize(type, v, s)                                                  \
   ((v).m = (s),                                                                \
@@ -139,13 +143,15 @@ static inline void *eos_kvec_realloc(void *ptr, size_t size, uint32_t caps) {
   } while (0)
 
 #define kv_pushp(type, v)                                                      \
-  (((v).n == (v).m)                                                            \
-       ? ((v).m = ((v).m ? (v).m << 1 : 2),                                    \
-          (v).a = (type *)eos_kvec_realloc((v).a, sizeof(type) * (v).m,       \
-                                           (v).caps),                          \
-          0)                                                                   \
-       : 0),                                                                   \
-      ((v).a + ((v).n++))
+  ((((v).n == (v).m)                                                           \
+        ? ((v).m = ((v).m ? (v).m << 1 : 2),                                   \
+           (v).a = (type *)eos_kvec_realloc((v).a, sizeof(type) * (v).m,      \
+                                            (v).caps),                         \
+           0)                                                                  \
+        : 0),                                                                  \
+   ((v).a + ((v).n++)))
+
+#define kvec_pushp(type, v) kv_pushp(type, v)
 
 #define kv_a(type, v, i)                                                       \
   (((v).m <= (size_t)(i)                                                       \
@@ -157,11 +163,30 @@ static inline void *eos_kvec_realloc(void *ptr, size_t size, uint32_t caps) {
                                : 0),                                           \
    (v).a[(i)])
 
+#define kv_insert(type, v, i, x)                                               \
+  do {                                                                         \
+    size_t _idx = (size_t)(i);                                                 \
+    if ((v).n == (v).m) {                                                      \
+      (v).m = (v).m ? (v).m << 1 : 2;                                          \
+      (v).a = (type *)eos_kvec_realloc((v).a, sizeof(type) * (v).m, (v).caps); \
+    }                                                                          \
+    if (_idx < (v).n) {                                                        \
+      memmove((v).a + _idx + 1, (v).a + _idx,                                  \
+              sizeof(type) * ((v).n - _idx));                                  \
+    }                                                                          \
+    (v).a[_idx] = (x);                                                         \
+    ++(v).n;                                                                   \
+  } while (0)
+
+#define kvec_insert(type, v, i, x) kv_insert(type, v, i, x)
+
 #define kvec_drop(type, v, i)                                                  \
   do {                                                                         \
     memmove((v).a + (i), (v).a + (i) + 1, sizeof(type) * ((v).n - (i) - 1));   \
     --(v).n;                                                                   \
   } while (0)
+
+#define kv_drop(type, v, i) kvec_drop(type, v, i)
 
 #define kv_drop_fast(type, v, i)                                               \
   do {                                                                         \
@@ -170,9 +195,14 @@ static inline void *eos_kvec_realloc(void *ptr, size_t size, uint32_t caps) {
 
 #define kv_opt(type, v)                                                        \
   do {                                                                         \
-    if ((v).n * 3 > (v).m) {                                                   \
-      (v).m = (v).n * 2;                                                       \
-      (v).a = (type *)eos_kvec_realloc((v).a, sizeof(type) * (v).m, (v).caps); \
+    if ((v).n * 3 < (v).m && (v).m > 8) {                                      \
+      size_t _new_m = (v).n ? ((v).n * 2) : 0;                                 \
+      if (_new_m > 0) kv_roundup32(_new_m);                                    \
+      if (_new_m < 8) _new_m = 8;                                              \
+      if (_new_m < (v).m) {                                                    \
+        (v).m = _new_m;                                                        \
+        (v).a = (type *)eos_kvec_realloc((v).a, sizeof(type) * (v).m, (v).caps); \
+      }                                                                        \
     }                                                                          \
   } while (0)
 

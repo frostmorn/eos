@@ -876,7 +876,6 @@ static void *pipeline_stage_thread(void *arg) {
   int ret = -1;
 
   if (st->pid > 0) {
-    eos_proc_set_thread(st->pid, xTaskGetCurrentTaskHandle());
     if (st->pipe_in_fd >= 0)
       eos_proc_reg_fd(st->pipe_in_fd);
     if (st->pipe_out_fd >= 0)
@@ -888,10 +887,10 @@ static void *pipeline_stage_thread(void *arg) {
   }
 
   fflush(stdout);
-
-  fflush(stdout);
   fflush(stderr);
   fsync(STDOUT_FILENO);
+  extern void esp_reent_cleanup(void);
+  esp_reent_cleanup();
 
   close_stage_fds(opened_fds, st->pipe_in_fd, st->pipe_out_fd);
 
@@ -899,12 +898,8 @@ static void *pipeline_stage_thread(void *arg) {
   eos_proc_t *proc = eos_proc_current();
   if (proc) {
     for (int i = 0; i < 16; i++) {
-      proc->fd_map[i] = -1;
+      eos_proc_fd_map_set(proc, i, -1);
     }
-  }
-
-  if (st->pid > 0) {
-    eos_proc_exit(st->pid, ret);
   }
 
   return (void *)(intptr_t)ret;
@@ -973,16 +968,24 @@ static void free_cloned_ast_node(eos_ast_node_t *node) {
 
 typedef struct {
   eos_ast_node_t *node;
+  pid_t pid;
 } bg_wrapper_t;
 
 static void *bg_thread_entry(void *arg) {
   bg_wrapper_t *bg = (bg_wrapper_t *)arg;
+  int ret = 0;
   if (bg) {
-    eval_ast(bg->node);
-    free_cloned_ast_node(bg->node);
+    if (bg->node) {
+      ret = eval_ast(bg->node);
+      bool prev_h = eos_proc_heap_tracking_disable();
+      free_cloned_ast_node(bg->node);
+      eos_proc_heap_tracking_restore(prev_h);
+    }
+    bool prev_h = eos_proc_heap_tracking_disable();
     free(bg);
+    eos_proc_heap_tracking_restore(prev_h);
   }
-  return NULL;
+  return (void *)(intptr_t)ret;
 }
 
 static bool check_shebang_script(const char *cmd, char *interp_out, size_t interp_out_len, char *interp_arg_out, size_t interp_arg_out_len) {
@@ -1199,7 +1202,8 @@ static int eval_command_node(eos_ast_node_t *node) {
 
   if (stage_count == 1) {
     if (!exec_stages[0].is_builtin &&
-        eos_bin_prefers_psram_stack(&exec_stages[0].manifest)) {
+        eos_bin_prefers_psram_stack(&exec_stages[0].manifest) &&
+        (eos_proc_current() == NULL || eos_proc_current()->pid == 1)) {
       eos_proc_t *parent_proc = eos_proc_current();
       pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
       pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
@@ -1211,16 +1215,9 @@ static int eval_command_node(eos_ast_node_t *node) {
       exec_stages[0].sid = parent_sid;
 
       pthread_t thread;
-      pthread_attr_t attr;
-      pthread_attr_init(&attr);
-      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-      pthread_attr_setstacksize(
-          &attr, eos_bin_effective_stack_size(&exec_stages[0].manifest));
-
-      eos_pthread_set_manifest_cfg(&exec_stages[0].manifest);
-      int rc = pthread_create(&thread, &attr, pipeline_stage_thread,
-                              &exec_stages[0]);
-      pthread_attr_destroy(&attr);
+      int rc = eos_proc_spawn_thread(spid, pipeline_stage_thread, &exec_stages[0],
+                                     eos_bin_effective_stack_size(&exec_stages[0].manifest),
+                                     true, &thread);
 
       if (rc == 0) {
         int raw_status = 0;
@@ -1242,7 +1239,7 @@ static int eval_command_node(eos_ast_node_t *node) {
       eos_proc_fd_snapshot_t fd_snap = eos_proc_snapshot_fds();
       int saved_map[16];
       for (int i = 0; i < 16; i++) {
-        saved_map[i] = proc ? proc->fd_map[i] : -1;
+        saved_map[i] = proc ? eos_proc_fd_map_get(proc, i) : -1;
       }
 
       fflush(stdout);
@@ -1261,7 +1258,7 @@ static int eval_command_node(eos_ast_node_t *node) {
       if (redir) {
         if (proc) {
           for (int i = 0; i < 16; i++)
-            proc->fd_map[i] = saved_map[i];
+            eos_proc_fd_map_set(proc, i, saved_map[i]);
         }
 
         close_stage_fds(opened_fds, -1, -1);
@@ -1330,15 +1327,10 @@ static int eval_command_node(eos_ast_node_t *node) {
     bool *spawned = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
 
     for (size_t i = 0; i < stage_count; i++) {
-      pthread_attr_t attr;
-      pthread_attr_init(&attr);
-      pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-      pthread_attr_setstacksize(
-          &attr, eos_bin_effective_stack_size(&exec_stages[i].manifest));
-
-      eos_pthread_set_manifest_cfg(&exec_stages[i].manifest);
-      int rc = pthread_create(&threads[i], &attr, pipeline_stage_thread, &exec_stages[i]);
-      pthread_attr_destroy(&attr);
+      int rc = eos_proc_spawn_thread(exec_stages[i].pid, pipeline_stage_thread, &exec_stages[i],
+                                     eos_bin_effective_stack_size(&exec_stages[i].manifest),
+                                     eos_bin_prefers_psram_stack(&exec_stages[i].manifest),
+                                     &threads[i]);
 
       if (rc != 0) {
         EOS_LOGE("eos_system() failed to spawn thread for stage %u", (unsigned)i);
@@ -1410,24 +1402,42 @@ static int eval_ast(eos_ast_node_t *node) {
           (node->left->type != EOS_NODE_COMMAND || kv_size(node->left->stages) > 0)) {
         uint32_t bg_stack = ast_required_stack_size(node->left);
         bool bg_psram = ast_prefers_psram_stack(node->left);
-        bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
-        if (bg) {
-          eos_proc_unreg_memblock(bg);
-          bg->node = clone_ast_node(node->left);
-          if (bg->node) {
-            pthread_t t;
-            pthread_attr_t attr;
-            pthread_attr_init(&attr);
-            pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-            pthread_attr_setstacksize(&attr, bg_stack);
-            eos_pthread_set_stack_cfg(bg_stack, bg_psram, "bg_task");
-            if (pthread_create(&t, &attr, bg_thread_entry, bg) != 0) {
-              free_cloned_ast_node(bg->node);
+
+        const char *pname = "bg_proc";
+        if (node->left->type == EOS_NODE_COMMAND && kv_size(node->left->stages) > 0) {
+          const eos_cmd_stage_t *st0 = &kv_A(node->left->stages, 0);
+          if (kv_size(st0->argv) > 0 && kv_A(st0->argv, 0)) {
+            pname = kv_A(st0->argv, 0);
+          }
+        }
+
+        eos_proc_t *cur = eos_proc_current();
+        pid_t parent_pid = (cur && cur->pid > 0) ? cur->pid : 1;
+        pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
+        if (spid > 0) {
+          bool prev_h = eos_proc_heap_tracking_disable();
+          bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
+          if (bg) {
+            bg->node = clone_ast_node(node->left);
+            bg->pid = spid;
+            eos_proc_heap_tracking_restore(prev_h);
+            if (bg->node) {
+              int rc = eos_proc_spawn_thread(spid, bg_thread_entry, bg, bg_stack, bg_psram, NULL);
+              if (rc != 0) {
+                bool prev_hd = eos_proc_heap_tracking_disable();
+                free_cloned_ast_node(bg->node);
+                free(bg);
+                eos_proc_heap_tracking_restore(prev_hd);
+                eos_proc_exit(spid, -1);
+              }
+            } else {
+              bool prev_hd = eos_proc_heap_tracking_disable();
               free(bg);
+              eos_proc_heap_tracking_restore(prev_hd);
+              eos_proc_exit(spid, -1);
             }
-            pthread_attr_destroy(&attr);
           } else {
-            free(bg);
+            eos_proc_heap_tracking_restore(prev_h);
           }
         }
       }

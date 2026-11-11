@@ -8,6 +8,7 @@
 #include "ecore/proc.h"
 #include "ecore/procfs.h"
 #include "ecore/tmpfs.h"
+#include "ecore/vfs.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@
 void *eos_main(void *data) {
   (void)data;
   eos_proc_init();
+  eos_vfs_init();
   eos_tmpfs_init();
   eos_log_init();
   eos_procfs_init();

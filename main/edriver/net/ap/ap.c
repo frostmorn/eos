@@ -60,7 +60,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
 
   // Initialize network stack via parent
   if (dev->parent) {
-    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_ENSURE_INIT);
+    eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_ENSURE_INIT);
   }
 
 #if EOS_HAVE_WIFI
@@ -104,7 +104,7 @@ void driver_net_ap_shutdown(eos_dev_t *dev) {
 
 #if EOS_HAVE_WIFI
   if (dev->parent) {
-    eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
+    eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
   }
   if (st->netif) {
     esp_netif_destroy_default_wifi(st->netif);
@@ -215,7 +215,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
       esp_wifi_set_config(WIFI_IF_AP, &wcfg);
       if (dev->parent) {
-        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
+        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
       }
 
       if (st->netif && st->dhcps_enabled) {
@@ -223,7 +223,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       }
 #else
       if (dev->parent) {
-        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
+        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
       }
 #endif
       EOS_LOGI("ap: interface set to UP (SSID: \"%s\")", st->ap_cfg.ssid);
@@ -233,7 +233,7 @@ int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     case EOS_NETIF_IOCTL_SET_DOWN: {
       st->is_up = false;
       if (dev->parent) {
-        eos_dev_ioctl_call(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
+        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
       }
       if (st->netif) {
         esp_netif_dhcps_stop(st->netif);

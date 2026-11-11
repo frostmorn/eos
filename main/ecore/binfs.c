@@ -1,11 +1,13 @@
 #include "binfs.h"
 #include "asset.h"
+#include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <errno.h>
 #include <esp_vfs.h>
+#include <pthread.h>
 #include <string.h>
 
 #include <fcntl.h>
@@ -157,10 +159,12 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
   while (*name == '/')
     name++;
 
+  eos_vfs_alloc_lock();
   // Find the bin
   const eos_bin_t *bin = binfs_find_bin(name);
   if (bin) {
     int fd = binfs_fd_alloc_bin(bin);
+    eos_vfs_alloc_unlock();
     if (fd < 0) {
       errno = ENFILE;
       return -1;
@@ -172,25 +176,30 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
   const eos_asset_t *asset = binfs_find_asset(name);
   if (asset) {
     int fd = binfs_fd_alloc_asset(asset);
+    eos_vfs_alloc_unlock();
     if (fd < 0) {
       errno = ENFILE;
       return -1;
     }
     return fd;
   }
+  eos_vfs_alloc_unlock();
 
   errno = ENOENT;
   return -1;
 }
 
 static int binfs_close(void *ctx, int fd) {
+  eos_vfs_alloc_lock();
   binfs_fd_t *binfs_fd = binfs_fd_get(fd);
   if (!binfs_fd) {
+    eos_vfs_alloc_unlock();
     errno = EBADF;
     return -1;
   }
 
   binfs_fd_free(fd);
+  eos_vfs_alloc_unlock();
   return 0;
 }
 
@@ -201,15 +210,17 @@ static ssize_t binfs_read(void *ctx, int fd, void *buf, size_t len) {
     return -1;
   }
 
-  if (!buf || len == 0)
+  if (!buf || len == 0) {
     return 0;
+  }
 
   if (binfs_fd->bin) {
     const eos_bin_t *bin = binfs_fd->bin;
     off_t manifest_size = sizeof(eos_bin_t);
     off_t remaining = manifest_size - binfs_fd->offset;
-    if (remaining <= 0)
+    if (remaining <= 0) {
       return 0;
+    }
     size_t to_read = (len < (size_t)remaining) ? len : (size_t)remaining;
     uint8_t *src = (uint8_t *)bin + binfs_fd->offset;
     memcpy(buf, src, to_read);
@@ -218,8 +229,9 @@ static ssize_t binfs_read(void *ctx, int fd, void *buf, size_t len) {
   } else if (binfs_fd->asset) {
     const eos_asset_t *asset = binfs_fd->asset;
     off_t remaining = (off_t)asset->size - binfs_fd->offset;
-    if (remaining <= 0)
+    if (remaining <= 0) {
       return 0;
+    }
     size_t to_read = (len < (size_t)remaining) ? len : (size_t)remaining;
     const uint8_t *src = asset->data + binfs_fd->offset;
     memcpy(buf, src, to_read);
@@ -350,7 +362,9 @@ static DIR *binfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
+  eos_vfs_alloc_lock();
   binfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(binfs_dir_t));
+  eos_vfs_alloc_unlock();
   if (!dir) {
     errno = ENOMEM;
     return NULL;
@@ -407,8 +421,11 @@ static void binfs_seekdir(void *ctx, DIR *pdir, long offset) {
 }
 
 static int binfs_closedir(void *ctx, DIR *pdir) {
-  if (pdir)
+  if (pdir) {
+    eos_vfs_alloc_lock();
     free(pdir);
+    eos_vfs_alloc_unlock();
+  }
   return 0;
 }
 

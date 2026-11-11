@@ -67,3 +67,22 @@ Task call stacks represent one of the largest consumers of RAM in embedded syste
 The EOS MicroShell (`ush`) utilizes a Pratt precedence parser for script interpretation and command pipelines.
 * Previously, AST nodes and token arrays allocated static internal SRAM structures, consuming over 56 KB of DRAM at boot.
 * Migrating AST nodes to dynamic `kvec` allocations from `MALLOC_CAP_SPIRAM` permanently freed **56.3 KB of internal SRAM** back to the system DRAM pool with zero performance degradation.
+
+---
+
+## 6. Global SRAM Shrinkification & PSRAM Migration
+
+To maximize internal SRAM availability for DMA and hardware peripherals, all non-hotpath global structures have been eliminated from static `.bss`/`.data` and migrated to dynamic allocations steered by access frequency:
+
+### A. Static Buffer & Structure Relocation
+1. **Device Tree Registry (`s_devices`):** Removed hardcoded static array `eos_devices[EOS_MAX_DEVICES]`. Devices are now tracked dynamically in PSRAM via `kvec_psram_t(eos_dev_t *) s_devices` in [dev.c](file:///home/ai/eos/main/ecore/dev.c).
+2. **Kernel Process Context (`s_kernel_proc`):** Removed static 1,744 B `.bss` allocation; allocated on-demand in PSRAM heap during `eos_proc_init()` in [proc.c](file:///home/ai/eos/main/ecore/proc.c).
+3. **FAPI Scratch Buffer (`eos_fapi_buffer`):** Removed static 4,096 B `.bss` path normalization buffer; dynamically allocated in PSRAM with heap tracking disabled in [fapi.c](file:///home/ai/eos/main/ecore/fapi.c).
+4. **File Descriptor Map (`proc->fd_map`):** Migrated from fixed array `int fd_map[FD_SETSIZE]` (256 B per process) to dynamic `kvec_psram_t(int) fd_map` with inline helpers `eos_proc_fd_map_get` and `eos_proc_fd_map_set`.
+5. **Procfs Enumeration Buffers:** Replaced static `pid_t pids[EOS_MAX_PROCS]` and `int fds[EOS_MAX_PROCS]` in `procfs_dir_t` with `kvec_psram_t(pid_t)` and `kvec_psram_t(int)` in [procfs.c](file:///home/ai/eos/main/ecore/procfs.c).
+6. **Task Flags Tracking (`s_task_flags`):** Dynamic internal SRAM allocation via `heap_caps_calloc(..., MALLOC_CAP_INTERNAL)` for spinlock-guarded fast-path access.
+
+### B. Network & TCB Shrinkification
+* **LwIP PSRAM Steering:** Intercepted LwIP network thread (`"tiT"` / `"tcpip"`) allocations in [heap_caps.c](file:///home/ai/eos/main/ewrap/heap_caps.c) to prefer `MALLOC_CAP_SPIRAM` for packet buffers and PCB lists while preserving WLAN hardware buffers strictly in internal SRAM.
+* **ESP-Hosted SDIO Mempool Steering (`CONFIG_ESP_HOSTED_MEMPOOL_PREFER_SPIRAM`):** On ESP32-P4 SoCs where GDMA routes across cache lines, SDIO transport mempools (over 300 KB) are steered to external PSRAM, preserving scarce internal DRAM.
+* **FreeRTOS TCB Reduction:** Reduced FreeRTOS Thread Local Storage pointers to 1 (`CONFIG_FREERTOS_THREAD_LOCAL_STORAGE_POINTERS=1`), shrinking every Task Control Block throughout the system.

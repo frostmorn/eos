@@ -70,7 +70,6 @@ help:
 	@echo "===================================================="
 	@echo "  todo        - Make TODO list for EOS"
 	@echo "  research    - Make RESEARCH list for EOS"
-	@echo "  refine-docs - Refine documentation using Gemini (loads @DEVELOPMENT.md)"
 	@echo "===================================================="
 
 clean:
@@ -209,9 +208,6 @@ install-qemu-all:
 	@echo ""
 	@echo "Installation complete. To activate QEMU in your current shell, run:"
 	@echo "  source \$${IDF_PATH:-/opt/esp-idf}/export.sh"
-
-refine-docs:
-	gemini --model gemini-3.5-flash-lite --approval-mode auto_edit -p "Load @DEVELOPMENT.md . Analyze current repository state. Update documentation located in @docs Be comprehensive"
 
 wrapcheck:
 	python3 tools/wrapcheck.py

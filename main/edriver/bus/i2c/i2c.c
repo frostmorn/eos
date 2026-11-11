@@ -6,6 +6,7 @@
 #include <driver/i2c_master.h>
 #include <errno.h>
 #include <esp_err.h>
+#include <esp_log.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <stdlib.h>
@@ -83,6 +84,8 @@ static esp_err_t bus_activate_locked(eos_dev_t *dev, i2c_bus_state_t *st) {
       .flags.enable_internal_pullup = st->pullup ? 1 : 0,
   };
 
+  esp_log_level_set("i2c.master", ESP_LOG_NONE);
+
   esp_err_t err = i2c_new_master_bus(&bus_cfg, &st->i2c_bus);
   if (err != ESP_OK) {
     EOS_LOGE("i2c: i2c_new_master_bus failed: %s", esp_err_to_name(err));
@@ -90,6 +93,8 @@ static esp_err_t bus_activate_locked(eos_dev_t *dev, i2c_bus_state_t *st) {
     eos_cap_release(EOS_CAPS_GPIO, st->sda_pin, dev);
     return err;
   }
+
+  esp_log_level_set("i2c.master", ESP_LOG_NONE);
 
   st->pins_claimed = true;
   EOS_LOGI("i2c: bus activated (port=%d, SDA=%d, SCL=%d, clk=%lu Hz)",
@@ -281,7 +286,9 @@ bool driver_bus_i2c_init(eos_dev_t *dev) {
   int port = eos_cfg_get_i(dev->cfg, "port", 0);
   int clk_speed = eos_cfg_get_i(dev->cfg, "clk_speed", 400000);
   int glitch_cnt = eos_cfg_get_i(dev->cfg, "glitch_ignore_cnt", 7);
-  bool pullup = (bool)eos_cfg_get_i(dev->cfg, "pullup", 0);
+  bool pullup = (bool)eos_cfg_get_i(dev->cfg, "pullup", 1);
+
+  esp_log_level_set("i2c.master", ESP_LOG_NONE);
 
   st->port = port;
   st->sda_pin = sda_pin;
@@ -357,18 +364,34 @@ bool driver_bus_i2c_attach_req(eos_dev_t *dev, eos_dev_t *child) {
     }
   }
 
+  if (child && child->cfg) {
+    int child_addr = eos_cfg_get_i(child->cfg, "addr", -1);
+    if (child_addr >= 0 && child_addr <= I2C_ADDR_MAX) {
+      int child_speed = eos_cfg_get_i(child->cfg, "clk_speed", st->clk_speed);
+      i2c_master_dev_handle_t h = NULL;
+      get_or_create_device(dev, st, (uint16_t)child_addr, (uint32_t)child_speed, &h);
+    }
+  }
+
   st->attached_count++;
   xSemaphoreGive(st->mutex);
   return true;
 }
 
 bool driver_bus_i2c_detach_req(eos_dev_t *dev, eos_dev_t *child) {
-  (void)child;
   if (!dev || !dev->state) return false;
   i2c_bus_state_t *st = dev->state;
 
   if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
     return false;
+  }
+
+  if (child && child->cfg) {
+    int child_addr = eos_cfg_get_i(child->cfg, "addr", -1);
+    if (child_addr >= 0 && child_addr <= I2C_ADDR_MAX && st->dev_handles[child_addr]) {
+      i2c_master_bus_rm_device(st->dev_handles[child_addr]);
+      st->dev_handles[child_addr] = NULL;
+    }
   }
 
   if (st->attached_count > 0) {
@@ -388,23 +411,33 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
   }
   i2c_bus_state_t *st = dev->state;
 
-  uint16_t parsed_addr = 0;
-  if (path && *path) {
-    const char *lastToken = strrchr(path, '/');
-    if (lastToken)
-      lastToken++;
-    else
-      lastToken = (char *)path;
+  if (!path || !*path || strcmp(path, "/") == 0) {
+    errno = EISDIR;
+    return -1;
+  }
 
-    if (*lastToken) {
-      char *endptr = NULL;
-      unsigned long val = strtoul(lastToken, &endptr, 0);
-      if (endptr != lastToken && val <= I2C_ADDR_MAX) {
-        parsed_addr = (uint16_t)val;
-      } else {
-        errno = ENOENT;
-        return -1;
-      }
+  uint16_t parsed_addr = 0;
+  const char *lastToken = strrchr(path, '/');
+  if (lastToken)
+    lastToken++;
+  else
+    lastToken = (char *)path;
+
+  if (!*lastToken) {
+    errno = EISDIR;
+    return -1;
+  }
+
+  if (strcmp(lastToken, "cfg") == 0 || strcmp(lastToken, "config") == 0 || strcmp(lastToken, "i2c") == 0) {
+    parsed_addr = 0;
+  } else {
+    char *endptr = NULL;
+    unsigned long val = strtoul(lastToken, &endptr, 0);
+    if (endptr != lastToken && val <= I2C_ADDR_MAX) {
+      parsed_addr = (uint16_t)val;
+    } else {
+      errno = ENOENT;
+      return -1;
     }
   }
 
@@ -622,7 +655,12 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       errno = ENODEV;
       return -1;
     }
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
     esp_err_t err = i2c_master_probe(st->i2c_bus, addr, timeout_ms);
+    if (err == ESP_OK && !st->dev_handles[addr]) {
+      i2c_master_dev_handle_t dev_h = NULL;
+      get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
+    }
     xSemaphoreGive(st->mutex);
     if (err == ESP_OK) {
       return 0;
@@ -651,11 +689,16 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       errno = ENODEV;
       return -1;
     }
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
     for (uint16_t addr = 0x08; addr <= 0x77; addr++) {
       esp_err_t err = i2c_master_probe(st->i2c_bus, addr, timeout_ms);
       if (err == ESP_OK) {
         if (scan->count < sizeof(scan->addrs)) {
           scan->addrs[scan->count++] = (uint8_t)addr;
+        }
+        if (!st->dev_handles[addr]) {
+          i2c_master_dev_handle_t dev_h = NULL;
+          get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
         }
       }
     }
@@ -886,39 +929,13 @@ DIR *driver_bus_i2c_opendir(eos_dev_t *dev, const char *path) {
     errno = EBADF;
     return NULL;
   }
-  i2c_bus_state_t *st = dev->state;
-
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
-    errno = EBUSY;
-    return NULL;
-  }
-
-  if (!st->i2c_bus && st->sda_pin >= 0 && st->scl_pin >= 0) {
-    esp_err_t err = bus_activate_locked(dev, st);
-    if (err != ESP_OK) {
-      xSemaphoreGive(st->mutex);
-      errno = (err == ESP_ERR_NOT_FOUND) ? EBUSY : EIO;
-      return NULL;
-    }
-  }
-
-  st->open_refcount++;
-  xSemaphoreGive(st->mutex);
 
   i2c_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(i2c_dir_t));
   if (!dir) {
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) == pdTRUE) {
-      if (st->open_refcount > 0) st->open_refcount--;
-      if (st->open_refcount == 0 &&
-          !driver_bus_i2c_has_attached_devices(dev, st)) {
-        bus_deactivate_locked(dev, st);
-      }
-      xSemaphoreGive(st->mutex);
-    }
     errno = ENOMEM;
     return NULL;
   }
-  dir->idx = 0x08; // Start of standard 7-bit I2C device address range
+  dir->idx = 0; // 0 = config node, 1..128 = dev_handles[addr]
   return (DIR *)dir;
 }
 
@@ -930,30 +947,25 @@ struct dirent *driver_bus_i2c_readdir(eos_dev_t *dev, DIR *pdir) {
     return NULL;
   }
 
-  while (dir->idx <= 0x77) {
-    int addr = dir->idx;
+  // First entry is always the 'cfg' bus controller node
+  if (dir->idx == 0) {
+    dir->idx++;
+    memset(&dir->entry, 0, sizeof(dir->entry));
+    dir->entry.d_type = DT_CHR;
+    dir->entry.d_ino = 1;
+    snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "cfg");
+    return &dir->entry;
+  }
+
+  // Subsequent entries are active/attached devices (0x00 to 0x7F)
+  while (dir->idx <= 128) {
+    int addr = dir->idx - 1;
     dir->idx++;
 
-    bool present = false;
     if (st->dev_handles[addr] != NULL) {
-      present = true;
-    } else {
-      if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (!st->i2c_bus && st->sda_pin >= 0 && st->scl_pin >= 0) {
-          bus_activate_locked(dev, st);
-        }
-        if (st->i2c_bus &&
-            i2c_master_probe(st->i2c_bus, (uint16_t)addr, 20) == ESP_OK) {
-          present = true;
-        }
-        xSemaphoreGive(st->mutex);
-      }
-    }
-
-    if (present) {
       memset(&dir->entry, 0, sizeof(dir->entry));
       dir->entry.d_type = DT_CHR;
-      dir->entry.d_ino = (ino_t)addr;
+      dir->entry.d_ino = (ino_t)(addr + 2);
       snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "0x%02x", addr);
       return &dir->entry;
     }
@@ -977,25 +989,12 @@ long driver_bus_i2c_telldir(eos_dev_t *dev, DIR *pdir) {
 }
 
 int driver_bus_i2c_closedir(eos_dev_t *dev, DIR *pdir) {
+  (void)dev;
   if (!pdir) {
     errno = EBADF;
     return -1;
   }
   free(pdir);
-
-  if (dev && dev->state) {
-    i2c_bus_state_t *st = dev->state;
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) == pdTRUE) {
-      if (st->open_refcount > 0) {
-        st->open_refcount--;
-      }
-      if (st->open_refcount == 0 &&
-          !driver_bus_i2c_has_attached_devices(dev, st)) {
-        bus_deactivate_locked(dev, st);
-      }
-      xSemaphoreGive(st->mutex);
-    }
-  }
   return 0;
 }
 

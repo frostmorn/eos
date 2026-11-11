@@ -44,6 +44,8 @@ Put each rule in the declarative rule file proposed in F06.
 | `wrapped-symbol-documented` | `main/CMakeLists.txt` | `--wrap=` entries missing from the wrapper table | F01 |
 | `manifest-v2` | `main/ebin/**` | manifests without `abi_version`/`struct_size` | F05 |
 | `no-direct-led-pwm` | `main/edriver/**` except `pwm` | direct `ledc_*` | PWM goes through the pwm driver and capsmgr (T15, T16) |
+| `no-direct-bus-apis-ecore` | `main/ecore/**` | direct vendor bus APIs (`spi_bus_*`, `spi_device_*`, `i2c_master_*`, `sdmmc_*`, `sdspi_*`, `adc_*`, `i2s_*`, `scan_i2c_bus`) | Kernel core communicates through driver abstractions and `eos_dev_*`, never direct vendor bus APIs |
+| `no-direct-bus-apis-ebin` | `main/ebin/**` | direct vendor bus APIs (`spi_bus_*`, `spi_device_*`, `i2c_master_*`, `sdmmc_*`, `sdspi_*`, `adc_*`, `i2s_*`, `scan_i2c_bus`) | User apps communicate with peripherals strictly via `/dev` and standard VFS syscalls |
 
 ---
 

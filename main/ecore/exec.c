@@ -42,25 +42,23 @@ static void *exec_thread_entry(void *arg) {
   exec_arg_t *ex = (exec_arg_t *)arg;
   int ret = -1;
 
-  if (ex) {
-    eos_proc_set_thread(ex->pid, xTaskGetCurrentTaskHandle());
-  }
-
   if (ex && ex->bin && ex->bin->entry_point) {
     ret = ex->bin->entry_point(ex->argc, ex->argv);
   }
 
   fflush(stdout);
   fflush(stderr);
+  extern void esp_reent_cleanup(void);
+  esp_reent_cleanup();
 
   if (ex) {
-    eos_proc_exit(ex->pid, ret);
-
+    bool prev_h = eos_proc_heap_tracking_disable();
     for (int i = 0; i < ex->argc; i++) {
       free(ex->argv[i]);
     }
     free(ex->argv);
     free(ex);
+    eos_proc_heap_tracking_restore(prev_h);
   }
 
   return (void *)(intptr_t)ret;
@@ -90,8 +88,10 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     argc++;
   }
 
+  bool prev_h = eos_proc_heap_tracking_disable();
   char **dup_argv = eos_psram_calloc_prefer(argc + 1, sizeof(char *));
   if (!dup_argv) {
+    eos_proc_heap_tracking_restore(prev_h);
     errno = ENOMEM;
     return -1;
   }
@@ -102,6 +102,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
       for (int j = 0; j < i; j++)
         free(dup_argv[j]);
       free(dup_argv);
+      eos_proc_heap_tracking_restore(prev_h);
       errno = ENOMEM;
       return -1;
     }
@@ -113,9 +114,11 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     for (int i = 0; i < argc; i++)
       free(dup_argv[i]);
     free(dup_argv);
+    eos_proc_heap_tracking_restore(prev_h);
     errno = ENOMEM;
     return -1;
   }
+  eos_proc_heap_tracking_restore(prev_h);
 
   if (is_elf) {
     memset(&ex->elf_manifest, 0, sizeof(ex->elf_manifest));
@@ -153,16 +156,10 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   ex->sid = parent_sid;
 
   pthread_t thread;
-  pthread_attr_t attr;
-  pthread_attr_init(&attr);
-  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-  pthread_attr_setstacksize(&attr, eos_bin_effective_stack_size(bin));
-
-  eos_pthread_set_manifest_cfg(bin);
-
-  // Create detached thread using stack_size and preference from the ebin manifest
-  int rc = pthread_create(&thread, &attr, exec_thread_entry, ex);
-  pthread_attr_destroy(&attr);
+  int rc = eos_proc_spawn_thread(child_pid, exec_thread_entry, ex,
+                                 eos_bin_effective_stack_size(bin),
+                                 eos_bin_prefers_psram_stack(bin),
+                                 &thread);
   if (rc != 0) {
     eos_proc_exit(child_pid, -1);
     int dummy = 0;

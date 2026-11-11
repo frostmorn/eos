@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #define USH_LINE_MAX 256
 #define USH_WELCOME EOS_MASCOT_R " "
@@ -22,7 +23,7 @@ static int ush_readline(char *buf, size_t size) {
 
   for (;;) {
     eos_proc_t *proc = eos_proc_current();
-    bool is_console = (!proc || proc->fd_map[STDIN_FILENO] < 0);
+    bool is_console = (!proc || eos_proc_fd_map_get(proc, STDIN_FILENO) < 0);
 
     // When booted without UART / USB-Serial-JTAG connected, wait calmly
     // instead of spinning on read() or returning -1 (which would exit ush
@@ -151,6 +152,9 @@ int ush_main(int argc, char **argv) {
   char path[EOS_MID_STR_LEN];
 
   for (;;) {
+    int wstatus = 0;
+    while (waitpid(-1, &wstatus, WNOHANG) > 0) {}
+
     getcwd(path, sizeof(path));
 
     printf(USH_WELCOME "%s > ", path);

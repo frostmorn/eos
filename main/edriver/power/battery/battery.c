@@ -129,8 +129,8 @@ static bool battery_sample_hardware(eos_dev_t *dev, battery_state_t *st,
         .voltage_mv = 0,
     };
 
-    if (eos_dev_ioctl_call(adc_dev, EOS_DRV_FD, EOS_ADC_IOCTL_READ_VOLTAGE,
-                           &reading) == 0) {
+    if (eos_dev_ioctl(adc_dev, EOS_DRV_FD, EOS_ADC_IOCTL_READ_VOLTAGE,
+                      &reading) == 0) {
       pin_samples[valid_count++] = reading.voltage_mv;
     }
   }
