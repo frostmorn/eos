@@ -16,7 +16,7 @@
 
 #define USH_LINE_MAX 256
 #define USH_WELCOME EOS_MASCOT_R " "
-#define USH_STACK_SIZE 6144U
+#define USH_STACK_SIZE 12288U
 
 static int ush_readline(char *buf, size_t size) {
   size_t len = 0;

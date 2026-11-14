@@ -280,32 +280,33 @@ static int membench_main(int argc, char **argv) {
   }
 
   // ── Allocation Registry Overhead Benchmark (F02) ───────────
-  printf("** Allocation Registry Overhead (F02 O(log n) tracking)\n\n");
+  printf("** Allocation Registry Overhead (F02 Tracking & Scalability)\n\n");
   printf("+----------+--------------+--------------+--------------+\n");
   printf("|  blocks  | alloc us/op  |  free us/op  | total us/op  |\n");
   printf("+----------+--------------+--------------+--------------+\n");
 
-  static const size_t counts[] = {10, 50, 100, 250, 500};
+  static const size_t counts[] = {10, 50, 100, 250, 500, 1000, 2500, 5000};
   for (size_t c = 0; c < sizeof(counts) / sizeof(counts[0]); c++) {
     size_t count = counts[c];
     void **ptrs = (void **)malloc(count * sizeof(void *));
     if (!ptrs) continue;
 
-    const int iterations = 20;
+    const int iterations = (count >= 1000) ? 5 : 20;
     int64_t total_alloc_time = 0;
     int64_t total_free_time = 0;
+    size_t blk_size = (count >= 1000) ? 32 : 64;
 
     for (int it = 0; it < iterations; it++) {
       int64_t t0 = esp_timer_get_time();
       for (size_t i = 0; i < count; i++) {
-        ptrs[i] = malloc(64);
+        ptrs[i] = malloc(blk_size);
       }
       int64_t t1 = esp_timer_get_time();
       total_alloc_time += (t1 - t0);
 
       int64_t t2 = esp_timer_get_time();
       for (size_t i = 0; i < count; i++) {
-        free(ptrs[i]);
+        if (ptrs[i]) free(ptrs[i]);
       }
       int64_t t3 = esp_timer_get_time();
       total_free_time += (t3 - t2);
@@ -317,10 +318,36 @@ static int membench_main(int argc, char **argv) {
     double free_us_per_op = (double)total_free_time / (double)(iterations * count);
     double total_us_per_op = alloc_us_per_op + free_us_per_op;
 
-    printf("|   %4u   | %12.2f | %12.2f | %12.2f |\n",
+    printf("|   %5u  | %12.2f | %12.2f | %12.2f |\n",
            (unsigned)count, alloc_us_per_op, free_us_per_op, total_us_per_op);
   }
   printf("+----------+--------------+--------------+--------------+\n\n");
+
+  // ── Unregistered Pointer Miss-Path Benchmark ───────────────
+  printf("** Unregistered Pointer Free (Miss-Path Fast-Exit Benchmark)\n\n");
+  printf("+----------+--------------+--------------+--------------+\n");
+  printf("|  blocks  | alloc us/op  |  free us/op  | total us/op  |\n");
+  printf("+----------+--------------+--------------+--------------+\n");
+  {
+    const size_t miss_count = 500;
+    void **unregistered = (void **)malloc(miss_count * sizeof(void *));
+    if (unregistered) {
+      // Allocate raw memory bypassing tracking
+      for (size_t i = 0; i < miss_count; i++) {
+        unregistered[i] = heap_caps_malloc(32, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+      }
+      int64_t t_free_start = esp_timer_get_time();
+      for (size_t i = 0; i < miss_count; i++) {
+        if (unregistered[i]) free(unregistered[i]);
+      }
+      int64_t t_free_end = esp_timer_get_time();
+      double miss_free_us = (double)(t_free_end - t_free_start) / (double)miss_count;
+      printf("|   %5u  | %12s | %12.2f | %12s |\n",
+             (unsigned)miss_count, "N/A (unreg)", miss_free_us, "N/A");
+      printf("+----------+--------------+--------------+--------------+\n\n");
+      free(unregistered);
+    }
+  }
 
   printf("Benchmark complete.\n\n");
 

@@ -203,6 +203,42 @@
       "paths": ["main/edriver"],
       "pattern": "\\b(eos_drv_t|eos_driver_t)\\b\\s+\\w+\\s*=",
       "rationale": "Every driver module folder must declare a driver structure and no loose files may exist."
+    },
+    {
+      "id": "no_io_under_vfs_lock",
+      "name": "No blocking/real I/O calls while eos_vfs_* lock held",
+      "type": "no_calls_between_patterns",
+      "paths": ["main"],
+      "file_extensions": [".c", ".h"],
+      "lock_patterns": [
+        "\\beos_vfs_alloc_lock\\s*\\(",
+        "\\beos_vfs_table_lock\\s*\\(",
+        "\\beos_vfs_fd_lock\\s*\\(",
+        "\\beos_vfs_dir_lock\\s*\\("
+      ],
+      "unlock_patterns": [
+        "\\beos_vfs_alloc_unlock\\s*\\(",
+        "\\beos_vfs_table_unlock\\s*\\(",
+        "\\beos_vfs_fd_unlock\\s*\\(",
+        "\\beos_vfs_dir_unlock\\s*\\("
+      ],
+      "forbidden_calls": [
+        "\\b__real__open_r\\b",
+        "\\b__real__close_r\\b",
+        "\\b__real__read_r\\b",
+        "\\b__real__write_r\\b",
+        "\\b__real__lseek_r\\b",
+        "\\b__real__fstat_r\\b",
+        "\\b__real__stat_r\\b",
+        "\\b__real__unlink_r\\b",
+        "\\b__real__link_r\\b",
+        "\\b__real__rename_r\\b",
+        "\\b__real_opendir\\b",
+        "\\b__real_readdir\\b",
+        "\\b__real_closedir\\b",
+        "\\b__real_mkdir\\b"
+      ],
+      "rationale": "Real VFS/filesystem I/O calls must never be executed while holding central VFS locks to prevent deadlocks and blocking stalls."
     }
   ]
 }

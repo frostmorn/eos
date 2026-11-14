@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/proc.h"
+#include "emisc/strlimits.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -148,7 +149,7 @@ static void test_pipeline_and_pgid(test_ctx_t *ctx) {
   report_test(ctx, "proc: pipeline 'echo ... | cat' succeeds with 0", ret == 0);
 
   FILE *f = fopen("/tmp/proc_pipe.txt", "r");
-  char buf[64] = {0};
+  char buf[EOS_SMALL_STR_LEN] = {0};
   if (f) {
     if (fgets(buf, sizeof(buf), f)) {
       char *nl = strchr(buf, '\n');
@@ -163,6 +164,7 @@ static void test_pipeline_and_pgid(test_ctx_t *ctx) {
 }
 
 static void test_1000_cycles_stress(test_ctx_t *ctx) {
+  while (waitpid(-1, NULL, WNOHANG) > 0);
   size_t initial_active = eos_proc_count_active();
   bool all_cycles_ok = true;
   char *child_argv[] = {"test_proc", "--child-exit", "0", NULL};
@@ -203,7 +205,7 @@ static void test_procfs_process_hierarchy(test_ctx_t *ctx) {
   FILE *f = fopen("/proc/self/status", "r");
   report_test(ctx, "procfs: fopen('/proc/self/status') succeeds", f != NULL);
   if (f) {
-    char buf[512] = {0};
+    char buf[EOS_LARGE_STR_LEN] = {0};
     size_t read_bytes = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: /proc/self/status contains 'Name:' and 'Pid:'",
@@ -214,7 +216,7 @@ static void test_procfs_process_hierarchy(test_ctx_t *ctx) {
   f = fopen("/proc/self/cmdline", "r");
   report_test(ctx, "procfs: fopen('/proc/self/cmdline') succeeds", f != NULL);
   if (f) {
-    char buf[128] = {0};
+    char buf[EOS_MID_STR_LEN] = {0};
     size_t read_bytes = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: /proc/self/cmdline contains process name",
@@ -226,7 +228,7 @@ static void test_procfs_process_hierarchy(test_ctx_t *ctx) {
   f = fopen("/proc/self/cwd", "r");
   report_test(ctx, "procfs: fopen('/proc/self/cwd') succeeds", f != NULL);
   if (f) {
-    char buf[128] = {0};
+    char buf[EOS_MID_STR_LEN] = {0};
     size_t read_bytes = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: /proc/self/cwd contains path starting with '/'",
@@ -237,7 +239,7 @@ static void test_procfs_process_hierarchy(test_ctx_t *ctx) {
   f = fopen("/proc/1/stat", "r");
   report_test(ctx, "procfs: fopen('/proc/1/stat') succeeds", f != NULL);
   if (f) {
-    char buf[128] = {0};
+    char buf[EOS_MID_STR_LEN] = {0};
     size_t read_bytes = fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: /proc/1/stat contains '1 (init)'",
@@ -311,7 +313,7 @@ static void test_ps_utility(test_ctx_t *ctx) {
   FILE *f = fopen("/proc/self/status", "r");
   report_test(ctx, "procfs: fopen('/proc/self/status') contains CPUTime", f != NULL);
   if (f) {
-    char buf[512] = {0};
+    char buf[EOS_LARGE_STR_LEN] = {0};
     fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: status contains 'CPUTime:' and 'StartTime:'",
@@ -324,7 +326,7 @@ static void test_loadavg_and_uptime(test_ctx_t *ctx) {
   FILE *f = fopen("/proc/loadavg", "r");
   report_test(ctx, "procfs: fopen('/proc/loadavg') succeeds", f != NULL);
   if (f) {
-    char buf[128] = {0};
+    char buf[EOS_MID_STR_LEN] = {0};
     fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     double l1 = -1, l5 = -1, l15 = -1;
@@ -337,7 +339,7 @@ static void test_loadavg_and_uptime(test_ctx_t *ctx) {
   f = fopen("/proc/stat", "r");
   report_test(ctx, "procfs: fopen('/proc/stat') succeeds", f != NULL);
   if (f) {
-    char buf[256] = {0};
+    char buf[EOS_MID_STR_LEN] = {0};
     fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
     report_test(ctx, "procfs: /proc/stat contains 'cpu ' and 'processes'",
@@ -367,32 +369,65 @@ static void *cross_thread_free_worker(void *arg) {
   return NULL;
 }
 
+static size_t get_proc_heap_metric(pid_t pid, const char *key) {
+  char path[EOS_SMALL_STR_LEN];
+  if (pid == 0) {
+    snprintf(path, sizeof(path), "/proc/0/status");
+  } else {
+    snprintf(path, sizeof(path), "/proc/%d/status", (int)pid);
+  }
+  FILE *f = fopen(path, "r");
+  if (!f) return 0;
+  char line[EOS_MID_STR_LEN];
+  size_t val = 0;
+  size_t klen = strlen(key);
+  while (fgets(line, sizeof(line), f)) {
+    if (strncmp(line, key, klen) == 0) {
+      val = (size_t)strtoul(line + klen, NULL, 10);
+      break;
+    }
+  }
+  fclose(f);
+  return val;
+}
+
 static void test_memory_ownership_f02(test_ctx_t *ctx) {
   printf("\n--- F02: Memory Ownership & Tracking Unit Tests ---\n");
 
   // 1. Cross-thread free
+  size_t sram_before = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
   void *shared_buf = malloc(256);
   report_test(ctx, "f02: malloc(256) succeeds", shared_buf != NULL);
   if (shared_buf) {
+    size_t sram_during = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
     memset(shared_buf, 0xA5, 256);
     pthread_t th;
     int pt_rc = pthread_create(&th, NULL, cross_thread_free_worker, shared_buf);
     report_test(ctx, "f02: cross-thread free thread created", pt_rc == 0);
     if (pt_rc == 0) {
       pthread_join(th, NULL);
-      report_test(ctx, "f02: cross-thread free completed without crash", true);
+      size_t sram_after = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
+      report_test(ctx, "f02: cross-thread free decrements process heap tracking counters",
+                  sram_after < sram_during || sram_after <= sram_before);
     } else {
       free(shared_buf);
     }
   }
 
   // 2. Memory adoption (eos_mem_adopt)
+  size_t my_before = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
+  size_t k_before = get_proc_heap_metric(0, "HeapSRAM:\t");
   void *adopt_buf = malloc(128);
   report_test(ctx, "f02: malloc(128) for adoption succeeds", adopt_buf != NULL);
   if (adopt_buf) {
+    size_t my_during = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
     // Adopt into kernel context (PID 0)
     int rc0 = eos_mem_adopt(adopt_buf, 0);
     report_test(ctx, "f02: eos_mem_adopt(ptr, 0) into kernel context returns 0", rc0 == 0);
+    size_t my_after_k = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
+    size_t k_after = get_proc_heap_metric(0, "HeapSRAM:\t");
+    report_test(ctx, "f02: adopt into kernel context shifts accounting from process to kernel",
+                my_after_k < my_during && k_after >= k_before);
 
     // Adopt back into current process
     int rc1 = eos_mem_adopt(adopt_buf, getpid());
@@ -404,15 +439,18 @@ static void test_memory_ownership_f02(test_ctx_t *ctx) {
     report_test(ctx, "f02: eos_mem_adopt(ptr, 99999) returns -1 with ESRCH",
                 eos_mem_adopt(adopt_buf, 99999) == -1 && errno == ESRCH);
 
+    size_t my_before_free = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
     free(adopt_buf);
-    report_test(ctx, "f02: free adopted buffer succeeds", true);
+    size_t my_after_free = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
+    report_test(ctx, "f02: free adopted buffer decrements process heap counters",
+                my_after_free < my_before_free || my_after_free <= my_before);
   }
 
   // 3. /proc/0/status (Kernel process context)
   FILE *f0 = fopen("/proc/0/status", "r");
   report_test(ctx, "f02: /proc/0/status opens successfully", f0 != NULL);
   if (f0) {
-    char line[128];
+    char line[EOS_MID_STR_LEN];
     bool has_name_kernel = false;
     bool has_pid_0 = false;
     bool has_sram = false;
@@ -434,7 +472,7 @@ static void test_memory_ownership_f02(test_ctx_t *ctx) {
   FILE *fself = fopen("/proc/self/status", "r");
   report_test(ctx, "f02: /proc/self/status opens successfully", fself != NULL);
   if (fself) {
-    char line[128];
+    char line[EOS_MID_STR_LEN];
     bool has_vmdata = false;
     bool has_fdsize = false;
     while (fgets(line, sizeof(line), fself)) {
@@ -484,6 +522,16 @@ static void test_memory_ownership_f02(test_ctx_t *ctx) {
   report_test(ctx, "f02: child attach process reaped", attach_reaped > 0);
   report_test(ctx, "f02: child attach process exited successfully", WIFEXITED(attach_status) && WEXITSTATUS(attach_status) == 0);
 
+  // Churn and poison heap to detect any use-after-free
+  void *poison_bufs[8];
+  for (int p = 0; p < 8; p++) {
+    poison_bufs[p] = malloc(256);
+    if (poison_bufs[p]) memset(poison_bufs[p], 0xDD, 256);
+  }
+  for (int p = 0; p < 8; p++) {
+    free(poison_bufs[p]);
+  }
+
   void *drv_ptr = NULL;
   FILE *f_ptr = fopen("/tmp_drv_ptr", "r");
   if (f_ptr) {
@@ -504,12 +552,15 @@ static void test_memory_ownership_f02(test_ctx_t *ctx) {
         break;
       }
     }
-    report_test(ctx, "f02: driver state remains intact in kernel context (PID 0) after child exit", valid_state);
+    report_test(ctx, "f02: driver state remains intact in kernel context (PID 0) after child exit and heap churn", valid_state);
 
     int adopt_rc = eos_mem_adopt(drv_ptr, getpid());
     report_test(ctx, "f02: adopt driver state into parent process succeeds", adopt_rc == 0);
+    size_t sram_before_drv_free = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
     free(drv_ptr);
-    report_test(ctx, "f02: free driver state buffer succeeds", true);
+    size_t sram_after_drv_free = get_proc_heap_metric(getpid(), "HeapSRAM:\t");
+    report_test(ctx, "f02: free driver state buffer decrements process heap tracking",
+                sram_after_drv_free < sram_before_drv_free || sram_after_drv_free <= my_before);
   }
 }
 
@@ -540,11 +591,13 @@ static void test_bg_process_and_threads(test_ctx_t *ctx) {
   }
   report_test(ctx, "proc: background command runs with separate PID", bg_pid > 1 && bg_pid != getpid());
   if (bg_pid > 1) {
-    char proc_path[32];
+    char proc_path[EOS_SMALL_STR_LEN];
     snprintf(proc_path, sizeof(proc_path), "/proc/%d/status", bg_pid);
     FILE *fp = fopen(proc_path, "r");
     report_test(ctx, "proc: background process visible in /proc", fp != NULL);
     if (fp) fclose(fp);
+    int bg_status = 0;
+    waitpid(bg_pid, &bg_status, 0);
   }
   unlink("/tmp/test_bg_pid.txt");
 
@@ -573,6 +626,209 @@ static void test_bg_process_and_threads(test_ctx_t *ctx) {
     report_test(ctx, "proc: background thread terminated upon main thread exit", c1 == c2 && c1 > 0);
     free((void *)cnt_ptr);
   }
+}
+
+typedef struct {
+  int fd;
+  volatile int started;
+  ssize_t read_res;
+  int err;
+  volatile int finished;
+} vfs_reader_ctx_t;
+
+static void *vfs_blocked_reader_worker(void *arg) {
+  vfs_reader_ctx_t *tc = (vfs_reader_ctx_t *)arg;
+  tc->started = 1;
+  char buf[32];
+  tc->read_res = read(tc->fd, buf, sizeof(buf));
+  tc->err = errno;
+  tc->finished = 1;
+  return NULL;
+}
+
+typedef struct {
+  int fd;
+  volatile int started;
+  ssize_t read_res;
+  char buf[32];
+  volatile int finished;
+} vfs_fullduplex_ctx_t;
+
+static void *vfs_fullduplex_reader_worker(void *arg) {
+  vfs_fullduplex_ctx_t *tc = (vfs_fullduplex_ctx_t *)arg;
+  tc->started = 1;
+  memset(tc->buf, 0, sizeof(tc->buf));
+  tc->read_res = read(tc->fd, tc->buf, 4);
+  tc->finished = 1;
+  return NULL;
+}
+
+typedef struct {
+  int id;
+  int iterations;
+  int success_count;
+} vfs_churn_ctx_t;
+
+static void *vfs_churn_worker(void *arg) {
+  vfs_churn_ctx_t *c = (vfs_churn_ctx_t *)arg;
+  char path[EOS_SMALL_STR_LEN];
+  snprintf(path, sizeof(path), "/tmp/churn_%d.txt", c->id);
+  c->success_count = 0;
+
+  for (int i = 0; i < c->iterations; i++) {
+    int fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 0666);
+    if (fd < 0) break;
+    char wbuf[16];
+    int wlen = snprintf(wbuf, sizeof(wbuf), "c_%d_%d", c->id, i);
+    if (write(fd, wbuf, wlen) != wlen) {
+      close(fd);
+      break;
+    }
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+      close(fd);
+      break;
+    }
+    char rbuf[16] = {0};
+    if (read(fd, rbuf, sizeof(rbuf)) != wlen) {
+      close(fd);
+      break;
+    }
+    if (close(fd) != 0) {
+      break;
+    }
+    unlink(path);
+    c->success_count++;
+  }
+  return NULL;
+}
+
+static void test_vfs_concurrency(test_ctx_t *ctx) {
+  printf("\n--- VFS Concurrency, Lifecycle & Non-Blocking Reaping Tests ---\n");
+
+  // 1. Blocked reader + pipe write-end close from another thread -> wakes with EOF (0)
+  int p_fds[2];
+  int p_rc = pipe(p_fds);
+  report_test(ctx, "vfs: pipe() creates pair of fds", p_rc == 0);
+  if (p_rc == 0) {
+    vfs_reader_ctx_t r_ctx = {.fd = p_fds[0], .started = 0, .read_res = -999, .finished = 0};
+    pthread_t th;
+    int th_rc = pthread_create(&th, NULL, vfs_blocked_reader_worker, &r_ctx);
+    report_test(ctx, "vfs: blocked reader thread created", th_rc == 0);
+    if (th_rc == 0) {
+      while (!r_ctx.started) usleep(1000);
+      usleep(20 * 1000); // 20ms to ensure blocked inside pipefs_read
+
+      // Close the write end - this must wake the reader with EOF (0)
+      close(p_fds[1]);
+
+      for (int i = 0; i < 20 && !r_ctx.finished; i++) {
+        usleep(10 * 1000);
+      }
+      report_test(ctx, "vfs: closing pipe write-end wakes blocked reader promptly", r_ctx.finished == 1);
+      report_test(ctx, "vfs: blocked reader receives EOF (0 bytes)", r_ctx.read_res == 0);
+      pthread_join(th, NULL);
+      close(p_fds[0]);
+    } else {
+      close(p_fds[0]);
+      close(p_fds[1]);
+    }
+  }
+
+  // 2. Blocked reader + pipe read-end close from another thread -> wakes promptly
+  p_rc = pipe(p_fds);
+  if (p_rc == 0) {
+    vfs_reader_ctx_t r_ctx = {.fd = p_fds[0], .started = 0, .read_res = -999, .finished = 0};
+    pthread_t th;
+    if (pthread_create(&th, NULL, vfs_blocked_reader_worker, &r_ctx) == 0) {
+      while (!r_ctx.started) usleep(1000);
+      usleep(20 * 1000);
+
+      // Close read end from this thread while worker is inside read()
+      close(p_fds[0]);
+
+      for (int i = 0; i < 20 && !r_ctx.finished; i++) {
+        usleep(10 * 1000);
+      }
+      report_test(ctx, "vfs: closing pipe read-end wakes blocked reader", r_ctx.finished == 1);
+      report_test(ctx, "vfs: reader unblocks with EOF or error", r_ctx.read_res <= 0);
+      pthread_join(th, NULL);
+      close(p_fds[1]);
+    } else {
+      close(p_fds[0]);
+      close(p_fds[1]);
+    }
+  }
+
+  // 3. Full-duplex read and write on ONE fd
+  int fd_duplex = open("/proc/pipes/test_fullduplex", O_RDWR | O_CREAT | O_TRUNC, 0666);
+  report_test(ctx, "vfs: open O_RDWR bidirectional pipe succeeds", fd_duplex >= 0);
+  if (fd_duplex >= 0) {
+    vfs_fullduplex_ctx_t d_ctx = {.fd = fd_duplex, .started = 0, .read_res = -1, .finished = 0};
+    pthread_t th;
+    if (pthread_create(&th, NULL, vfs_fullduplex_reader_worker, &d_ctx) == 0) {
+      while (!d_ctx.started) usleep(1000);
+      usleep(20 * 1000); // reader blocked in read() on fd_duplex
+
+      // Write to the SAME fd while reader is blocked
+      ssize_t wn = write(fd_duplex, "ping", 4);
+      report_test(ctx, "vfs: write on same fd succeeds while reader is blocked", wn == 4);
+
+      for (int i = 0; i < 20 && !d_ctx.finished; i++) {
+        usleep(10 * 1000);
+      }
+      report_test(ctx, "vfs: full-duplex reader unblocks upon write", d_ctx.finished == 1);
+      report_test(ctx, "vfs: full-duplex reader received correct data",
+                  d_ctx.read_res == 4 && memcmp(d_ctx.buf, "ping", 4) == 0);
+      pthread_join(th, NULL);
+    }
+    close(fd_duplex);
+    unlink("/proc/pipes/test_fullduplex");
+  }
+
+  // 4. Multi-threaded FD reuse stress (4 threads churn open/write/lseek/read/close concurrently)
+  int fperr = fprintf(stderr, "[TEST_FPRINTF_STDERR]\n");
+  fflush(stderr);
+  report_test(ctx, "vfs: fprintf to stderr succeeds", fperr > 0);
+  ssize_t w2 = write(2, "[TEST_STDERR_WRITE]\n", 20);
+  report_test(ctx, "vfs: write to stderr (fd 2) succeeds", w2 == 20);
+
+  #define CHURN_THREADS 4
+  #define CHURN_ITERS 25
+  pthread_t churn_ths[CHURN_THREADS];
+  vfs_churn_ctx_t churn_ctxs[CHURN_THREADS];
+  bool churn_spawned = true;
+  for (int i = 0; i < CHURN_THREADS; i++) {
+    churn_ctxs[i].id = i;
+    churn_ctxs[i].iterations = CHURN_ITERS;
+    churn_ctxs[i].success_count = 0;
+    if (pthread_create(&churn_ths[i], NULL, vfs_churn_worker, &churn_ctxs[i]) != 0) {
+      churn_spawned = false;
+    }
+  }
+  report_test(ctx, "vfs: concurrent fd churn threads started", churn_spawned);
+  bool all_churn_ok = churn_spawned;
+  for (int i = 0; i < CHURN_THREADS; i++) {
+    if (churn_spawned) {
+      pthread_join(churn_ths[i], NULL);
+      if (churn_ctxs[i].success_count != CHURN_ITERS) {
+        all_churn_ok = false;
+      }
+    }
+  }
+  report_test(ctx, "vfs: 100 concurrent open/write/read/close cycles succeeded with 0 races", all_churn_ok);
+  #undef CHURN_THREADS
+  #undef CHURN_ITERS
+
+  // 5. Process reaping with a blocked reader thread
+  char *br_argv[] = {"test_proc", "--child-blocked-reader", NULL};
+  int br_exec = execve("test_proc", br_argv, NULL);
+  report_test(ctx, "vfs: execve child with blocked reader thread succeeds", br_exec == 0);
+
+  int br_status = 0;
+  pid_t br_reaped = waitpid(-1, &br_status, 0);
+  report_test(ctx, "vfs: waitpid reaped child with blocked reader without stall", br_reaped > 0);
+  report_test(ctx, "vfs: child with blocked reader exited with expected code 33",
+              WIFEXITED(br_status) && WEXITSTATUS(br_status) == 33);
 }
 
 int test_proc_main(int argc, char **argv) {
@@ -632,6 +888,22 @@ int test_proc_main(int argc, char **argv) {
     return (drv_state != NULL) ? 0 : 1;
   }
 
+  if (argc >= 2 && strcmp(argv[1], "--child-blocked-reader") == 0) {
+    int fds[2];
+    if (pipe(fds) < 0) return 1;
+    vfs_reader_ctx_t *r_ctx = malloc(sizeof(vfs_reader_ctx_t));
+    if (!r_ctx) return 1;
+    r_ctx->fd = fds[0];
+    r_ctx->started = 0;
+    r_ctx->read_res = -1;
+    r_ctx->finished = 0;
+    pthread_t th;
+    pthread_create(&th, NULL, vfs_blocked_reader_worker, r_ctx);
+    while (!r_ctx->started) usleep(1000);
+    usleep(15 * 1000);
+    return 33;
+  }
+
   printf("\n=== Running Process Table & Lifecycle Unit Tests ===\n");
   test_ctx_t ctx = {0, 0};
 
@@ -645,6 +917,7 @@ int test_proc_main(int argc, char **argv) {
   test_loadavg_and_uptime(&ctx);
   test_memory_ownership_f02(&ctx);
   test_bg_process_and_threads(&ctx);
+  test_vfs_concurrency(&ctx);
   test_1000_cycles_stress(&ctx);
 
   printf("\nProcess Table Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);

@@ -1252,8 +1252,10 @@ static int eval_command_node(eos_ast_node_t *node) {
       }
 
       fflush(stdout);
+      fflush(stderr);
       clearerr(stdin);
       clearerr(stdout);
+      clearerr(stderr);
 
       if (redir) {
         if (proc) {

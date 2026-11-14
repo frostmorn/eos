@@ -77,6 +77,56 @@ def run_rule_forbidden_patterns(rule):
     return violations
 
 
+def run_rule_no_calls_between_patterns(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c", ".h"]))
+    lock_patterns = [re.compile(p) for p in rule.get("lock_patterns", [])]
+    unlock_patterns = [re.compile(p) for p in rule.get("unlock_patterns", [])]
+    forbidden_calls = [re.compile(p) for p in rule.get("forbidden_calls", [])]
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for dir_path in paths:
+        if not os.path.exists(dir_path):
+            continue
+        for root, _, files in os.walk(dir_path):
+            for file in files:
+                if not file.endswith(file_exts):
+                    continue
+                filepath = os.path.join(root, file)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()
+                    lock_stack = []
+                    for idx, line in enumerate(lines, 1):
+                        stripped = line.strip()
+                        if not stripped or stripped.startswith(("//", "/*", "*")):
+                            continue
+                        code_part = line.split("//")[0]
+                        for lpat in lock_patterns:
+                            if lpat.search(code_part):
+                                lock_stack.append(idx)
+                        if lock_stack:
+                            for fpat in forbidden_calls:
+                                if fpat.search(code_part):
+                                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                                    print(f"    Forbidden I/O call while lock held (acquired at line {lock_stack[-1]}): {stripped}")
+                                    violations += 1
+                        for upat in unlock_patterns:
+                            if upat.search(code_part):
+                                if lock_stack:
+                                    lock_stack.pop()
+                except Exception as e:
+                    print(f"Error reading {filepath}: {e}")
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} violation(s) for {name}.")
+    return violations
+
+
 def run_rule_no_globals(rule):
     violations = 0
     name = rule.get("name", rule.get("id"))
@@ -300,6 +350,7 @@ def run_rule_driver_structure(rule):
 
 DISPATCHER = {
     "forbidden_patterns": run_rule_forbidden_patterns,
+    "no_calls_between_patterns": run_rule_no_calls_between_patterns,
     "no_globals": run_rule_no_globals,
     "mandatory_include_guards": run_rule_include_guards,
     "allowed_directory": run_rule_allowed_directory,

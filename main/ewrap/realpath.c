@@ -2,6 +2,7 @@
 #include "ecore/proc.h"
 #include <errno.h>
 #include <dirent.h>
+#include <limits.h>
 #include <string.h>
 #include <stddef.h>
 
@@ -25,8 +26,8 @@ int __wrap_chdir(char*path){
     return -1;
   }
 
-  char *_path = eos_fapi_get_buffer(0);
-  _path = eos_fapi_path_resolve(path, _path);
+  char buf[PATH_MAX];
+  char *_path = eos_fapi_path_resolve(path, buf);
 
   DIR *dir = opendir(_path);
   if (!dir)

@@ -75,10 +75,8 @@ def jtag_reset(port):
     ]
     if serial_num:
         cmd.extend(["-c", f"adapter serial {serial_num}"])
-    elif loc:
-        cmd.extend(["-c", f"adapter usb location {loc}"])
     cmd.extend(["-c", "init; reset run; shutdown"])
-    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({loc or 'auto'})...{Colors.RESET}")
+    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
         time.sleep(1.5)
@@ -99,11 +97,11 @@ class EOSTestHarness:
 
     def _open_serial(self):
         if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=2.0)
         else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=2.0)
         if not self.port.startswith("socket://"):
-            self.ser.dtr = True
+            self.ser.dtr = False
             self.ser.rts = False
 
     def _read_available(self):

@@ -25,8 +25,8 @@ This document serves as the authoritative specification, agent guidelines, and a
 4.  **Universal & Iterative Approach:** Prefer universal, robust abstractions and adopt an iterative refinement process over monolithic changes.
 5.  **Strict Git Commit Prohibition:** The agent must **NEVER** run `git commit`. All changes must be left in the working tree or staged (`git add`) for human review and commit.
 6.  **Continuous Architectural Audit:** All modifications must maintain zero violations across repository audits:
-    *   `python3 tools/wrapcheck.py` (28/28 linker wrapped symbols accounted for and documented).
-    *   `python3 tools/layer_audit.py` (all 15 declarative layer separation rules passed).
+    *   `python3 tools/wrapcheck.py` (all linker wrapped symbols accounted for and documented).
+    *   `python3 tools/layer_audit.py` (all declarative layer separation rules passed).
 
 ---
 
@@ -78,23 +78,23 @@ Physical targets (ESP32-P4 and ESP32-S3) connect via built-in USB-Serial-JTAG (`
 Always use OpenOCD JTAG commands to control the target hardware:
 
 1.  **Target Reset (Clean JTAG CPU Reset, No Strapping Pin Hazard):**
-    *   **ESP32-P4 (JC4880P443C, USB `2-1.4.3`):**
+    *   **ESP32-P4 (JC4880P443C):**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "init; reset run; shutdown"
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "init; reset run; shutdown"
         ```
-    *   **ESP32-S3 (Lilka v2.3, USB `2-1.4.4`):**
+    *   **ESP32-S3 (Lilka v2.3):**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter usb location 2-1.4.4" -c "init; reset run; shutdown"
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "init; reset run; shutdown"
         ```
 
 2.  **Flash Firmware & Verify via JTAG:**
     *   **ESP32-P4:**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "program_esp_bins build flasher_args.json verify reset exit"
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
         ```
     *   **ESP32-S3:**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter usb location 2-1.4.4" -c "program_esp_bins build flasher_args.json verify reset exit"
+        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
         ```
 
 3.  **Live Inspection & Crash Diagnosis (GDB + OpenOCD):**
@@ -104,8 +104,9 @@ Always use OpenOCD JTAG commands to control the target hardware:
         ```
     *   Check Program Counter and core state:
         ```bash
-        openocd -f board/esp32p4-builtin.cfg -c "adapter usb location 2-1.4.3" -c "init; halt; targets; reg pc; resume; shutdown"
+        openocd -f board/esp32p4-builtin.cfg -c "init; halt; targets; reg pc; resume; shutdown"
         ```
+    *   *Note:* OpenOCD automatically detects the target adapter. If multiple adapters are connected, disambiguate with `-c "adapter serial <SERIAL_NUM>"`. Avoid system-dependent physical USB topology locations.
 
 4.  **Automated Test Harness Execution (`tools/hardware_test.py`):**
     *   Tests interact with the running shell prompt using active canary pinging (`echo __EOS_READY__\n`) and non-blocking I/O.

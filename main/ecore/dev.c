@@ -420,7 +420,9 @@ ssize_t eos_dev_pwrite(eos_dev_t *dev, int fd, const void *src, size_t size,
 int eos_dev_ioctl(eos_dev_t *dev, int fd, int cmd, ...) {
   va_list args;
   va_start(args, cmd);
+  bool prev_k = eos_proc_enter_kernel();
   int ret = eos_drv_ioctl(dev, fd, cmd, args);
+  eos_proc_leave_kernel(prev_k);
   va_end(args);
   return ret;
 }
@@ -428,7 +430,9 @@ int eos_dev_ioctl(eos_dev_t *dev, int fd, int cmd, ...) {
 int eos_dev_ioctl_call(eos_dev_t *dev, int fd, int cmd, ...) {
   va_list args;
   va_start(args, cmd);
+  bool prev_k = eos_proc_enter_kernel();
   int ret = eos_drv_ioctl(dev, fd, cmd, args);
+  eos_proc_leave_kernel(prev_k);
   va_end(args);
   return ret;
 }

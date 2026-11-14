@@ -140,14 +140,16 @@ void *__wrap_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps) {
 
 void __wrap_heap_caps_free(void *ptr) {
   if (!ptr) return;
-  if (eos_proc_in_heap_wrap()) {
+  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
     __real_heap_caps_free(ptr);
     return;
   }
 
   eos_proc_set_in_heap_wrap(true);
   eos_proc_t *proc = eos_proc_current();
-  eos_proc_mem_remove(proc, ptr);
+  if (proc) {
+    eos_proc_mem_remove(proc, ptr);
+  }
   __real_heap_caps_free(ptr);
   eos_proc_set_in_heap_wrap(false);
 }

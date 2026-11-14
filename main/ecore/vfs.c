@@ -5,8 +5,8 @@
 #include <errno.h>
 #include <string.h>
 
-static kvec_psram_t(eos_vfs_fd_desc_t *) s_fd_descs;
-static kvec_psram_t(eos_vfs_dir_desc_t *) s_dir_descs;
+static kvec_psram_t(eos_vfs_file_t *) s_fd_descs;
+static kvec_psram_t(eos_vfs_dir_t *) s_dir_descs;
 static pthread_mutex_t s_vfs_table_lock;
 static bool s_vfs_initialized = false;
 
@@ -19,6 +19,14 @@ void eos_vfs_alloc_unlock(void) {
   pthread_mutex_unlock(&s_vfs_table_lock);
 }
 
+void eos_vfs_table_lock(void) {
+  eos_vfs_alloc_lock();
+}
+
+void eos_vfs_table_unlock(void) {
+  eos_vfs_alloc_unlock();
+}
+
 void eos_vfs_init(void) {
   if (s_vfs_initialized) return;
 
@@ -28,227 +36,235 @@ void eos_vfs_init(void) {
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
   pthread_mutex_init(&s_vfs_table_lock, &attr);
+  pthread_mutexattr_destroy(&attr);
 
   kv_init(s_fd_descs);
   kv_init(s_dir_descs);
 
-  // Pre-seed standard file descriptors 0, 1, 2 in PSRAM
-  for (int i = 0; i < 3; i++) {
-    eos_vfs_fd_desc_t *desc = eos_psram_calloc_prefer(1, sizeof(eos_vfs_fd_desc_t));
-    if (desc) {
-      pthread_mutex_init(&desc->lock, &attr);
-      atomic_init(&desc->ref_count, 1);
-      desc->flags = 0;
-      desc->in_use = true;
-      kv_push(eos_vfs_fd_desc_t *, s_fd_descs, desc);
+  // Pre-seed standard console file descriptors 0, 1, 2, 3 in PSRAM
+  for (int i = 0; i < 4; i++) {
+    eos_vfs_file_t *file = eos_psram_calloc_prefer(1, sizeof(eos_vfs_file_t));
+    if (file) {
+      file->fd = i;
+      file->flags = 0;
+      atomic_init(&file->ref_count, 1);
+      atomic_init(&file->closing, false);
+      pthread_mutex_init(&file->offset_lock, NULL);
+      kv_push(eos_vfs_file_t *, s_fd_descs, file);
     }
   }
 
-  pthread_mutexattr_destroy(&attr);
   s_vfs_initialized = true;
-
   eos_proc_heap_tracking_restore(prev_h);
 }
+
+// ── File Descriptor Operations ──────────────────────────────────
 
 void eos_vfs_fd_register(int fd, int flags) {
   if (fd < 0) return;
-  pthread_mutex_lock(&s_vfs_table_lock);
+
   bool prev_h = eos_proc_heap_tracking_disable();
-
-  if ((size_t)fd >= kv_size(s_fd_descs)) {
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-
-    while (kv_size(s_fd_descs) <= (size_t)fd) {
-      eos_vfs_fd_desc_t *desc = eos_psram_calloc_prefer(1, sizeof(eos_vfs_fd_desc_t));
-      if (desc) {
-        pthread_mutex_init(&desc->lock, &attr);
-        atomic_init(&desc->ref_count, 0);
-        desc->flags = 0;
-        desc->in_use = false;
-        kv_push(eos_vfs_fd_desc_t *, s_fd_descs, desc);
-      }
-    }
-    pthread_mutexattr_destroy(&attr);
+  eos_vfs_file_t *file = eos_psram_calloc_prefer(1, sizeof(eos_vfs_file_t));
+  if (!file) {
+    eos_proc_heap_tracking_restore(prev_h);
+    return;
   }
 
-  eos_vfs_fd_desc_t *desc = ((size_t)fd < kv_size(s_fd_descs)) ? kv_A(s_fd_descs, fd) : NULL;
+  file->fd = fd;
+  file->flags = flags;
+  atomic_init(&file->ref_count, 1); // 1 reference held by the central table
+  atomic_init(&file->closing, false);
+  pthread_mutex_init(&file->offset_lock, NULL);
+
+  pthread_mutex_lock(&s_vfs_table_lock);
+  while (kv_size(s_fd_descs) <= (size_t)fd) {
+    kv_push(eos_vfs_file_t *, s_fd_descs, NULL);
+  }
+
+  eos_vfs_file_t *old_file = kv_A(s_fd_descs, fd);
+  kv_A(s_fd_descs, fd) = file;
+  pthread_mutex_unlock(&s_vfs_table_lock);
   eos_proc_heap_tracking_restore(prev_h);
-  pthread_mutex_unlock(&s_vfs_table_lock);
 
-  if (desc) {
-    pthread_mutex_lock(&desc->lock);
-    atomic_store(&desc->ref_count, 1);
-    desc->flags = flags;
-    desc->in_use = true;
-    pthread_mutex_unlock(&desc->lock);
+  if (old_file) {
+    eos_vfs_file_release(old_file);
   }
 }
 
-int eos_vfs_fd_ref(int fd) {
-  if (fd < 0) return 1;
-  eos_vfs_fd_desc_t *desc = NULL;
+eos_vfs_file_t *eos_vfs_file_acquire(int fd) {
+  if (fd < 0) return NULL;
   pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs)) {
-    desc = kv_A(s_fd_descs, fd);
+  if ((size_t)fd >= kv_size(s_fd_descs)) {
+    pthread_mutex_unlock(&s_vfs_table_lock);
+    return NULL;
   }
+  eos_vfs_file_t *file = kv_A(s_fd_descs, fd);
+  if (!file || atomic_load(&file->closing)) {
+    pthread_mutex_unlock(&s_vfs_table_lock);
+    return NULL;
+  }
+  atomic_fetch_add(&file->ref_count, 1);
   pthread_mutex_unlock(&s_vfs_table_lock);
-  if (desc) {
-    return atomic_fetch_add(&desc->ref_count, 1) + 1;
-  }
-  return 1;
+  return file;
 }
 
-int eos_vfs_fd_unref(int fd) {
-  if (fd < 0) return 0;
-  eos_vfs_fd_desc_t *desc = NULL;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs)) {
-    desc = kv_A(s_fd_descs, fd);
-  }
-  pthread_mutex_unlock(&s_vfs_table_lock);
-  if (desc) {
-    return atomic_fetch_sub(&desc->ref_count, 1) - 1;
-  }
-  return 0;
-}
-
-void eos_vfs_fd_lock(int fd) {
-  if (fd < 0) return;
-  eos_vfs_fd_desc_t *desc = NULL;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs)) {
-    desc = kv_A(s_fd_descs, fd);
-  }
-  pthread_mutex_unlock(&s_vfs_table_lock);
-  if (desc) {
-    pthread_mutex_lock(&desc->lock);
+void eos_vfs_file_release(eos_vfs_file_t *file) {
+  if (!file) return;
+  if (atomic_fetch_sub(&file->ref_count, 1) == 1) {
+    // Last reference released, free file description
+    pthread_mutex_destroy(&file->offset_lock);
+    bool prev_h = eos_proc_heap_tracking_disable();
+    eos_psram_free(file);
+    eos_proc_heap_tracking_restore(prev_h);
   }
 }
 
-void eos_vfs_fd_unlock(int fd) {
-  if (fd < 0) return;
-  eos_vfs_fd_desc_t *desc = NULL;
+eos_vfs_file_t *eos_vfs_file_close_start(int fd) {
+  if (fd < 0) return NULL;
   pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs)) {
-    desc = kv_A(s_fd_descs, fd);
+  if ((size_t)fd >= kv_size(s_fd_descs)) {
+    pthread_mutex_unlock(&s_vfs_table_lock);
+    return NULL;
   }
+  eos_vfs_file_t *file = kv_A(s_fd_descs, fd);
+  if (!file || atomic_load(&file->closing)) {
+    pthread_mutex_unlock(&s_vfs_table_lock);
+    return NULL;
+  }
+  atomic_store(&file->closing, true);
+  kv_A(s_fd_descs, fd) = NULL;
   pthread_mutex_unlock(&s_vfs_table_lock);
-  if (desc) {
-    pthread_mutex_unlock(&desc->lock);
-  }
-}
-
-void eos_vfs_fd_unregister(int fd) {
-  if (fd < 0) return;
-  eos_vfs_fd_desc_t *desc = NULL;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs)) {
-    desc = kv_A(s_fd_descs, fd);
-  }
-  pthread_mutex_unlock(&s_vfs_table_lock);
-  if (desc) {
-    desc->in_use = false;
-    desc->flags = 0;
-    atomic_store(&desc->ref_count, 0);
-  }
+  return file;
 }
 
 bool eos_vfs_fd_is_valid(int fd) {
   if (fd < 0) return false;
   bool valid = false;
   pthread_mutex_lock(&s_vfs_table_lock);
-  if ((size_t)fd < kv_size(s_fd_descs) && kv_A(s_fd_descs, fd)) {
-    valid = kv_A(s_fd_descs, fd)->in_use;
+  if ((size_t)fd < kv_size(s_fd_descs)) {
+    eos_vfs_file_t *file = kv_A(s_fd_descs, fd);
+    valid = (file != NULL && !atomic_load(&file->closing));
   }
   pthread_mutex_unlock(&s_vfs_table_lock);
   return valid;
 }
 
+int eos_vfs_fd_ref(int fd) {
+  eos_vfs_file_t *file = eos_vfs_file_acquire(fd);
+  if (file) {
+    int count = atomic_load(&file->ref_count);
+    return count;
+  }
+  return 1;
+}
+
+int eos_vfs_fd_unref(int fd) {
+  if (fd < 0) return 0;
+  eos_vfs_file_t *file = NULL;
+  pthread_mutex_lock(&s_vfs_table_lock);
+  if ((size_t)fd < kv_size(s_fd_descs)) {
+    file = kv_A(s_fd_descs, fd);
+  }
+  pthread_mutex_unlock(&s_vfs_table_lock);
+  if (file) {
+    int count = atomic_load(&file->ref_count) - 1;
+    eos_vfs_file_release(file);
+    return count;
+  }
+  return 0;
+}
+
+void eos_vfs_fd_lock(int fd) {
+  // Coarse per-fd locking across I/O is deprecated in favor of atomic refcounts
+  (void)fd;
+}
+
+void eos_vfs_fd_unlock(int fd) {
+  (void)fd;
+}
+
+void eos_vfs_fd_unregister(int fd) {
+  eos_vfs_file_t *file = eos_vfs_file_close_start(fd);
+  if (file) {
+    eos_vfs_file_release(file);
+  }
+}
+
+// ── Directory Stream Operations ─────────────────────────────────
+
 void eos_vfs_dir_register(DIR *pdir) {
   if (!pdir) return;
-  pthread_mutex_lock(&s_vfs_table_lock);
+
   bool prev_h = eos_proc_heap_tracking_disable();
-  bool placed = false;
-
-  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
-    eos_vfs_dir_desc_t *d = kv_A(s_dir_descs, i);
-    if (d && !d->in_use) {
-      d->pdir = pdir;
-      atomic_store(&d->ref_count, 1);
-      d->in_use = true;
-      placed = true;
-      break;
-    }
+  eos_vfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(eos_vfs_dir_t));
+  if (!dir) {
+    eos_proc_heap_tracking_restore(prev_h);
+    return;
   }
 
-  if (!placed) {
-    pthread_mutexattr_t attr;
-    pthread_mutexattr_init(&attr);
-    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    eos_vfs_dir_desc_t *d = eos_psram_calloc_prefer(1, sizeof(eos_vfs_dir_desc_t));
-    if (d) {
-      pthread_mutex_init(&d->lock, &attr);
-      atomic_init(&d->ref_count, 1);
-      d->pdir = pdir;
-      d->in_use = true;
-      kv_push(eos_vfs_dir_desc_t *, s_dir_descs, d);
-    }
-    pthread_mutexattr_destroy(&attr);
-  }
+  dir->pdir = pdir;
+  atomic_init(&dir->ref_count, 1);
+  atomic_init(&dir->closing, false);
+  pthread_mutex_init(&dir->lock, NULL);
 
-  eos_proc_heap_tracking_restore(prev_h);
+  pthread_mutex_lock(&s_vfs_table_lock);
+  kv_push(eos_vfs_dir_t *, s_dir_descs, dir);
   pthread_mutex_unlock(&s_vfs_table_lock);
+  eos_proc_heap_tracking_restore(prev_h);
+}
+
+eos_vfs_dir_t *eos_vfs_dir_acquire(DIR *pdir) {
+  if (!pdir) return NULL;
+  pthread_mutex_lock(&s_vfs_table_lock);
+  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
+    eos_vfs_dir_t *d = kv_A(s_dir_descs, i);
+    if (d && d->pdir == pdir && !atomic_load(&d->closing)) {
+      atomic_fetch_add(&d->ref_count, 1);
+      pthread_mutex_unlock(&s_vfs_table_lock);
+      return d;
+    }
+  }
+  pthread_mutex_unlock(&s_vfs_table_lock);
+  return NULL;
+}
+
+void eos_vfs_dir_release(eos_vfs_dir_t *dir) {
+  if (!dir) return;
+  if (atomic_fetch_sub(&dir->ref_count, 1) == 1) {
+    pthread_mutex_destroy(&dir->lock);
+    bool prev_h = eos_proc_heap_tracking_disable();
+    eos_psram_free(dir);
+    eos_proc_heap_tracking_restore(prev_h);
+  }
+}
+
+eos_vfs_dir_t *eos_vfs_dir_close_start(DIR *pdir) {
+  if (!pdir) return NULL;
+  pthread_mutex_lock(&s_vfs_table_lock);
+  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
+    eos_vfs_dir_t *d = kv_A(s_dir_descs, i);
+    if (d && d->pdir == pdir && !atomic_load(&d->closing)) {
+      atomic_store(&d->closing, true);
+      kv_A(s_dir_descs, i) = NULL;
+      pthread_mutex_unlock(&s_vfs_table_lock);
+      return d;
+    }
+  }
+  pthread_mutex_unlock(&s_vfs_table_lock);
+  return NULL;
 }
 
 void eos_vfs_dir_lock(DIR *pdir) {
-  if (!pdir) return;
-  eos_vfs_dir_desc_t *found = NULL;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
-    eos_vfs_dir_desc_t *d = kv_A(s_dir_descs, i);
-    if (d && d->in_use && d->pdir == pdir) {
-      found = d;
-      break;
-    }
-  }
-  pthread_mutex_unlock(&s_vfs_table_lock);
-  if (found) {
-    pthread_mutex_lock(&found->lock);
-  }
+  (void)pdir;
 }
 
 void eos_vfs_dir_unlock(DIR *pdir) {
-  if (!pdir) return;
-  eos_vfs_dir_desc_t *found = NULL;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
-    eos_vfs_dir_desc_t *d = kv_A(s_dir_descs, i);
-    if (d && d->in_use && d->pdir == pdir) {
-      found = d;
-      break;
-    }
-  }
-  pthread_mutex_unlock(&s_vfs_table_lock);
-  if (found) {
-    pthread_mutex_unlock(&found->lock);
-  }
+  (void)pdir;
 }
 
 void eos_vfs_dir_close(DIR *pdir) {
-  if (!pdir) return;
-  pthread_mutex_lock(&s_vfs_table_lock);
-  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
-    eos_vfs_dir_desc_t *d = kv_A(s_dir_descs, i);
-    if (d && d->in_use && d->pdir == pdir) {
-      pthread_mutex_lock(&d->lock);
-      d->in_use = false;
-      d->pdir = NULL;
-      atomic_store(&d->ref_count, 0);
-      pthread_mutex_unlock(&d->lock);
-      break;
-    }
+  eos_vfs_dir_t *dir = eos_vfs_dir_close_start(pdir);
+  if (dir) {
+    eos_vfs_dir_release(dir);
   }
-  pthread_mutex_unlock(&s_vfs_table_lock);
 }

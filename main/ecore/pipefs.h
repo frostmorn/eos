@@ -20,14 +20,6 @@
 #define EOS_PIPE_BUF_SIZE 1024
 #endif
 
-#ifndef EOS_PIPEFS_MAX_PIPES
-#define EOS_PIPEFS_MAX_PIPES 16
-#endif
-
-#ifndef EOS_PIPEFS_MAX_FDS
-#define EOS_PIPEFS_MAX_FDS 32
-#endif
-
 // Initializes and mounts pipefs at EOS_PIPEFS_ROOT
 void eos_pipefs_init(void);
 

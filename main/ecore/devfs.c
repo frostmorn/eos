@@ -282,7 +282,10 @@ int eos_devfs_ioctl(devfs_state_t *dstate, int fd, int cmd, va_list args) {
   if (!fdmap)
     return -1;
 
-  return eos_drv_ioctl(fdmap->dev, fdmap->drvfd, cmd, args);
+  bool prev_k = eos_proc_enter_kernel();
+  int ret = eos_drv_ioctl(fdmap->dev, fdmap->drvfd, cmd, args);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 int eos_devfs_fsync(devfs_state_t *dstate, int fd) {

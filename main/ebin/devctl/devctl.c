@@ -381,6 +381,7 @@ static int cmd_attach(int argc, char **argv) {
   if (rc != 0) {
     fprintf(stderr, "devctl: failed to attach %s/%s under %s: %s\n",
             scope, drv_name, parent->name[0] ? parent->name : "root", strerror(errno));
+    fflush(stderr);
     if (dev->parent == NULL) {
       if (dev->dynamic_pins && dev->pins) {
         for (eos_pin_t *p = dev->pins; p->key != NULL; p++) free(p->key);

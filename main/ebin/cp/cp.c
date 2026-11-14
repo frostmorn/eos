@@ -88,11 +88,17 @@ static int copy_single_file(const char *src, const char *dst, bool force, bool v
     return -1;
   }
 
-  char buf[CP_BUFFER_SIZE];
+  char *buf = malloc(CP_BUFFER_SIZE);
+  if (!buf) {
+    printf("cp: out of memory\n");
+    fclose(fsrc);
+    fclose(fdst);
+    return -1;
+  }
   size_t n_read = 0;
   int ret = 0;
 
-  while ((n_read = fread(buf, 1, sizeof(buf), fsrc)) > 0) {
+  while ((n_read = fread(buf, 1, CP_BUFFER_SIZE, fsrc)) > 0) {
     size_t n_written = fwrite(buf, 1, n_read, fdst);
     if (n_written != n_read) {
       printf("cp: error writing to '%s': %s\n", dst, strerror(errno));
@@ -106,6 +112,7 @@ static int copy_single_file(const char *src, const char *dst, bool force, bool v
     ret = -1;
   }
 
+  free(buf);
   fclose(fsrc);
   fclose(fdst);
 
@@ -136,16 +143,22 @@ static int copy_directory_recursive(const char *src, const char *dst, bool force
 
   int ret = 0;
   struct dirent *entry;
-  char child_src[PATH_MAX];
-  char child_dst[PATH_MAX];
+  char *child_src = malloc(PATH_MAX);
+  char *child_dst = malloc(PATH_MAX);
+  if (!child_src || !child_dst) {
+    if (child_src) free(child_src);
+    if (child_dst) free(child_dst);
+    closedir(dir);
+    return -1;
+  }
 
   while ((entry = readdir(dir)) != NULL) {
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
       continue;
     }
 
-    join_path(child_src, sizeof(child_src), src, entry->d_name);
-    join_path(child_dst, sizeof(child_dst), dst, entry->d_name);
+    join_path(child_src, PATH_MAX, src, entry->d_name);
+    join_path(child_dst, PATH_MAX, dst, entry->d_name);
 
     struct stat st_child;
     if (stat(child_src, &st_child) != 0) {
@@ -165,6 +178,8 @@ static int copy_directory_recursive(const char *src, const char *dst, bool force
     }
   }
 
+  free(child_src);
+  free(child_dst);
   closedir(dir);
   return ret;
 }

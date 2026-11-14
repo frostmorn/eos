@@ -39,7 +39,9 @@ struct eos_proc_t {
   pid_t ppid;
   pid_t pgid;
   pid_t sid;
-  eos_proc_state_t state;
+  uint32_t state : 8;       // eos_proc_state_t
+  uint32_t in_use : 1;
+  uint32_t reserved_flags : 23;
   int exit_code;
   uint64_t start_time;
   uint64_t cpu_time_us;
@@ -58,6 +60,7 @@ struct eos_proc_t {
   kvec_psram_t(int) fds;
   kvec_psram_t(DIR *) dirs;
   kvec_psram_t(int) fd_map;
+  pthread_mutex_t fd_mutex;
 
   // Memory block allocations (Internal SRAM kvec_t for low-latency allocation tracking)
   kvec_t(eos_memblock_t) memblocks;
@@ -70,7 +73,6 @@ struct eos_proc_t {
   kvec_psram_t(TaskHandle_t) threads;
   pthread_cond_t wait_cond;
   int last_exit_status;
-  bool in_use;
 };
 
 // Process subsystem initialization (called from app_main)
@@ -126,15 +128,7 @@ void eos_proc_mem_realloc(eos_proc_t *proc, void *old_ptr, void *new_ptr, size_t
 void eos_proc_mem_remove(eos_proc_t *proc, void *ptr);
 int eos_mem_adopt(void *ptr, pid_t target_pid);
 
-// Task flags bitmask representation
-#define EOS_TASK_FLAG_IN_HEAP_WRAP   (1U << 0)
-#define EOS_TASK_FLAG_SYSTEM         (1U << 1)
-#define EOS_TASK_FLAG_LWIP           (1U << 2)
-#define EOS_TASK_FLAG_CLASSIFIED     (1U << 3)
-#define EOS_TASK_KERNEL_DEPTH_SHIFT  4
-#define EOS_TASK_KERNEL_DEPTH_MASK   0x3FFU
-#define EOS_TASK_HEAP_DIS_SHIFT      14
-#define EOS_TASK_HEAP_DIS_MASK       0x3FFU
+// Task flags and classification
 
 bool eos_proc_task_is_lwip(void);
 bool eos_proc_task_is_system(void);
@@ -193,24 +187,35 @@ size_t eos_thread_stack_high_water_mark(void);
 
 // PSRAM kvec FD mapping helpers
 static inline int eos_proc_fd_map_get(const eos_proc_t *proc, int fd) {
-  if (!proc || fd < 0 || (size_t)fd >= kv_size(proc->fd_map))
+  if (!proc || fd < 0)
     return -1;
-  return kv_A(proc->fd_map, fd);
+  eos_proc_t *p = (eos_proc_t *)proc;
+  pthread_mutex_lock(&p->fd_mutex);
+  int res = -1;
+  if ((size_t)fd < kv_size(p->fd_map)) {
+    res = kv_A(p->fd_map, fd);
+  }
+  pthread_mutex_unlock(&p->fd_mutex);
+  return res;
 }
 
 static inline void eos_proc_fd_map_set(eos_proc_t *proc, int fd, int real_fd) {
   if (!proc || fd < 0) return;
+  pthread_mutex_lock(&proc->fd_mutex);
   bool prev_h = eos_proc_heap_tracking_disable();
   while (kv_size(proc->fd_map) <= (size_t)fd) {
     kv_push(int, proc->fd_map, -1);
   }
   kv_A(proc->fd_map, fd) = real_fd;
   eos_proc_heap_tracking_restore(prev_h);
+  pthread_mutex_unlock(&proc->fd_mutex);
 }
 
 static inline void eos_proc_fd_map_reset(eos_proc_t *proc) {
   if (!proc) return;
+  pthread_mutex_lock(&proc->fd_mutex);
   for (size_t i = 0; i < kv_size(proc->fd_map); i++) {
     kv_A(proc->fd_map, i) = -1;
   }
+  pthread_mutex_unlock(&proc->fd_mutex);
 }

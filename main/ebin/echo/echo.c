@@ -13,14 +13,14 @@ int echo_main(int argc, char **argv) {
   }
 
   for (int i = start; i < argc; i++) {
-    printf("%s", argv[i]);
+    fputs(argv[i], stdout);
     if (i < argc - 1) {
-      putchar(' ');
+      fputc(' ', stdout);
     }
   }
 
   if (newline) {
-    putchar('\n');
+    fputc('\n', stdout);
   }
   fflush(stdout);
 

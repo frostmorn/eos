@@ -1069,10 +1069,16 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
   kv_init(dir->fds);
 
   if (parsed.type == PROCFS_NODE_ROOT) {
-    pid_t temp_pids[EOS_MAX_PROCS];
-    size_t count = eos_proc_get_all_pids(temp_pids, EOS_MAX_PROCS);
-    for (size_t i = 0; i < count; i++) {
-      kv_push(pid_t, dir->pids, temp_pids[i]);
+    size_t active = eos_proc_count_active();
+    if (active > 0) {
+      pid_t *temp_pids = malloc(active * sizeof(pid_t));
+      if (temp_pids) {
+        size_t count = eos_proc_get_all_pids(temp_pids, active);
+        for (size_t i = 0; i < count; i++) {
+          kv_push(pid_t, dir->pids, temp_pids[i]);
+        }
+        free(temp_pids);
+      }
     }
   } else if (parsed.type == PROCFS_NODE_PID_FD_DIR) {
     eos_proc_t p;

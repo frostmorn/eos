@@ -147,16 +147,22 @@ static int fallback_copy_dir(const char *src, const char *dst, bool force) {
 
   int ret = 0;
   struct dirent *entry;
-  char child_src[PATH_MAX];
-  char child_dst[PATH_MAX];
+  char *child_src = malloc(PATH_MAX);
+  char *child_dst = malloc(PATH_MAX);
+  if (!child_src || !child_dst) {
+    if (child_src) free(child_src);
+    if (child_dst) free(child_dst);
+    closedir(dir);
+    return -1;
+  }
 
   while ((entry = readdir(dir)) != NULL) {
     if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
       continue;
     }
 
-    join_path(child_src, sizeof(child_src), src, entry->d_name);
-    join_path(child_dst, sizeof(child_dst), dst, entry->d_name);
+    join_path(child_src, PATH_MAX, src, entry->d_name);
+    join_path(child_dst, PATH_MAX, dst, entry->d_name);
 
     struct stat st_child;
     if (stat(child_src, &st_child) != 0) {
@@ -175,6 +181,8 @@ static int fallback_copy_dir(const char *src, const char *dst, bool force) {
     }
   }
 
+  free(child_src);
+  free(child_dst);
   closedir(dir);
   return ret;
 }

@@ -1,6 +1,5 @@
 #include "binfs.h"
 #include "asset.h"
-#include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
@@ -26,6 +25,7 @@ typedef struct {
 // ── PSRAM Dynamic FD Table ────────────────────────────────────
 
 static kvec_psram_t(binfs_fd_t) binfs_fds;
+static pthread_mutex_t s_binfs_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // Get number of registered native bins
 static inline uint32_t binfs_bin_count(void) {
@@ -159,12 +159,12 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
   while (*name == '/')
     name++;
 
-  eos_vfs_alloc_lock();
+  pthread_mutex_lock(&s_binfs_lock);
   // Find the bin
   const eos_bin_t *bin = binfs_find_bin(name);
   if (bin) {
     int fd = binfs_fd_alloc_bin(bin);
-    eos_vfs_alloc_unlock();
+    pthread_mutex_unlock(&s_binfs_lock);
     if (fd < 0) {
       errno = ENFILE;
       return -1;
@@ -176,30 +176,30 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode) {
   const eos_asset_t *asset = binfs_find_asset(name);
   if (asset) {
     int fd = binfs_fd_alloc_asset(asset);
-    eos_vfs_alloc_unlock();
+    pthread_mutex_unlock(&s_binfs_lock);
     if (fd < 0) {
       errno = ENFILE;
       return -1;
     }
     return fd;
   }
-  eos_vfs_alloc_unlock();
+  pthread_mutex_unlock(&s_binfs_lock);
 
   errno = ENOENT;
   return -1;
 }
 
 static int binfs_close(void *ctx, int fd) {
-  eos_vfs_alloc_lock();
+  pthread_mutex_lock(&s_binfs_lock);
   binfs_fd_t *binfs_fd = binfs_fd_get(fd);
   if (!binfs_fd) {
-    eos_vfs_alloc_unlock();
+    pthread_mutex_unlock(&s_binfs_lock);
     errno = EBADF;
     return -1;
   }
 
   binfs_fd_free(fd);
-  eos_vfs_alloc_unlock();
+  pthread_mutex_unlock(&s_binfs_lock);
   return 0;
 }
 
@@ -362,9 +362,7 @@ static DIR *binfs_opendir(void *ctx, const char *path) {
     return NULL;
   }
 
-  eos_vfs_alloc_lock();
   binfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(binfs_dir_t));
-  eos_vfs_alloc_unlock();
   if (!dir) {
     errno = ENOMEM;
     return NULL;
@@ -422,9 +420,7 @@ static void binfs_seekdir(void *ctx, DIR *pdir, long offset) {
 
 static int binfs_closedir(void *ctx, DIR *pdir) {
   if (pdir) {
-    eos_vfs_alloc_lock();
     free(pdir);
-    eos_vfs_alloc_unlock();
   }
   return 0;
 }
