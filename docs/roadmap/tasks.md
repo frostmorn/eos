@@ -29,7 +29,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T18 | Signals (cooperative) and `kill` | Terminal | L | F04, F07 | 2 |
 | Pending | T19 | Job control (fg / bg / Ctrl-Z) | Terminal | M | T18, F07 | 2 |
 | Pending | T01 | terminfo and ncurses port | Terminal | L | F07, T18, T10 | 2 |
-| Pending | T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
+| Done | T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
 | Pending | T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
 | Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
 | Partial | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) [12d DONE] | Filesystems | M + decision | T07 | 3 |
@@ -259,7 +259,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** `ps` output matches `/proc/*/status` snapshots; hidden launcher apps are marked.
 
-#### T09 — CPU time accounting and `time`
+#### T09 — CPU time accounting and `time` [DONE]
 `Size: M · Depends: T13, T17 · Orig #9`
 
 **Why this needs a design note:** wall time inside a driver call includes blocking (waiting on a semaphore is not CPU). To split "system" from "user" CPU you need per-task CPU time sampled at the syscall boundary.

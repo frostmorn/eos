@@ -27,6 +27,13 @@ static inline bool is_system_task(void) {
   return eos_proc_task_is_system();
 }
 
+static inline eos_proc_t *get_alloc_owner_proc(void) {
+  if (eos_proc_is_kernel()) {
+    return eos_proc_kernel();
+  }
+  return eos_proc_current();
+}
+
 void *__wrap_heap_caps_malloc_base(size_t size, uint32_t caps) {
   if (is_lwip_task() && !(caps & (MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA))) {
     void *ptr = __real_heap_caps_malloc_base(size, caps | MALLOC_CAP_SPIRAM);
@@ -36,7 +43,7 @@ void *__wrap_heap_caps_malloc_base(size_t size, uint32_t caps) {
   if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
     return __real_heap_caps_malloc_base(size, caps);
   }
-  eos_proc_t *proc = eos_proc_current();
+  eos_proc_t *proc = get_alloc_owner_proc();
   if (!proc) {
     return __real_heap_caps_malloc_base(size, caps);
   }
@@ -64,7 +71,7 @@ void *__wrap_heap_caps_calloc_base(size_t n, size_t size, uint32_t caps) {
   if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
     return __real_heap_caps_calloc_base(n, size, caps);
   }
-  eos_proc_t *proc = eos_proc_current();
+  eos_proc_t *proc = get_alloc_owner_proc();
   if (!proc) {
     return __real_heap_caps_calloc_base(n, size, caps);
   }
@@ -92,7 +99,7 @@ void *__wrap_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_
   if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
     return __real_heap_caps_aligned_alloc_base(alignment, size, caps);
   }
-  eos_proc_t *proc = eos_proc_current();
+  eos_proc_t *proc = get_alloc_owner_proc();
   if (!proc) {
     return __real_heap_caps_aligned_alloc_base(alignment, size, caps);
   }
@@ -120,7 +127,7 @@ void *__wrap_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps) {
   if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
     return __real_heap_caps_realloc_base(ptr, size, caps);
   }
-  eos_proc_t *proc = eos_proc_current();
+  eos_proc_t *proc = get_alloc_owner_proc();
   if (!proc) {
     return __real_heap_caps_realloc_base(ptr, size, caps);
   }

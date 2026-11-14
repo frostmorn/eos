@@ -56,12 +56,22 @@ typedef struct {
   uint32_t esp_idf_fs_index;
   tmpfs_fnode_t *dir; // the directory node being listed
   tmpfs_fnode_t *cur; // next child to hand back, NULL = exhausted
+  struct dirent entry;
 } tmpfs_dir_t;
 
 typedef struct {
   tmpfs_fnode_t *root;
   kvec_t(tmpfs_fd_t) fds;
+  pthread_mutex_t lock;
 } tmpfs_state_t;
+
+static inline void tmpfs_lock(tmpfs_state_t *state) {
+  if (state) pthread_mutex_lock(&state->lock);
+}
+
+static inline void tmpfs_unlock(tmpfs_state_t *state) {
+  if (state) pthread_mutex_unlock(&state->lock);
+}
 
 static tmpfs_state_t* eos_tmpfs_state = NULL;
 
@@ -273,22 +283,32 @@ static void tmpfs_fill_stat(const tmpfs_fnode_t *node, struct stat *st) {
 
 static ssize_t tmpfs_write(void *ctx, int fd, const void *data, size_t size) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state) {
+    errno = EBADF;
+    return -1;
+  }
+  tmpfs_lock(state);
 
   if (!(FD_VALID(state, fd) && FD_WRITABLE(state, fd))) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
   if (!data) {
+    tmpfs_unlock(state);
     errno = EINVAL;
     return -1;
   }
-  if (!size)
+  if (!size) {
+    tmpfs_unlock(state);
     return 0;
+  }
 
   tmpfs_fd_t *desc = &kv_A(state->fds, fd);
   tmpfs_fnode_t *node = desc->pNode;
 
   if (S_ISDIR(node->mode)) {
+    tmpfs_unlock(state);
     errno = EISDIR;
     return -1;
   }
@@ -329,37 +349,51 @@ static ssize_t tmpfs_write(void *ctx, int fd, const void *data, size_t size) {
     node->fsize = writeEnd;
   desc->offset = (long)pos;
 
+  tmpfs_unlock(state);
   return (ssize_t)size;
 }
 
 static ssize_t tmpfs_read(void *ctx, int fd, void *dst, size_t size) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state) {
+    errno = EBADF;
+    return -1;
+  }
+  tmpfs_lock(state);
 
   if (!FD_VALID(state, fd)) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
   if (!dst) {
+    tmpfs_unlock(state);
     errno = EINVAL;
     return -1;
   }
-  if (!size)
+  if (!size) {
+    tmpfs_unlock(state);
     return 0;
+  }
 
   tmpfs_fd_t *desc = &kv_A(state->fds, fd);
   tmpfs_fnode_t *node = desc->pNode;
 
   if (S_ISDIR(node->mode)) {
+    tmpfs_unlock(state);
     errno = EISDIR;
     return -1;
   }
   if (FD_ACCMODE(state, fd) == O_WRONLY) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
 
-  if ((size_t)desc->offset >= node->fsize)
+  if ((size_t)desc->offset >= node->fsize) {
+    tmpfs_unlock(state);
     return 0;
+  }
 
   size_t available = node->fsize - (size_t)desc->offset;
   size_t toRead = (size < available) ? size : available;
@@ -384,13 +418,20 @@ static ssize_t tmpfs_read(void *ctx, int fd, void *dst, size_t size) {
   desc->offset += (long)toRead;
   node->atime = time(NULL);
 
+  tmpfs_unlock(state);
   return (ssize_t)toRead;
 }
 
 static off_t tmpfs_lseek(void *ctx, int fd, off_t offset, int whence) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state) {
+    errno = EBADF;
+    return -1;
+  }
+  tmpfs_lock(state);
 
   if (!FD_VALID(state, fd)) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
@@ -409,16 +450,19 @@ static off_t tmpfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     newOffset = (long)desc->pNode->fsize + (long)offset;
     break;
   default:
+    tmpfs_unlock(state);
     errno = EINVAL;
     return -1;
   }
 
   if (newOffset < 0) {
+    tmpfs_unlock(state);
     errno = EINVAL;
     return -1;
   }
 
   desc->offset = newOffset;
+  tmpfs_unlock(state);
   return (off_t)newOffset;
 }
 
@@ -426,20 +470,23 @@ static int tmpfs_open(void *ctx, const char *path, int flags, int mode) {
   (void)mode;
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
 
   if (node && (flags & O_CREAT) && (flags & O_EXCL)) {
+    tmpfs_unlock(state);
     errno = EEXIST;
     return -1;
   }
 
   if (!node) {
     if (!(flags & O_CREAT)) {
+      tmpfs_unlock(state);
       errno = ENOENT;
       return -1;
     }
@@ -447,15 +494,20 @@ static int tmpfs_open(void *ctx, const char *path, int flags, int mode) {
     char name[TMP_NODE_NAME_MAX];
     tmpfs_fnode_t *parent =
         tmpfs_resolve_parent(state->root, path, name, sizeof(name));
-    if (!parent)
+    if (!parent) {
+      tmpfs_unlock(state);
       return -1;
+    }
 
     node = tmpfs_create_node(name, TMP_FILE_MODE, parent);
-    if (!node)
+    if (!node) {
+      tmpfs_unlock(state);
       return -1; // errno already set
+    }
   }
 
   if (S_ISDIR(node->mode)) {
+    tmpfs_unlock(state);
     errno = EISDIR;
     return -1;
   }
@@ -470,19 +522,28 @@ static int tmpfs_open(void *ctx, const char *path, int flags, int mode) {
   }
 
   int fd = tmpfs_alloc_fd(state, node, flags);
-  if (fd < 0)
+  if (fd < 0) {
+    tmpfs_unlock(state);
     return -1;
+  }
 
   if (flags & O_APPEND)
     kv_A(state->fds, fd).offset = (long)node->fsize;
 
+  tmpfs_unlock(state);
   return fd;
 }
 
 static int tmpfs_close(void *ctx, int fd) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state) {
+    errno = EBADF;
+    return -1;
+  }
+  tmpfs_lock(state);
 
   if (!FD_VALID(state, fd)) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
@@ -494,61 +555,77 @@ static int tmpfs_close(void *ctx, int fd) {
   if (node->unlinked && node->refcount == 0)
     tmpfs_delete_node(node);
 
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_stat(void *ctx, const char *path, struct stat *st) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path || !st) {
+  if (!state || !path || !st) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
 
   tmpfs_fill_stat(node, st);
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_fstat(void *ctx, int fd, struct stat *st) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state) {
+    errno = EBADF;
+    return -1;
+  }
+  tmpfs_lock(state);
 
   if (!FD_VALID(state, fd)) {
+    tmpfs_unlock(state);
     errno = EBADF;
     return -1;
   }
   if (!st) {
+    tmpfs_unlock(state);
     errno = EINVAL;
     return -1;
   }
 
   tmpfs_fill_stat(kv_A(state->fds, fd).pNode, st);
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_unlink(void *ctx, const char *path) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
   if (node == state->root) {
+    tmpfs_unlock(state);
     errno = EBUSY;
     return -1;
   }
   if (S_ISDIR(node->mode) && node->child) {
+    tmpfs_unlock(state);
     errno = ENOTEMPTY;
     return -1;
   }
@@ -565,23 +642,27 @@ static int tmpfs_unlink(void *ctx, const char *path) {
     tmpfs_delete_node(node);
   }
 
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_rename(void *ctx, const char *src, const char *dst) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!src || !dst) {
+  if (!state || !src || !dst) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, src);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
   if (node == state->root) {
+    tmpfs_unlock(state);
     errno = EBUSY;
     return -1;
   }
@@ -589,17 +670,21 @@ static int tmpfs_rename(void *ctx, const char *src, const char *dst) {
   char name[TMP_NODE_NAME_MAX];
   tmpfs_fnode_t *dstParent =
       tmpfs_resolve_parent(state->root, dst, name, sizeof(name));
-  if (!dstParent)
+  if (!dstParent) {
+    tmpfs_unlock(state);
     return -1;
+  }
 
   tmpfs_fnode_t *dstNode =
       tmpfs_fnode_t_tree_find_child(dstParent, tmpfs_match_name, name);
   if (dstNode) {
     if (S_ISDIR(dstNode->mode) && dstNode->child) {
+      tmpfs_unlock(state);
       errno = ENOTEMPTY;
       return -1;
     }
     if (S_ISDIR(node->mode) != S_ISDIR(dstNode->mode)) {
+      tmpfs_unlock(state);
       errno = S_ISDIR(node->mode) ? ENOTDIR : EISDIR;
       return -1;
     }
@@ -629,18 +714,26 @@ static int tmpfs_rename(void *ctx, const char *src, const char *dst) {
 
   tmpfs_fnode_t_tree_attach(node, dstParent);
 
+  tmpfs_unlock(state);
   return 0;
 }
 
 static DIR *tmpfs_opendir(void *ctx, const char *path) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
+  if (!state || !path) {
+    errno = EINVAL;
+    return NULL;
+  }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return NULL;
   }
   if (!S_ISDIR(node->mode)) {
+    tmpfs_unlock(state);
     errno = ENOTDIR;
     return NULL;
   }
@@ -649,55 +742,65 @@ static DIR *tmpfs_opendir(void *ctx, const char *path) {
   tmpfs_dir_t *dir = eos_psram_malloc_prefer(sizeof(tmpfs_dir_t));
   if (!dir) {
     eos_proc_leave_kernel(prev_k);
+    tmpfs_unlock(state);
     errno = ENOMEM;
     return NULL;
   }
+  memset(dir, 0, sizeof(tmpfs_dir_t));
 
   dir->dir = node;
   dir->cur = node->child;
   node->refcount++;
   eos_proc_leave_kernel(prev_k);
 
+  tmpfs_unlock(state);
   return (DIR *)dir;
 }
 
 static struct dirent *tmpfs_readdir(void *ctx, DIR *pdir) {
-  (void)ctx;
+  tmpfs_state_t *state = (tmpfs_state_t *)ctx;
   if (!pdir) {
     errno = EINVAL;
     return NULL;
   }
+  tmpfs_lock(state);
 
   tmpfs_dir_t *dir = (tmpfs_dir_t *)pdir;
   tmpfs_fnode_t *node = dir->cur;
-  if (!node)
+  if (!node) {
+    tmpfs_unlock(state);
     return NULL; // end of directory
+  }
 
   dir->cur = node->next;
 
-  static struct dirent entry;
-  memset(&entry, 0, sizeof(entry));
-  entry.d_ino = (ino_t)(uintptr_t)node;
-  entry.d_type = S_ISDIR(node->mode) ? DT_DIR : DT_REG;
-  strlcpy(entry.d_name, node->name, sizeof(entry.d_name));
+  memset(&dir->entry, 0, sizeof(dir->entry));
+  dir->entry.d_ino = (ino_t)(uintptr_t)node;
+  dir->entry.d_type = S_ISDIR(node->mode) ? DT_DIR : DT_REG;
+  strlcpy(dir->entry.d_name, node->name, sizeof(dir->entry.d_name));
 
-  return &entry;
+  tmpfs_unlock(state);
+  return &dir->entry;
 }
 
 static long tmpfs_telldir(void *ctx, DIR *pdir) {
-  (void)ctx;
+  tmpfs_state_t *state = (tmpfs_state_t *)ctx;
   if (!pdir) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
   tmpfs_dir_t *dir = (tmpfs_dir_t *)pdir;
-  return (long)(uintptr_t)dir->cur;
+  long ret = (long)(uintptr_t)dir->cur;
+  tmpfs_unlock(state);
+  return ret;
 }
 
 static void tmpfs_seekdir(void *ctx, DIR *pdir, long offset) {
-  (void)ctx;
+  tmpfs_state_t *state = (tmpfs_state_t *)ctx;
   if (!pdir)
     return;
+  tmpfs_lock(state);
 
   tmpfs_dir_t *dir = (tmpfs_dir_t *)pdir;
 
@@ -708,14 +811,16 @@ static void tmpfs_seekdir(void *ctx, DIR *pdir, long offset) {
   // same quirk.
   tmpfs_fnode_t *target = (tmpfs_fnode_t *)(uintptr_t)offset;
   dir->cur = target ? target : dir->dir->child;
+  tmpfs_unlock(state);
 }
 
 static int tmpfs_closedir(void *ctx, DIR *pdir) {
-  (void)ctx;
+  tmpfs_state_t *state = (tmpfs_state_t *)ctx;
   if (!pdir) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   bool prev_k = eos_proc_enter_kernel();
   tmpfs_dir_t *dir = (tmpfs_dir_t *)pdir;
@@ -727,6 +832,7 @@ static int tmpfs_closedir(void *ctx, DIR *pdir) {
     tmpfs_delete_node(node);
   eos_proc_leave_kernel(prev_k);
 
+  tmpfs_unlock(state);
   return 0;
 }
 
@@ -734,89 +840,110 @@ static int tmpfs_mkdir(void *ctx, const char *path, mode_t mode) {
   (void)mode;
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   char name[TMP_NODE_NAME_MAX];
   tmpfs_fnode_t *parent =
       tmpfs_resolve_parent(state->root, path, name, sizeof(name));
-  if (!parent)
+  if (!parent) {
+    tmpfs_unlock(state);
     return -1;
+  }
 
   tmpfs_fnode_t *node = tmpfs_create_node(name, TMP_DIR_MODE, parent);
-  if (!node)
+  if (!node) {
+    tmpfs_unlock(state);
     return -1;
+  }
 
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_rmdir(void *ctx, const char *path) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
   if (!S_ISDIR(node->mode)) {
+    tmpfs_unlock(state);
     errno = ENOTDIR;
     return -1;
   }
   if (node == state->root) {
+    tmpfs_unlock(state);
     errno = EBUSY;
     return -1;
   }
   if (node->child) {
+    tmpfs_unlock(state);
     errno = ENOTEMPTY;
     return -1;
   }
   if (node->refcount) {
+    tmpfs_unlock(state);
     errno = EBUSY;
     return -1;
   }
 
   tmpfs_delete_node(node);
+  tmpfs_unlock(state);
   return 0;
 }
 
 static int tmpfs_access(void *ctx, const char *path, int amode) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
 
-  if (amode == F_OK)
+  if (amode == F_OK) {
+    tmpfs_unlock(state);
     return 0;
+  }
 
   mode_t m = node->mode;
   if ((amode & R_OK) && !(m & S_IRUSR)) {
+    tmpfs_unlock(state);
     errno = EACCES;
     return -1;
   }
   if ((amode & W_OK) && !(m & S_IWUSR)) {
+    tmpfs_unlock(state);
     errno = EACCES;
     return -1;
   }
   if ((amode & X_OK) && !(m & S_IXUSR)) {
+    tmpfs_unlock(state);
     errno = EACCES;
     return -1;
   }
 
+  tmpfs_unlock(state);
   return 0;
 }
 
@@ -824,13 +951,15 @@ static int tmpfs_utime(void *ctx, const char *path,
                        const struct utimbuf *times) {
   tmpfs_state_t *state = (tmpfs_state_t *)ctx;
 
-  if (!path) {
+  if (!state || !path) {
     errno = EINVAL;
     return -1;
   }
+  tmpfs_lock(state);
 
   tmpfs_fnode_t *node = tmpfs_find_node(state->root, path);
   if (!node) {
+    tmpfs_unlock(state);
     errno = ENOENT;
     return -1;
   }
@@ -841,6 +970,9 @@ static int tmpfs_utime(void *ctx, const char *path,
   } else {
     node->atime = node->mtime = time(NULL);
   }
+
+  tmpfs_unlock(state);
+  return 0;
 
   return 0;
 }
@@ -872,6 +1004,13 @@ tmpfs_state_t * eos_tmpfs_mount(const char *path) {
   state->root->mode = TMP_DIR_MODE;
   state->root->atime = state->root->mtime = state->root->ctime = time(NULL);
   kv_init(state->root->blocks);
+
+  pthread_mutexattr_t attr;
+  pthread_mutexattr_init(&attr);
+  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&state->lock, &attr);
+  pthread_mutexattr_destroy(&attr);
+
   eos_proc_leave_kernel(prev_k);
   // root->parent/child/next stay NULL from the memset above - no
   // self-referential-root trick needed, since tmpfs_find_node checks

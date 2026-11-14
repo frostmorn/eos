@@ -201,16 +201,24 @@ static pid_t alloc_next_pid_locked(void) {
 
 #define EOS_MAX_TASK_FLAGS 64
 
+enum {
+  EOS_TASK_STATE_USER = 0,
+  EOS_TASK_STATE_SYS  = 1,
+  EOS_TASK_STATE_WAIT = 2,
+};
+
 typedef struct {
   TaskHandle_t task;
   eos_proc_t *proc;
+  uint64_t last_state_time;
+  uint32_t state : 4;
   uint32_t in_heap_wrap : 1;
   uint32_t is_system : 1;
   uint32_t is_lwip : 1;
   uint32_t is_classified : 1;
   uint32_t kernel_depth : 10;
+  uint32_t wait_depth : 10;
   uint32_t heap_dis_depth : 10;
-  uint32_t reserved : 8;
 } eos_task_flags_t;
 
 static eos_task_flags_t *s_task_flags = NULL;
@@ -290,6 +298,10 @@ static void eos_proc_task_set_proc(TaskHandle_t task, eos_proc_t *proc) {
     eos_task_flags_t *entry = get_task_flags_locked(task, true);
     if (entry) {
       entry->proc = proc;
+      if (entry->last_state_time == 0) {
+        entry->last_state_time = (uint64_t)esp_timer_get_time();
+        entry->state = EOS_TASK_STATE_USER;
+      }
     }
   }
   task_flags_unlock();
@@ -336,10 +348,20 @@ bool eos_proc_task_is_system(void) {
 void eos_proc_task_flags_cleanup(void *task_ptr) {
   TaskHandle_t task = (TaskHandle_t)task_ptr;
   if (!task || !s_task_flags || s_task_flags_active_count == 0) return;
+  eos_proc_t *proc = NULL;
+  uint64_t delta = 0;
+  int state = -1;
+
   task_flags_lock();
   if (s_task_flags) {
     for (int i = 0; i < EOS_MAX_TASK_FLAGS; i++) {
       if (s_task_flags[i].task == task) {
+        if (s_task_flags[i].proc && s_task_flags[i].last_state_time > 0) {
+          uint64_t now = (uint64_t)esp_timer_get_time();
+          delta = (now >= s_task_flags[i].last_state_time) ? (now - s_task_flags[i].last_state_time) : 0;
+          proc = s_task_flags[i].proc;
+          state = (int)s_task_flags[i].state;
+        }
         memset(&s_task_flags[i], 0, sizeof(eos_task_flags_t));
         if (s_task_flags_active_count > 0) {
           s_task_flags_active_count--;
@@ -349,6 +371,19 @@ void eos_proc_task_flags_cleanup(void *task_ptr) {
     }
   }
   task_flags_unlock();
+
+  if (proc && delta > 0) {
+    proc_lock();
+    if (state == EOS_TASK_STATE_USER) {
+      proc->user_us += delta;
+    } else if (state == EOS_TASK_STATE_SYS) {
+      proc->sys_us += delta;
+    } else if (state == EOS_TASK_STATE_WAIT) {
+      proc->wait_us += delta;
+    }
+    proc->cpu_time_us = proc->user_us + proc->sys_us;
+    proc_unlock();
+  }
 }
 
 bool eos_proc_enter_kernel(void) {
@@ -358,18 +393,37 @@ bool eos_proc_enter_kernel(void) {
   TaskHandle_t task = xTaskGetCurrentTaskHandle();
   if (!task) return true;
 
+  eos_proc_t *proc = NULL;
+  uint64_t user_delta = 0;
+  bool prev = true;
+
   task_flags_lock();
-  if (!s_task_flags) {
-    task_flags_unlock();
-    return true;
-  }
-  eos_task_flags_t *entry = get_task_flags_locked(task, true);
-  uint32_t depth = entry ? entry->kernel_depth : 0;
-  bool prev = (depth > 0);
-  if (entry) {
-    entry->kernel_depth = depth + 1;
+  if (s_task_flags) {
+    eos_task_flags_t *entry = get_task_flags_locked(task, true);
+    if (entry) {
+      uint32_t depth = entry->kernel_depth;
+      prev = (depth > 0);
+      uint64_t now = (uint64_t)esp_timer_get_time();
+      if (depth == 0) {
+        if (entry->state == EOS_TASK_STATE_USER && entry->last_state_time > 0) {
+          user_delta = (now >= entry->last_state_time) ? (now - entry->last_state_time) : 0;
+          proc = entry->proc;
+        }
+        entry->state = EOS_TASK_STATE_SYS;
+        entry->last_state_time = now;
+      }
+      entry->kernel_depth = depth + 1;
+    }
   }
   task_flags_unlock();
+
+  if (proc && user_delta > 0) {
+    proc_lock();
+    proc->user_us += user_delta;
+    proc->cpu_time_us = proc->user_us + proc->sys_us;
+    proc_unlock();
+  }
+
   return prev;
 }
 
@@ -380,22 +434,127 @@ void eos_proc_leave_kernel(bool prev) {
   TaskHandle_t task = xTaskGetCurrentTaskHandle();
   if (!task) return;
 
+  eos_proc_t *proc = NULL;
+  uint64_t sys_delta = 0;
+
   task_flags_lock();
-  if (!s_task_flags) {
-    task_flags_unlock();
-    return;
-  }
-  eos_task_flags_t *entry = get_task_flags_locked(task, false);
-  if (entry) {
-    if (entry->kernel_depth > 0) {
-      entry->kernel_depth--;
+  if (s_task_flags) {
+    eos_task_flags_t *entry = get_task_flags_locked(task, false);
+    if (entry) {
+      if (entry->kernel_depth > 0) {
+        entry->kernel_depth--;
+      }
+      if (!prev) {
+        entry->kernel_depth = 0;
+      }
+      if (entry->kernel_depth == 0) {
+        uint64_t now = (uint64_t)esp_timer_get_time();
+        if (entry->state == EOS_TASK_STATE_SYS && entry->wait_depth == 0 && entry->last_state_time > 0) {
+          sys_delta = (now >= entry->last_state_time) ? (now - entry->last_state_time) : 0;
+          proc = entry->proc;
+        }
+        entry->state = EOS_TASK_STATE_USER;
+        entry->last_state_time = now;
+      }
+      release_task_flags_locked(entry);
     }
-    if (!prev) {
-      entry->kernel_depth = 0;
-    }
-    release_task_flags_locked(entry);
   }
   task_flags_unlock();
+
+  if (proc && sys_delta > 0) {
+    proc_lock();
+    proc->sys_us += sys_delta;
+    proc->cpu_time_us = proc->user_us + proc->sys_us;
+    proc_unlock();
+  }
+}
+
+bool eos_proc_enter_wait(void) {
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
+    return true;
+  }
+  TaskHandle_t task = xTaskGetCurrentTaskHandle();
+  if (!task) return true;
+
+  eos_proc_t *proc = NULL;
+  uint64_t delta = 0;
+  int from_state = -1;
+  bool prev = true;
+
+  task_flags_lock();
+  if (s_task_flags) {
+    eos_task_flags_t *entry = get_task_flags_locked(task, true);
+    if (entry) {
+      uint32_t depth = entry->wait_depth;
+      prev = (depth > 0);
+      uint64_t now = (uint64_t)esp_timer_get_time();
+      if (depth == 0) {
+        if (entry->last_state_time > 0) {
+          delta = (now >= entry->last_state_time) ? (now - entry->last_state_time) : 0;
+          proc = entry->proc;
+          from_state = (int)entry->state;
+        }
+        entry->state = EOS_TASK_STATE_WAIT;
+        entry->last_state_time = now;
+      }
+      entry->wait_depth = depth + 1;
+    }
+  }
+  task_flags_unlock();
+
+  if (proc && delta > 0) {
+    proc_lock();
+    if (from_state == EOS_TASK_STATE_SYS) {
+      proc->sys_us += delta;
+    } else if (from_state == EOS_TASK_STATE_USER) {
+      proc->user_us += delta;
+    }
+    proc->cpu_time_us = proc->user_us + proc->sys_us;
+    proc_unlock();
+  }
+
+  return prev;
+}
+
+void eos_proc_leave_wait(bool prev) {
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
+    return;
+  }
+  TaskHandle_t task = xTaskGetCurrentTaskHandle();
+  if (!task) return;
+
+  eos_proc_t *proc = NULL;
+  uint64_t wait_delta = 0;
+
+  task_flags_lock();
+  if (s_task_flags) {
+    eos_task_flags_t *entry = get_task_flags_locked(task, false);
+    if (entry) {
+      if (entry->wait_depth > 0) {
+        entry->wait_depth--;
+      }
+      if (!prev) {
+        entry->wait_depth = 0;
+      }
+      if (entry->wait_depth == 0) {
+        uint64_t now = (uint64_t)esp_timer_get_time();
+        if (entry->state == EOS_TASK_STATE_WAIT && entry->last_state_time > 0) {
+          wait_delta = (now >= entry->last_state_time) ? (now - entry->last_state_time) : 0;
+          proc = entry->proc;
+        }
+        entry->state = (entry->kernel_depth > 0) ? EOS_TASK_STATE_SYS : EOS_TASK_STATE_USER;
+        entry->last_state_time = now;
+      }
+      release_task_flags_locked(entry);
+    }
+  }
+  task_flags_unlock();
+
+  if (proc && wait_delta > 0) {
+    proc_lock();
+    proc->wait_us += wait_delta;
+    proc_unlock();
+  }
 }
 
 bool eos_proc_is_kernel(void) {
@@ -519,13 +678,13 @@ void eos_proc_set_in_heap_wrap(bool val) {
   task_flags_unlock();
 }
 
+eos_proc_t *eos_proc_kernel(void) {
+  return s_proc_table ? s_proc_table->kernel_proc : NULL;
+}
+
 eos_proc_t *eos_proc_current(void) {
   eos_proc_t *kproc = s_proc_table ? s_proc_table->kernel_proc : NULL;
   if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) {
-    return kproc;
-  }
-
-  if (eos_proc_is_kernel()) {
     return kproc;
   }
 
@@ -933,16 +1092,27 @@ void eos_proc_exit(pid_t pid, int exit_code) {
       return;
     }
 
-#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-    for (size_t j = 0; j < kv_size(p->threads); j++) {
-      TaskHandle_t th = kv_A(p->threads, j);
-      if (th) {
-        TaskStatus_t details;
-        vTaskGetInfo(th, &details, pdFALSE, eInvalid);
-        p->cpu_time_us += (uint64_t)details.ulRunTimeCounter;
+    task_flags_lock();
+    if (s_task_flags) {
+      uint64_t now = (uint64_t)esp_timer_get_time();
+      for (int i = 0; i < EOS_MAX_TASK_FLAGS; i++) {
+        if (s_task_flags[i].task && s_task_flags[i].proc == p && s_task_flags[i].last_state_time > 0) {
+          uint64_t delta = (now >= s_task_flags[i].last_state_time) ? (now - s_task_flags[i].last_state_time) : 0;
+          if (delta > 0) {
+            if (s_task_flags[i].state == EOS_TASK_STATE_USER) {
+              p->user_us += delta;
+            } else if (s_task_flags[i].state == EOS_TASK_STATE_SYS) {
+              p->sys_us += delta;
+            } else if (s_task_flags[i].state == EOS_TASK_STATE_WAIT) {
+              p->wait_us += delta;
+            }
+            s_task_flags[i].last_state_time = now;
+          }
+        }
       }
     }
-#endif
+    task_flags_unlock();
+    p->cpu_time_us = p->user_us + p->sys_us;
 
     // Drain process file descriptors and directories to close without holding proc_lock
     int fds_to_close[64];
@@ -969,7 +1139,19 @@ void eos_proc_exit(pid_t pid, int exit_code) {
     for (size_t j = 0; j < num_dirs; j++) {
       closedir(dirs_to_close[j]);
     }
-    vTaskDelay(pdMS_TO_TICKS(10)); // let unblocked threads finish and self-delete
+    bool has_other_threads = false;
+    TaskHandle_t self = xTaskGetCurrentTaskHandle();
+    for (size_t t = 0; t < kv_size(p->threads); t++) {
+      if (kv_A(p->threads, t) != self) {
+        has_other_threads = true;
+        break;
+      }
+    }
+    if (has_other_threads) {
+      bool prev_w = eos_proc_enter_wait();
+      vTaskDelay(pdMS_TO_TICKS(10)); // let unblocked threads finish and self-delete
+      eos_proc_leave_wait(prev_w);
+    }
     proc_lock();
 
     // Re-fetch proc pointer after releasing the lock
@@ -1248,6 +1430,12 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
         *status = raw_status;
       }
 
+      if (cur) {
+        cur->cutime_us += z->user_us + z->cutime_us;
+        cur->cstime_us += z->sys_us + z->cstime_us;
+        cur->cwait_us += z->wait_us + z->cwait_us;
+      }
+
       // Reap the zombie & clean up all process resources
       bool prev_h = eos_proc_heap_tracking_disable();
       extern void __real_heap_caps_free(void *ptr);
@@ -1368,7 +1556,9 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
     }
 
     // Blocking wait for child process termination
+    bool prev_w = eos_proc_enter_wait();
     pthread_cond_wait(&s_proc_table->cond, &s_proc_table->lock);
+    eos_proc_leave_wait(prev_w);
   }
 }
 
@@ -1798,19 +1988,40 @@ void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread) {
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread) {
   if (!proc || !thread) return;
   bool prev_h = eos_proc_heap_tracking_disable();
+  eos_proc_t *p_commit = NULL;
+  uint64_t delta = 0;
+  int state = -1;
+
+  task_flags_lock();
+  if (s_task_flags) {
+    eos_task_flags_t *entry = get_task_flags_locked(thread, false);
+    if (entry && entry->proc && entry->last_state_time > 0) {
+      uint64_t now = (uint64_t)esp_timer_get_time();
+      delta = (now >= entry->last_state_time) ? (now - entry->last_state_time) : 0;
+      p_commit = entry->proc;
+      state = (int)entry->state;
+      entry->last_state_time = now;
+    }
+  }
+  task_flags_unlock();
+
   proc_lock();
-  // If the process is already ZOMBIE its threads kvec has been destroyed;
-  // there is nothing to remove and the memory is owned by the reaper now.
+  if (p_commit && delta > 0) {
+    if (state == EOS_TASK_STATE_USER) {
+      p_commit->user_us += delta;
+    } else if (state == EOS_TASK_STATE_SYS) {
+      p_commit->sys_us += delta;
+    } else if (state == EOS_TASK_STATE_WAIT) {
+      p_commit->wait_us += delta;
+    }
+    p_commit->cpu_time_us = p_commit->user_us + p_commit->sys_us;
+  }
+
   if (proc->state == EOS_PROC_STATE_ZOMBIE) {
     proc_unlock();
     eos_proc_heap_tracking_restore(prev_h);
     return;
   }
-#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-  TaskStatus_t details;
-  vTaskGetInfo(thread, &details, pdFALSE, eInvalid);
-  proc->cpu_time_us += (uint64_t)details.ulRunTimeCounter;
-#endif
   if (proc->main_thread == thread) {
     proc->main_thread = NULL;
   }
@@ -1825,24 +2036,57 @@ void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread) {
   eos_proc_heap_tracking_restore(prev_h);
 }
 
-uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc) {
-  if (!proc) return 0;
-  proc_lock();
-  uint64_t total = proc->cpu_time_us;
-#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
-  if (proc->state != EOS_PROC_STATE_ZOMBIE) {
-    for (size_t i = 0; i < kv_size(proc->threads); i++) {
-      TaskHandle_t th = kv_A(proc->threads, i);
-      if (th) {
-        TaskStatus_t details;
-        vTaskGetInfo(th, &details, pdFALSE, eInvalid);
-        total += (uint64_t)details.ulRunTimeCounter;
+void eos_proc_get_cpu_times(eos_proc_t *proc, uint64_t *user_us, uint64_t *sys_us, uint64_t *wait_us) {
+  if (!proc) {
+    if (user_us) *user_us = 0;
+    if (sys_us) *sys_us = 0;
+    if (wait_us) *wait_us = 0;
+    return;
+  }
+
+  uint64_t u_add = 0, s_add = 0, w_add = 0;
+
+  task_flags_lock();
+  if (s_task_flags) {
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    for (int i = 0; i < EOS_MAX_TASK_FLAGS; i++) {
+      if (s_task_flags[i].task && s_task_flags[i].proc == proc && s_task_flags[i].last_state_time > 0) {
+        uint64_t delta = (now >= s_task_flags[i].last_state_time) ? (now - s_task_flags[i].last_state_time) : 0;
+        if (delta > 0) {
+          if (s_task_flags[i].state == EOS_TASK_STATE_USER) {
+            u_add += delta;
+          } else if (s_task_flags[i].state == EOS_TASK_STATE_SYS) {
+            s_add += delta;
+          } else if (s_task_flags[i].state == EOS_TASK_STATE_WAIT) {
+            w_add += delta;
+          }
+          s_task_flags[i].last_state_time = now;
+        }
       }
     }
   }
-#endif
+  task_flags_unlock();
+
+  proc_lock();
+  proc->user_us += u_add;
+  proc->sys_us += s_add;
+  proc->wait_us += w_add;
+  proc->cpu_time_us = proc->user_us + proc->sys_us;
+
+  uint64_t u = proc->user_us;
+  uint64_t s = proc->sys_us;
+  uint64_t w = proc->wait_us;
   proc_unlock();
-  return total;
+
+  if (user_us) *user_us = u;
+  if (sys_us) *sys_us = s;
+  if (wait_us) *wait_us = w;
+}
+
+uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc) {
+  uint64_t u = 0, s = 0, w = 0;
+  eos_proc_get_cpu_times(proc, &u, &s, &w);
+  return u + s;
 }
 
 eos_pwrap_t *eos_proc_wrap_prepare(void *thread_start, void *thread_data) {

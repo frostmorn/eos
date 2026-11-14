@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/fapi.h"
 #include "ecore/ioctl.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include <errno.h>
 #include <esp_vfs.h>
@@ -61,8 +62,12 @@ bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child) {
 }
 
 ssize_t eos_drv_write(eos_dev_t *dev, int fd, const void *data, size_t size) {
-  if (dev && dev->driver && dev->driver->write)
-    return dev->driver->write(dev, fd, data, size);
+  if (dev && dev->driver && dev->driver->write) {
+    bool prev_k = eos_proc_enter_kernel();
+    ssize_t ret = dev->driver->write(dev, fd, data, size);
+    eos_proc_leave_kernel(prev_k);
+    return ret;
+  }
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -83,8 +88,12 @@ off_t eos_drv_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
 }
 
 ssize_t eos_drv_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
-  if (dev && dev->driver && dev->driver->read)
-    return dev->driver->read(dev, fd, dst, size);
+  if (dev && dev->driver && dev->driver->read) {
+    bool prev_k = eos_proc_enter_kernel();
+    ssize_t ret = dev->driver->read(dev, fd, dst, size);
+    eos_proc_leave_kernel(prev_k);
+    return ret;
+  }
 
   EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
 
@@ -307,8 +316,12 @@ int eos_drv_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   }
 
   // Still not handled, check driver implementation
-  if (dev->driver->ioctl)
-    return dev->driver->ioctl(dev, fd, cmd, args);
+  if (dev->driver->ioctl) {
+    bool prev_k = eos_proc_enter_kernel();
+    int ret = dev->driver->ioctl(dev, fd, cmd, args);
+    eos_proc_leave_kernel(prev_k);
+    return ret;
+  }
 
   errno = ENOTTY;
   return -1;

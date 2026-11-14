@@ -376,12 +376,26 @@ static char *procfs_gen_cpuinfo(void) {
   }
 
   uint8_t mac[6];
+#if SOC_WIFI_SUPPORTED
   if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
     sbuf_printf(&sb, "mac (wifi)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
+#endif
+#if SOC_BT_SUPPORTED
   if (esp_read_mac(mac, ESP_MAC_BT) == ESP_OK) {
     sbuf_printf(&sb, "mac (bt)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  }
+#endif
+#if SOC_EMAC_SUPPORTED
+  if (esp_read_mac(mac, ESP_MAC_ETH) == ESP_OK) {
+    sbuf_printf(&sb, "mac (eth)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  }
+#endif
+  if (esp_read_mac(mac, ESP_MAC_BASE) == ESP_OK) {
+    sbuf_printf(&sb, "mac (base)\t: %02X:%02X:%02X:%02X:%02X:%02X\n",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
@@ -494,6 +508,7 @@ static char *procfs_gen_stat(void) {
   unsigned long total_ticks = (unsigned long)(total_runtime / 10000);
   unsigned long idle_ticks = 0;
   unsigned long user_ticks = 0;
+  unsigned long sys_ticks = 0;
 
 #if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
   UBaseType_t task_count = uxTaskGetNumberOfTasks();
@@ -512,11 +527,31 @@ static char *procfs_gen_stat(void) {
   }
 #endif
 
-  if (idle_ticks == 0 && total_ticks > user_ticks) {
-    idle_ticks = total_ticks - user_ticks;
+  size_t act = eos_proc_count_active();
+  if (act > 0) {
+    eos_proc_t *procs = eos_psram_calloc_prefer(act, sizeof(eos_proc_t));
+    if (procs) {
+      size_t count = eos_proc_snapshot(procs, act);
+      for (size_t i = 0; i < count; i++) {
+        sys_ticks += (unsigned long)(procs[i].sys_us / 10000);
+      }
+      eos_psram_free(procs);
+    }
   }
 
-  sbuf_printf(&sb, "cpu  %lu 0 0 %lu 0 0 0 0 0 0\n", user_ticks, idle_ticks);
+  if (user_ticks > sys_ticks) {
+    user_ticks -= sys_ticks;
+  }
+
+  if (idle_ticks == 0 && total_ticks > (user_ticks + sys_ticks)) {
+    idle_ticks = total_ticks - (user_ticks + sys_ticks);
+  }
+
+  unsigned long total_accounted = user_ticks + sys_ticks + idle_ticks;
+  unsigned long irq_ticks = (total_ticks > total_accounted) ? (total_ticks - total_accounted) : 0;
+
+  sbuf_printf(&sb, "cpu  %lu 0 %lu %lu 0 %lu 0 0 0 0\n", user_ticks, sys_ticks, idle_ticks, irq_ticks);
+  sbuf_printf(&sb, "irq %lu\n", irq_ticks);
   sbuf_printf(&sb, "btime %llu\n", (unsigned long long)1700000000);
   sbuf_printf(&sb, "processes %zu\n", eos_proc_count_active());
 
@@ -677,7 +712,15 @@ static char *procfs_gen_pid_status(eos_proc_t *p) {
   sbuf_printf(&sb, "Sid:\t%d\n", (int)p->sid);
   sbuf_printf(&sb, "TTY:\t%s\n", p->tty[0] ? p->tty : "?");
   sbuf_printf(&sb, "Threads:\t%zu\n", kv_size(p->threads) ? kv_size(p->threads) : (size_t)1);
-  sbuf_printf(&sb, "CPUTime:\t%llu\n", (unsigned long long)eos_proc_get_cpu_time_us(p));
+  uint64_t u_us = 0, s_us = 0, w_us = 0;
+  eos_proc_get_cpu_times(p, &u_us, &s_us, &w_us);
+  sbuf_printf(&sb, "CPUTime:\t%llu\n", (unsigned long long)(u_us + s_us));
+  sbuf_printf(&sb, "UserTime:\t%llu\n", (unsigned long long)u_us);
+  sbuf_printf(&sb, "SystemTime:\t%llu\n", (unsigned long long)s_us);
+  sbuf_printf(&sb, "WaitTime:\t%llu\n", (unsigned long long)w_us);
+  sbuf_printf(&sb, "ChildrenUserTime:\t%llu\n", (unsigned long long)p->cutime_us);
+  sbuf_printf(&sb, "ChildrenSystemTime:\t%llu\n", (unsigned long long)p->cstime_us);
+  sbuf_printf(&sb, "ChildrenWaitTime:\t%llu\n", (unsigned long long)p->cwait_us);
   sbuf_printf(&sb, "StartTime:\t%llu\n", (unsigned long long)p->start_time);
   sbuf_printf(&sb, "FDSize:\t%zu\n", kv_size(p->fds));
   sbuf_printf(&sb, "VmData:\t%zu kB\n", (p->heap_sram + p->heap_psram) / 1024);
@@ -695,12 +738,14 @@ static char *procfs_gen_pid_stat(eos_proc_t *p) {
   char st_c = (char)p->state;
   if (st_c == 0) st_c = 'R';
 
-  uint64_t cpu_us = eos_proc_get_cpu_time_us(p);
-  unsigned long utime = (unsigned long)(cpu_us / 10000); // 100Hz clock ticks
+  uint64_t u_us = 0, s_us = 0, w_us = 0;
+  eos_proc_get_cpu_times(p, &u_us, &s_us, &w_us);
+  unsigned long utime = (unsigned long)(u_us / 10000); // 100Hz clock ticks
+  unsigned long stime = (unsigned long)(s_us / 10000); // 100Hz clock ticks
 
-  sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 %lu 0 0 0 0 0 %zu 0 %llu 0 0\n",
+  sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 %lu %lu 0 0 0 0 %zu 0 %llu 0 0\n",
               (int)p->pid, p->name, st_c, (int)p->ppid, (int)p->pgid, (int)p->sid,
-              utime,
+              utime, stime,
               kv_size(p->threads) ? kv_size(p->threads) : (size_t)1,
               (unsigned long long)(p->start_time / 1000));
 

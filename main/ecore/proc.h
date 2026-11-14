@@ -45,6 +45,12 @@ struct eos_proc_t {
   int exit_code;
   uint64_t start_time;
   uint64_t cpu_time_us;
+  uint64_t user_us;
+  uint64_t sys_us;
+  uint64_t wait_us;
+  uint64_t cutime_us;
+  uint64_t cstime_us;
+  uint64_t cwait_us;
   char name[32];
   char *cmdline;
   char tty[16];
@@ -80,6 +86,8 @@ void eos_proc_init(void);
 
 // Retrieves current process context for the calling thread
 eos_proc_t *eos_proc_current(void);
+// Retrieves the kernel process context (PID 0)
+eos_proc_t *eos_proc_kernel(void);
 
 // Process lifecycle operations
 pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t pgid);
@@ -134,10 +142,12 @@ bool eos_proc_task_is_lwip(void);
 bool eos_proc_task_is_system(void);
 void eos_proc_task_classify(TaskHandle_t task, const char *name);
 
-// Kernel execution context
+// Kernel execution & wait context
 bool eos_proc_enter_kernel(void);
 void eos_proc_leave_kernel(bool prev);
 bool eos_proc_is_kernel(void);
+bool eos_proc_enter_wait(void);
+void eos_proc_leave_wait(bool prev);
 
 // Process heap tracking toggle helpers (controls tracking of internal metadata)
 bool eos_proc_heap_tracking_disable(void);
@@ -172,6 +182,7 @@ int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
 void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread);
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread);
 uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc);
+void eos_proc_get_cpu_times(eos_proc_t *proc, uint64_t *user_us, uint64_t *sys_us, uint64_t *wait_us);
 
 typedef struct {
   void *(*thread_start)(void *);

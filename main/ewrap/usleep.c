@@ -14,5 +14,10 @@ int __wrap_usleep(useconds_t usec) {
     }
     (void)eos_proc_current();
   }
-  return __real_usleep(usec);
+  bool prev_k = eos_proc_enter_kernel();
+  bool prev_w = eos_proc_enter_wait();
+  int ret = __real_usleep(usec);
+  eos_proc_leave_wait(prev_w);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }

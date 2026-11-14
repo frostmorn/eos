@@ -831,7 +831,130 @@ static void test_vfs_concurrency(test_ctx_t *ctx) {
               WIFEXITED(br_status) && WEXITSTATUS(br_status) == 33);
 }
 
+static void test_cpu_time_accounting_t09(test_ctx_t *ctx) {
+  printf("--- Testing T09: CPU time accounting and time ebin ---\n");
+
+  // 1. Test /proc/stat format (cpu line with user, sys, idle, irq + irq line)
+  FILE *fstat = fopen("/proc/stat", "r");
+  report_test(ctx, "procfs: fopen('/proc/stat') succeeds", fstat != NULL);
+  if (fstat) {
+    char line[256];
+    bool has_cpu = false;
+    bool has_irq = false;
+    unsigned long u = 0, n = 0, s = 0, id = 0, io = 0, irq = 0;
+    while (fgets(line, sizeof(line), fstat)) {
+      if (strncmp(line, "cpu ", 4) == 0) {
+        int parsed = sscanf(line, "cpu %lu %lu %lu %lu %lu %lu", &u, &n, &s, &id, &io, &irq);
+        if (parsed >= 4) {
+          has_cpu = true;
+        }
+      } else if (strncmp(line, "irq ", 4) == 0) {
+        has_irq = true;
+      }
+    }
+    fclose(fstat);
+    report_test(ctx, "procfs: /proc/stat cpu line has user, sys, idle counters", has_cpu);
+    report_test(ctx, "procfs: /proc/stat has separate irq line", has_irq);
+  }
+
+  // 2. Test /proc/self/stat utime (field 14) and stime (field 15)
+  FILE *fself_stat = fopen("/proc/self/stat", "r");
+  report_test(ctx, "procfs: fopen('/proc/self/stat') succeeds", fself_stat != NULL);
+  if (fself_stat) {
+    char buf[256];
+    if (fgets(buf, sizeof(buf), fself_stat)) {
+      char *tok = strtok(buf, " ");
+      int field = 1;
+      bool parsed_fields = false;
+      while (tok) {
+        if (field == 15) {
+          parsed_fields = true;
+          break;
+        }
+        tok = strtok(NULL, " ");
+        field++;
+      }
+      report_test(ctx, "procfs: /proc/self/stat utime and stime fields parsed", parsed_fields);
+    }
+    fclose(fself_stat);
+  }
+
+  // 3. Test /proc/self/status UserTime, SystemTime, WaitTime, ChildrenUserTime
+  FILE *fself_status = fopen("/proc/self/status", "r");
+  report_test(ctx, "procfs: fopen('/proc/self/status') succeeds", fself_status != NULL);
+  if (fself_status) {
+    char line[128];
+    bool has_user = false, has_sys = false, has_wait = false, has_cutime = false;
+    while (fgets(line, sizeof(line), fself_status)) {
+      if (strncmp(line, "UserTime:\t", 10) == 0) has_user = true;
+      if (strncmp(line, "SystemTime:\t", 12) == 0) has_sys = true;
+      if (strncmp(line, "WaitTime:\t", 10) == 0) has_wait = true;
+      if (strncmp(line, "ChildrenUserTime:\t", 18) == 0) has_cutime = true;
+    }
+    fclose(fself_status);
+    report_test(ctx, "procfs: /proc/self/status exposes UserTime and SystemTime", has_user && has_sys);
+    report_test(ctx, "procfs: /proc/self/status exposes WaitTime and ChildrenUserTime", has_wait && has_cutime);
+  }
+
+  // 4. Test CPU time accounting with CPU-bound child
+  uint64_t cutime_before = 0, cstime_before = 0;
+  FILE *f_stat = fopen("/proc/self/status", "r");
+  if (f_stat) {
+    char line[128];
+    while (fgets(line, sizeof(line), f_stat)) {
+      if (strncmp(line, "ChildrenUserTime:\t", 18) == 0) cutime_before = strtoull(line + 18, NULL, 10);
+      if (strncmp(line, "ChildrenSystemTime:\t", 20) == 0) cstime_before = strtoull(line + 20, NULL, 10);
+    }
+    fclose(f_stat);
+  }
+
+  char *child_argv[] = {"test_proc", "--child-cpu-bound", NULL};
+  int child_exec = execve("test_proc", child_argv, NULL);
+  report_test(ctx, "cpu_time: execve CPU-bound child succeeds", child_exec == 0);
+
+  int child_status = 0;
+  pid_t child_reaped = waitpid(-1, &child_status, 0);
+  report_test(ctx, "cpu_time: waitpid reaped CPU-bound child", child_reaped > 0);
+  report_test(ctx, "cpu_time: CPU-bound child process completed",
+              WIFEXITED(child_status) && WEXITSTATUS(child_status) == 0);
+
+  uint64_t cutime_after = 0, cstime_after = 0;
+  f_stat = fopen("/proc/self/status", "r");
+  if (f_stat) {
+    char line[128];
+    while (fgets(line, sizeof(line), f_stat)) {
+      if (strncmp(line, "ChildrenUserTime:\t", 18) == 0) cutime_after = strtoull(line + 18, NULL, 10);
+      if (strncmp(line, "ChildrenSystemTime:\t", 20) == 0) cstime_after = strtoull(line + 20, NULL, 10);
+    }
+    fclose(f_stat);
+  }
+
+  uint64_t delta_u = (cutime_after >= cutime_before) ? (cutime_after - cutime_before) : 0;
+  uint64_t delta_s = (cstime_after >= cstime_before) ? (cstime_after - cstime_before) : 0;
+  uint64_t total_c = delta_u + delta_s;
+  report_test(ctx, "cpu_time: CPU-bound child accumulated CPU time > 0", total_c > 0);
+  report_test(ctx, "cpu_time: CPU-bound child time dominated by user CPU share", delta_u >= (total_c / 2));
+
+  // 5. Test time utility ebin execution
+  int time_rc = system("time -p test_proc --child-exit 0");
+  report_test(ctx, "time: 'time -p test_proc --child-exit 0' executed successfully", time_rc == 0);
+}
+
 int test_proc_main(int argc, char **argv) {
+  // Subcommand dispatch for child processes spawned during tests
+  if (argc >= 2 && strcmp(argv[1], "--child-cpu-bound") == 0) {
+    volatile uint32_t count = 0;
+    for (uint32_t i = 0; i < 2000000; i++) {
+      count += i ^ (count >> 1);
+    }
+    (void)count;
+    return 0;
+  }
+
+  if (argc >= 2 && strcmp(argv[1], "--child-sleep-bound") == 0) {
+    usleep(100 * 1000);
+    return 0;
+  }
   // Subcommand dispatch for child processes spawned during tests
   if (argc >= 3 && strcmp(argv[1], "--child-exit") == 0) {
     int code = atoi(argv[2]);
@@ -918,6 +1041,7 @@ int test_proc_main(int argc, char **argv) {
   test_memory_ownership_f02(&ctx);
   test_bg_process_and_threads(&ctx);
   test_vfs_concurrency(&ctx);
+  test_cpu_time_accounting_t09(&ctx);
   test_1000_cycles_stress(&ctx);
 
   printf("\nProcess Table Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);

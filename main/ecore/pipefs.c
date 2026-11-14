@@ -404,7 +404,9 @@ static ssize_t pipefs_read(void *ctx, int fd, void *dst, size_t size) {
       return -1;
     }
 
+    bool prev_w = eos_proc_enter_wait();
     pthread_cond_wait(&node->r_cond, &node->lock);
+    eos_proc_leave_wait(prev_w);
   }
 
   pthread_mutex_unlock(&node->lock);
@@ -490,7 +492,9 @@ static ssize_t pipefs_write(void *ctx, int fd, const void *data, size_t size) {
       return -1;
     }
 
+    bool prev_w = eos_proc_enter_wait();
     pthread_cond_wait(&node->w_cond, &node->lock);
+    eos_proc_leave_wait(prev_w);
   }
 
   pthread_mutex_unlock(&node->lock);

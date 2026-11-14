@@ -38,6 +38,7 @@ extern int __real_closedir(DIR *pdir);
 extern int __real_mkdir(char *path, mode_t mode);
 
 int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
+  bool prev_k = eos_proc_enter_kernel();
   char buf[PATH_MAX];
   char *_path = eos_fapi_path_resolve(path, buf);
 
@@ -54,16 +55,19 @@ int __wrap__open_r(struct _reent *r, char *path, int flags, int mode) {
     eos_proc_reg_fd(fd);
   }
 
+  eos_proc_leave_kernel(prev_k);
   return fd;
 }
 
 int __wrap__close_r(struct _reent *r, int fd) {
+  bool prev_k = eos_proc_enter_kernel();
   eos_proc_t *proc = eos_proc_current();
 
   // If closing a virtual redirected descriptor (e.g. dup2 target),
   // clear its mapping without closing the underlying target unless owned.
   if (proc && fd >= 0 && fd < FD_SETSIZE && eos_proc_fd_map_get(proc, fd) >= 0) {
     eos_proc_fd_map_set(proc, fd, -1);
+    eos_proc_leave_kernel(prev_k);
     return 0;
   }
 
@@ -71,6 +75,7 @@ int __wrap__close_r(struct _reent *r, int fd) {
     bool prev_h = eos_proc_heap_tracking_disable();
     int ret = __real__close_r(r, fd);
     eos_proc_heap_tracking_restore(prev_h);
+    eos_proc_leave_kernel(prev_k);
     return ret;
   }
 
@@ -104,6 +109,7 @@ int __wrap__close_r(struct _reent *r, int fd) {
     eos_vfs_file_release(file);
   }
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
@@ -142,43 +148,55 @@ static int resolve_write_fd(int fd) {
 }
 
 ssize_t __wrap__read_r(struct _reent *r, int fd, void *dst, size_t size) {
+  bool prev_k = eos_proc_enter_kernel();
   int real_fd = resolve_read_fd(fd);
   if (real_fd == STDIN_FILENO && !eos_console_is_connected()) {
     errno = EAGAIN;
+    eos_proc_leave_kernel(prev_k);
     return -1;
   }
 
+  ssize_t ret;
   if (real_fd >= 0) {
     eos_vfs_file_t *file = eos_vfs_file_acquire(real_fd);
     if (!file) {
       __errno_r(r) = EBADF;
+      eos_proc_leave_kernel(prev_k);
       return -1;
     }
-    ssize_t ret = __real__read_r(r, real_fd, dst, size);
+    ret = __real__read_r(r, real_fd, dst, size);
     eos_vfs_file_release(file);
-    return ret;
+  } else {
+    ret = __real__read_r(r, real_fd, dst, size);
   }
 
-  return __real__read_r(r, real_fd, dst, size);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 ssize_t __wrap__write_r(struct _reent *r, int fd, void *buf, size_t size) {
+  bool prev_k = eos_proc_enter_kernel();
   int real_fd = resolve_write_fd(fd);
+  ssize_t ret;
   if (real_fd >= 0) {
     eos_vfs_file_t *file = eos_vfs_file_acquire(real_fd);
     if (!file) {
       __errno_r(r) = EBADF;
+      eos_proc_leave_kernel(prev_k);
       return -1;
     }
-    ssize_t ret = __real__write_r(r, real_fd, buf, size);
+    ret = __real__write_r(r, real_fd, buf, size);
     eos_vfs_file_release(file);
-    return ret;
+  } else {
+    ret = __real__write_r(r, real_fd, buf, size);
   }
 
-  return __real__write_r(r, real_fd, buf, size);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 off_t __wrap__lseek_r(struct _reent *r, int fd, off_t size, int mode) {
+  bool prev_k = eos_proc_enter_kernel();
   int real_fd = fd;
   eos_proc_t *proc = eos_proc_current();
   if (proc) {
@@ -193,23 +211,28 @@ off_t __wrap__lseek_r(struct _reent *r, int fd, off_t size, int mode) {
     }
   }
 
+  off_t ret;
   if (real_fd >= 0) {
     eos_vfs_file_t *file = eos_vfs_file_acquire(real_fd);
     if (!file) {
       __errno_r(r) = EBADF;
+      eos_proc_leave_kernel(prev_k);
       return -1;
     }
     pthread_mutex_lock(&file->offset_lock);
-    off_t ret = __real__lseek_r(r, real_fd, size, mode);
+    ret = __real__lseek_r(r, real_fd, size, mode);
     pthread_mutex_unlock(&file->offset_lock);
     eos_vfs_file_release(file);
-    return ret;
+  } else {
+    ret = __real__lseek_r(r, real_fd, size, mode);
   }
 
-  return __real__lseek_r(r, real_fd, size, mode);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 int __wrap__fstat_r(struct _reent *r, int fd, struct stat *st) {
+  bool prev_k = eos_proc_enter_kernel();
   int real_fd = fd;
   eos_proc_t *proc = eos_proc_current();
   if (proc) {
@@ -224,18 +247,22 @@ int __wrap__fstat_r(struct _reent *r, int fd, struct stat *st) {
     }
   }
 
+  int ret;
   if (real_fd >= 0) {
     eos_vfs_file_t *file = eos_vfs_file_acquire(real_fd);
     if (!file) {
       __errno_r(r) = EBADF;
+      eos_proc_leave_kernel(prev_k);
       return -1;
     }
-    int ret = __real__fstat_r(r, real_fd, st);
+    ret = __real__fstat_r(r, real_fd, st);
     eos_vfs_file_release(file);
-    return ret;
+  } else {
+    ret = __real__fstat_r(r, real_fd, st);
   }
 
-  return __real__fstat_r(r, real_fd, st);
+  eos_proc_leave_kernel(prev_k);
+  return ret;
 }
 
 int dup2(int oldfd, int newfd) {
@@ -306,6 +333,7 @@ int dup(int oldfd) {
 }
 
 int __wrap__stat_r(struct _reent *r, char *path, struct stat *st) {
+  bool prev_k = eos_proc_enter_kernel();
   char buf[PATH_MAX];
   char *_path = eos_fapi_path_resolve(path, buf);
 
@@ -313,10 +341,12 @@ int __wrap__stat_r(struct _reent *r, char *path, struct stat *st) {
   int ret = __real__stat_r(r, _path, st);
   eos_proc_heap_tracking_restore(prev_h);
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
 int __wrap__link_r(struct _reent *r, char *n1, char *n2) {
+  bool prev_k = eos_proc_enter_kernel();
   char b1[PATH_MAX], b2[PATH_MAX];
   char *_n1 = eos_fapi_path_resolve(n1, b1);
   char *_n2 = eos_fapi_path_resolve(n2, b2);
@@ -325,10 +355,12 @@ int __wrap__link_r(struct _reent *r, char *n1, char *n2) {
   int ret = __real__link_r(r, _n1, _n2);
   eos_proc_heap_tracking_restore(prev_h);
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
 int __wrap__unlink_r(struct _reent *r, char *path) {
+  bool prev_k = eos_proc_enter_kernel();
   char buf[PATH_MAX];
   char *_path = eos_fapi_path_resolve(path, buf);
 
@@ -336,10 +368,12 @@ int __wrap__unlink_r(struct _reent *r, char *path) {
   int ret = __real__unlink_r(r, _path);
   eos_proc_heap_tracking_restore(prev_h);
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
 int __wrap__rename_r(struct _reent *r, char *src, char *dst) {
+  bool prev_k = eos_proc_enter_kernel();
   char b1[PATH_MAX], b2[PATH_MAX];
   char *_src = eos_fapi_path_resolve(src, b1);
   char *_dst = eos_fapi_path_resolve(dst, b2);
@@ -348,10 +382,12 @@ int __wrap__rename_r(struct _reent *r, char *src, char *dst) {
   int ret = __real__rename_r(r, _src, _dst);
   eos_proc_heap_tracking_restore(prev_h);
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
 DIR *__wrap_opendir(char *name) {
+  bool prev_k = eos_proc_enter_kernel();
   char buf[PATH_MAX];
   char *_name = eos_fapi_path_resolve(name, buf);
 
@@ -364,6 +400,7 @@ DIR *__wrap_opendir(char *name) {
     eos_proc_reg_dir(pdir);
   }
 
+  eos_proc_leave_kernel(prev_k);
   return pdir;
 }
 
@@ -373,9 +410,11 @@ struct dirent *__wrap_readdir(DIR *pdir) {
     return NULL;
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   eos_vfs_dir_t *dir = eos_vfs_dir_acquire(pdir);
   if (!dir) {
     errno = EBADF;
+    eos_proc_leave_kernel(prev_k);
     return NULL;
   }
 
@@ -386,6 +425,7 @@ struct dirent *__wrap_readdir(DIR *pdir) {
   pthread_mutex_unlock(&dir->lock);
   eos_vfs_dir_release(dir);
 
+  eos_proc_leave_kernel(prev_k);
   return ent;
 }
 
@@ -395,6 +435,7 @@ int __wrap_closedir(DIR *pdir) {
     return -1;
   }
 
+  bool prev_k = eos_proc_enter_kernel();
   eos_proc_t *proc = eos_proc_current();
   if (proc) {
     eos_proc_unreg_dir(pdir);
@@ -410,10 +451,12 @@ int __wrap_closedir(DIR *pdir) {
     eos_vfs_dir_release(dir);
   }
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }
 
 int __wrap_mkdir(char *path, mode_t mode) {
+  bool prev_k = eos_proc_enter_kernel();
   char buf[PATH_MAX];
   char *_path = eos_fapi_path_resolve(path, buf);
 
@@ -421,5 +464,6 @@ int __wrap_mkdir(char *path, mode_t mode) {
   int ret = __real_mkdir(_path, mode);
   eos_proc_heap_tracking_restore(prev_h);
 
+  eos_proc_leave_kernel(prev_k);
   return ret;
 }

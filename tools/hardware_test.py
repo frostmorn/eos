@@ -280,6 +280,8 @@ class EOSTestHarness:
         self.check(suite, "Heap memory summary in /proc/heapinfo", "cat /proc/heapinfo", r"== HEAP SUMMARY ==[\s\S]+INTERNAL[\s\S]+DMA", wait=2.5)
         self.check(suite, "SoC and core info in /proc/cpuinfo", "cat /proc/cpuinfo", r"model name[\s\S]+cpu cores\s+:\s+\d+")
         self.check(suite, "System uptime in /proc/uptime", "cat /proc/uptime", r"uptime:\s+\d+s[\s\S]+reset reason:")
+        self.check(suite, "/proc/stat cpu and irq lines", "cat /proc/stat", r"cpu\s+\d+\s+\d+\s+\d+\s+\d+[\s\S]+irq\s+\d+")
+        self.check(suite, "time utility executes", "time -p echo eos_time_ok", r"eos_time_ok[\s\S]+real\s+[0-9\.]+")
 
     def test_pratt_parser(self):
         suite = "pratt"
