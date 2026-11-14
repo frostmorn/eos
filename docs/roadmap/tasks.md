@@ -32,7 +32,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | T09 | CPU time accounting and `time` | Observability | M | T13, T17 | 2 |
 | Pending | T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
 | Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
-| Partial | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) [12d DONE] | Filesystems | M + decision | T07 | 3 |
+| Done | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
 | Pending | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
 | Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
 | Pending | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
@@ -303,7 +303,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** write via `echo`, read via Preferences API and back; reboot persistence; `ls /nvs/<ns>`; Wi-Fi still initializes after the move.
 
-#### T12 — Symlinks, `ln`, cross-device handling, own VFS
+#### T12 — Symlinks, `ln`, cross-device handling, own VFS [DONE]
 `Size: M (a–c) + decision (d) · Depends: T07 · Orig #12`
 
 **Reframing:** the original mixes a utility (`ln`) with a rewrite (own VFS). Most of the value comes from the first part.

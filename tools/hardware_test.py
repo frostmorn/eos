@@ -317,6 +317,12 @@ class EOSTestHarness:
                    r"overwritten_text", not_pattern=r"pratt_redir_text")
         self.check(suite, "Output append (>>)", "echo appended_line >> /tmp_pratt.txt ; cat /tmp_pratt.txt",
                    r"overwritten_text[\s\S]+appended_line")
+        self.check(suite, "Output redirection to /dev/null suppresses output",
+                   "echo suppress_to_null > /dev/null", r"^$", not_pattern=r"suppress_to_null")
+        self.check(suite, "Output append redirection to /dev/null succeeds",
+                   "echo append_to_null >> /dev/null ; echo redir_null_ok", r"redir_null_ok", not_pattern=r"append_to_null")
+        self.check(suite, "Cat /dev/null produces empty output",
+                   "cat /dev/null ; echo eof_null_ok", r"eof_null_ok")
 
         # 7. Quoting & Escaping
         self.check(suite, "Single quotes literal preservation ('')",
@@ -776,8 +782,25 @@ class EOSTestHarness:
         self.check(suite, "tree / traverses root cleanly without recursion into .", "tree /",
                    r"(proc|bin|dev|tmp)", not_pattern=r"├── \.", wait=3.0)
 
+        # 7. Shell Integration: ln & readlink tests
+        self.run_cmd("echo hl_val_555 > /tmp/h_hl_src.txt")
+        self.check(suite, "ln creates hard link", "ln -v /tmp/h_hl_src.txt /tmp/h_hl_dst.txt", r"'/tmp/h_hl_dst\.txt' -> '/tmp/h_hl_src\.txt'", not_pattern=r"cannot")
+        self.check(suite, "ln destination shares content", "cat /tmp/h_hl_dst.txt", r"hl_val_555")
+        self.run_cmd("rm /tmp/h_hl_src.txt")
+        self.check(suite, "hard link persists after original removed", "cat /tmp/h_hl_dst.txt", r"hl_val_555")
+
+        self.run_cmd("echo sl_val_666 > /tmp/h_sl_src.txt")
+        self.check(suite, "ln -s creates symlink", "ln -s -v /tmp/h_sl_src.txt /tmp/h_sl_dst.txt", r"'/tmp/h_sl_dst\.txt' -> '/tmp/h_sl_src\.txt'", not_pattern=r"cannot")
+        self.check(suite, "readlink prints symlink target", "readlink /tmp/h_sl_dst.txt", r"/tmp/h_sl_src\.txt")
+        self.check(suite, "cat reads through symlink", "cat /tmp/h_sl_dst.txt", r"sl_val_666")
+
+        # Symlink loop detection
+        self.run_cmd("ln -s /tmp/h_loop2 /tmp/h_loop1")
+        self.run_cmd("ln -s /tmp/h_loop1 /tmp/h_loop2")
+        self.check(suite, "cat detects symlink loop without hang", "cat /tmp/h_loop1", r"(Too many|levels|failed|error|cannot|Can't)", wait=3.0)
+
         # Cleanup all test artifacts
-        self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_*")
+        self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_* /tmp/h_hl_* /tmp/h_sl_* /tmp/h_loop*")
 
     def test_hash(self):
         suite = "hash"

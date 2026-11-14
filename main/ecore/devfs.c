@@ -2,70 +2,37 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/proc.h"
+#include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
-#include "emisc/kvec.h"
+#include "emisc/psram_alloc.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
 
-///////////////////////////////////////////////////////////////////
-// FD -> DEV
-//
-// fd  = devfs/external fd
-// drvfd = driver's fd
-//
-// The vector index is NOT an fd. kv_drop_fast() is therefore safe.
-///////////////////////////////////////////////////////////////////
-
 typedef struct {
-  int fd;
-  int drvfd;
+  eos_vfs_file_t base;
   eos_dev_t *dev;
-} devfs_fdmap_t;
-
-///////////////////////////////////////////////////////////////////
-// DIR -> DEV
-///////////////////////////////////////////////////////////////////
+  int drvfd;
+  bool is_null;
+  bool is_zero;
+} devfs_file_t;
 
 typedef struct {
-  /*
-   * Must be first. ESP-IDF VFS uses this field internally.
-   */
-  uint32_t esp_idf_fs_index;
-
+  eos_vfs_dir_t base;
   bool root_listing;
   uint32_t index;
-
   eos_dev_t *dev;
   DIR *drvdir;
-
   struct dirent entry;
 } devfs_dir_t;
-
-///////////////////////////////////////////////////////////////////
-// DEVFS state
-///////////////////////////////////////////////////////////////////
-
-typedef struct {
-  kvec_psram_t(devfs_fdmap_t) fds;
-} devfs_state_t;
-
-static devfs_state_t *eos_devfs_state = NULL;
-
-///////////////////////////////////////////////////////////////////
-// Helpers
-///////////////////////////////////////////////////////////////////
 
 static eos_dev_t *devfs_resolve(const char *path) {
   if (!path)
     return NULL;
 
-  /*
-   * VFS callbacks normally receive a path relative to the mount.
-   * Therefore both "" and "/" represent the devfs root.
-   */
-  if (*path == '/')
+  while (*path == '/')
     path++;
 
   if (*path == '\0')
@@ -78,115 +45,14 @@ static bool devfs_is_root(const char *path) {
   if (!path || *path == '\0')
     return true;
 
-  return path[0] == '/' && path[1] == '\0';
+  while (*path == '/')
+    path++;
+
+  return *path == '\0';
 }
 
-static devfs_fdmap_t *devfs_fd_to_fdmap(devfs_state_t *dstate, int fd) {
-  for (size_t i = 0; i < kv_size(dstate->fds); ++i) {
-    devfs_fdmap_t *fdmap = &kv_A(dstate->fds, i);
-
-    if (fdmap->fd == fd) {
-      if (!fdmap->dev || !fdmap->dev->in_use) {
-        errno = ENODEV;
-        return NULL;
-      }
-      return fdmap;
-    }
-  }
-
-  errno = EBADF;
-  return NULL;
-}
-
-/*
- * Find the lowest unused devfs fd.
- *
- * For the expected small number of /dev descriptors this keeps the
- * implementation simple while naturally reusing closed descriptors.
- */
-static int devfs_alloc_fd(devfs_state_t *dstate, eos_dev_t *dev, int drvfd) {
-  int fd = 0;
-
-  for (;;) {
-    bool used = false;
-
-    for (size_t i = 0; i < kv_size(dstate->fds); ++i) {
-      if (kv_A(dstate->fds, i).fd == fd) {
-        used = true;
-        break;
-      }
-    }
-
-    if (!used)
-      break;
-
-    fd++;
-  }
-
-  devfs_fdmap_t fdmap = {
-      .fd = fd,
-      .drvfd = drvfd,
-      .dev = dev,
-  };
-
-  bool prev_k = eos_proc_enter_kernel();
-  kv_push(devfs_fdmap_t, dstate->fds, fdmap);
-  eos_proc_leave_kernel(prev_k);
-
-  return fd;
-}
-
-///////////////////////////////////////////////////////////////////
-// FD operations
-///////////////////////////////////////////////////////////////////
-
-ssize_t eos_devfs_write(devfs_state_t *dstate, int fd, void *data,
-                        size_t size) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
-    return -1;
-
-  return eos_dev_write(fdmap->dev, fdmap->drvfd, data, size);
-}
-
-off_t eos_devfs_lseek(devfs_state_t *dstate, int fd, off_t offset, int whence) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
-    return -1;
-
-  return eos_dev_lseek(fdmap->dev, fdmap->drvfd, offset, whence);
-}
-
-ssize_t eos_devfs_read(devfs_state_t *dstate, int fd, void *dst, size_t size) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
-    return -1;
-
-  return eos_dev_read(fdmap->dev, fdmap->drvfd, dst, size);
-}
-
-ssize_t eos_devfs_pread(devfs_state_t *dstate, int fd, void *dst, size_t size,
-                        off_t offset) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
-    return -1;
-
-  return eos_dev_pread(fdmap->dev, fdmap->drvfd, dst, size, offset);
-}
-
-ssize_t eos_devfs_pwrite(devfs_state_t *dstate, int fd, void *src, size_t size,
-                         off_t offset) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
-    return -1;
-
-  return eos_dev_pwrite(fdmap->dev, fdmap->drvfd, src, size, offset);
-}
-int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
-                   int mode) {
-  // EOS_LOGI("DEVFS OPEN: path='%s' flags=%d mode=%d\n", path ? path : "(null)",
-  //          flags, mode);
-
+static int devfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_file_t **out_file) {
+  (void)ctx;
   if (!path) {
     errno = EINVAL;
     return -1;
@@ -196,120 +62,165 @@ int eos_devfs_open(devfs_state_t *dstate, const char *path, int flags,
     path++;
 
   const char *slash = strchr(path, '/');
-
   char devname[EOS_XSMALL_STR_LEN];
 
   if (slash) {
     size_t len = slash - path;
-
     if (len == 0 || len >= sizeof(devname)) {
       errno = ENAMETOOLONG;
       return -1;
     }
-
     memcpy(devname, path, len);
     devname[len] = '\0';
   } else {
     strlcpy(devname, path, sizeof(devname));
   }
 
-  // EOS_LOGI("DEVFS OPEN: device='%s' driver_path='%s'\n", devname,
-  //          slash ? slash : "");
+  if (strcmp(devname, "null") == 0 || strcmp(devname, "zero") == 0) {
+    if (slash) {
+      errno = ENOTDIR;
+      return -1;
+    }
+    devfs_file_t *file = eos_vfs_file_alloc(NULL, sizeof(devfs_file_t), flags);
+    if (!file) {
+      errno = ENOMEM;
+      return -1;
+    }
+    file->dev = NULL;
+    file->drvfd = -1;
+    file->is_null = (strcmp(devname, "null") == 0);
+    file->is_zero = (strcmp(devname, "zero") == 0);
+    *out_file = &file->base;
+    return file->base.fd;
+  }
 
   eos_dev_t *dev = eos_dev_find_by_name(devname);
-
   if (!dev) {
-    // EOS_LOGI("DEVFS OPEN: device '%s' not found\n", devname);
     errno = ENOENT;
     return -1;
   }
 
   int drvfd = eos_dev_open(dev, slash ? slash : "", flags, mode);
-
-  // EOS_LOGI("DEVFS OPEN: driver fd=%d\n", drvfd);
-
-  if (drvfd < 0)
+  if (drvfd < 0) {
     return -1;
-
-  return devfs_alloc_fd(dstate, dev, drvfd);
-}
-
-int eos_devfs_close(devfs_state_t *dstate, int fd) {
-  for (size_t i = 0; i < kv_size(dstate->fds); ++i) {
-    devfs_fdmap_t *fdmap = &kv_A(dstate->fds, i);
-
-    if (fdmap->fd != fd)
-      continue;
-
-    int rc = eos_dev_close(fdmap->dev, fdmap->drvfd);
-
-    /*
-     * Keep the mapping if the driver failed to close.
-     */
-    if (rc < 0)
-      return rc;
-
-    /*
-     * Order is irrelevant. The vector index is not the fd.
-     */
-    kv_drop_fast(devfs_fdmap_t, dstate->fds, i);
-
-    return 0;
   }
 
-  errno = EBADF;
-  return -1;
-}
-
-int eos_devfs_fstat(devfs_state_t *dstate, int fd, struct stat *st) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
+  devfs_file_t *file = eos_vfs_file_alloc(NULL, sizeof(devfs_file_t), flags);
+  if (!file) {
+    eos_dev_close(dev, drvfd);
+    errno = ENOMEM;
     return -1;
+  }
 
-  return eos_drv_fstat(fdmap->dev, fdmap->drvfd, st);
+  file->dev = dev;
+  file->drvfd = drvfd;
+  *out_file = &file->base;
+  return file->base.fd;
 }
 
-int eos_devfs_fcntl(devfs_state_t *dstate, int fd, int cmd, int arg) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
+static int devfs_close(void *ctx, eos_vfs_file_t *file) {
+  (void)ctx;
+  if (!file) return 0;
+
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (df->is_null || df->is_zero) {
+    return 0;
+  }
+  if (df->dev) {
+    return eos_dev_close(df->dev, df->drvfd);
+  }
+  return 0;
+}
+
+static ssize_t devfs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t size) {
+  (void)ctx;
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (!df) {
+    errno = EBADF;
     return -1;
-
-  return eos_drv_fcntl(fdmap->dev, fdmap->drvfd, cmd, arg);
-}
-
-int eos_devfs_ioctl(devfs_state_t *dstate, int fd, int cmd, va_list args) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
+  }
+  if (df->is_null) {
+    return 0;
+  }
+  if (df->is_zero) {
+    if (dst && size > 0) {
+      memset(dst, 0, size);
+    }
+    return (ssize_t)size;
+  }
+  if (!df->dev || !df->dev->in_use) {
+    errno = ENODEV;
     return -1;
-
-  bool prev_k = eos_proc_enter_kernel();
-  int ret = eos_drv_ioctl(fdmap->dev, fdmap->drvfd, cmd, args);
-  eos_proc_leave_kernel(prev_k);
-  return ret;
+  }
+  return eos_dev_read(df->dev, df->drvfd, dst, size);
 }
 
-int eos_devfs_fsync(devfs_state_t *dstate, int fd) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
+static ssize_t devfs_write(void *ctx, eos_vfs_file_t *file, const void *src, size_t size) {
+  (void)ctx;
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (!df) {
+    errno = EBADF;
     return -1;
-
-  return eos_drv_fsync(fdmap->dev, fdmap->drvfd);
-}
-
-int eos_devfs_ftruncate(devfs_state_t *dstate, int fd, off_t length) {
-  devfs_fdmap_t *fdmap = devfs_fd_to_fdmap(dstate, fd);
-  if (!fdmap)
+  }
+  if (df->is_null || df->is_zero) {
+    (void)src;
+    return (ssize_t)size;
+  }
+  if (!df->dev || !df->dev->in_use) {
+    errno = ENODEV;
     return -1;
-
-  return eos_drv_ftruncate(fdmap->dev, fdmap->drvfd, length);
+  }
+  return eos_dev_write(df->dev, df->drvfd, src, size);
 }
 
-///////////////////////////////////////////////////////////////////
-// Path operations
-///////////////////////////////////////////////////////////////////
+static off_t devfs_lseek(void *ctx, eos_vfs_file_t *file, off_t offset, int whence) {
+  (void)ctx;
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (!df) {
+    errno = EBADF;
+    return -1;
+  }
+  if (df->is_null || df->is_zero) {
+    (void)offset;
+    (void)whence;
+    return 0;
+  }
+  if (!df->dev || !df->dev->in_use) {
+    errno = ENODEV;
+    return -1;
+  }
+  return eos_dev_lseek(df->dev, df->drvfd, offset, whence);
+}
 
-int eos_devfs_stat(devfs_state_t *dstate, const char *path, struct stat *st) {
-  (void)dstate;
+static int devfs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
+  (void)ctx;
+  if (!st) {
+    errno = EINVAL;
+    return -1;
+  }
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (!df) {
+    errno = EBADF;
+    return -1;
+  }
+  if (df->is_null || df->is_zero) {
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFCHR | 0666;
+    return 0;
+  }
+  if (!df->dev || !df->dev->in_use) {
+    errno = ENODEV;
+    return -1;
+  }
+  return eos_drv_fstat(df->dev, df->drvfd, st);
+}
+
+static int devfs_stat(void *ctx, const char *path, struct stat *st) {
+  (void)ctx;
+  if (!path || !st) {
+    errno = EINVAL;
+    return -1;
+  }
 
   if (devfs_is_root(path)) {
     memset(st, 0, sizeof(*st));
@@ -317,8 +228,15 @@ int eos_devfs_stat(devfs_state_t *dstate, const char *path, struct stat *st) {
     return 0;
   }
 
-  eos_dev_t *dev = devfs_resolve(path);
+  const char *p = path;
+  while (*p == '/') p++;
+  if (strcmp(p, "null") == 0 || strcmp(p, "zero") == 0) {
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFCHR | 0666;
+    return 0;
+  }
 
+  eos_dev_t *dev = devfs_resolve(path);
   if (!dev) {
     errno = ENOENT;
     return -1;
@@ -327,57 +245,58 @@ int eos_devfs_stat(devfs_state_t *dstate, const char *path, struct stat *st) {
   return eos_drv_stat(dev, "", st);
 }
 
-int eos_devfs_link(devfs_state_t *dstate, const char *n1, const char *n2) {
-  (void)dstate;
-
+static int devfs_link(void *ctx, const char *n1, const char *n2) {
+  (void)ctx;
   return eos_drv_link(eos_devtree_root(), n1, n2);
 }
 
-int eos_devfs_unlink(devfs_state_t *dstate, const char *path) {
-  (void)dstate;
-
+static int devfs_unlink(void *ctx, const char *path) {
+  (void)ctx;
+  const char *p = path;
+  while (*p && *p == '/') p++;
+  if (strcmp(p, "null") == 0 || strcmp(p, "zero") == 0) {
+    errno = EPERM;
+    return -1;
+  }
   eos_dev_t *dev = devfs_resolve(path);
-
   if (!dev) {
     errno = ENOENT;
     return -1;
   }
-
   return eos_drv_unlink(dev, "");
 }
 
-int eos_devfs_rename(devfs_state_t *dstate, const char *src, const char *dst) {
-  (void)dstate;
-
+static int devfs_rename(void *ctx, const char *src, const char *dst) {
+  (void)ctx;
   return eos_drv_rename(eos_devtree_root(), src, dst);
 }
 
-int eos_devfs_mkdir(devfs_state_t *dstate, const char *path, mode_t mode) {
-  (void)dstate;
-
+static int devfs_mkdir(void *ctx, const char *path, mode_t mode) {
+  (void)ctx;
   if (path && *path == '/')
     path++;
-
   return eos_drv_mkdir(eos_devtree_root(), path, mode);
 }
 
-int eos_devfs_rmdir(devfs_state_t *dstate, const char *path) {
-  (void)dstate;
-
+static int devfs_rmdir(void *ctx, const char *path) {
+  (void)ctx;
   if (path && *path == '/')
     path++;
-
   return eos_drv_rmdir(eos_devtree_root(), path);
 }
 
-int eos_devfs_access(devfs_state_t *dstate, const char *path, int amode) {
-  (void)dstate;
-
+static int devfs_access(void *ctx, const char *path, int amode) {
+  (void)ctx;
   if (devfs_is_root(path))
     return 0;
 
-  eos_dev_t *dev = devfs_resolve(path);
+  const char *p = path;
+  while (*p == '/') p++;
+  if (strcmp(p, "null") == 0 || strcmp(p, "zero") == 0) {
+    return 0;
+  }
 
+  eos_dev_t *dev = devfs_resolve(path);
   if (!dev) {
     errno = ENOENT;
     return -1;
@@ -386,107 +305,107 @@ int eos_devfs_access(devfs_state_t *dstate, const char *path, int amode) {
   return eos_drv_access(dev, "", amode);
 }
 
-int eos_devfs_truncate(devfs_state_t *dstate, const char *path, off_t length) {
-  (void)dstate;
-
-  eos_dev_t *dev = devfs_resolve(path);
-
-  if (!dev) {
-    errno = ENOENT;
+static int devfs_ioctl(void *ctx, eos_vfs_file_t *file, int cmd, va_list args) {
+  (void)ctx;
+  (void)cmd;
+  (void)args;
+  devfs_file_t *df = (devfs_file_t *)file;
+  if (!df) {
+    errno = EBADF;
     return -1;
   }
-
-  return eos_drv_truncate(dev, "", length);
-}
-
-int eos_devfs_utime(devfs_state_t *dstate, const char *path,
-                    const struct utimbuf *times) {
-  (void)dstate;
-
-  eos_dev_t *dev = devfs_resolve(path);
-
-  if (!dev) {
-    errno = ENOENT;
+  if (df->is_null || df->is_zero) {
+    return 0;
+  }
+  if (!df->dev || !df->dev->in_use) {
+    errno = ENODEV;
     return -1;
   }
-
-  return eos_drv_utime(dev, "", times);
-}
-
-///////////////////////////////////////////////////////////////////
-// Directory operations
-///////////////////////////////////////////////////////////////////
-
-DIR *eos_devfs_opendir(devfs_state_t *dstate, const char *path) {
-  (void)dstate;
 
   bool prev_k = eos_proc_enter_kernel();
-  devfs_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(*dir));
-
-  if (!dir) {
-    eos_proc_leave_kernel(prev_k);
-    errno = ENOMEM;
-    return NULL;
-  }
-
-  /*
-   * /dev is a flat listing of all attached devices.
-   */
-  if (devfs_is_root(path)) {
-    dir->root_listing = true;
-    eos_proc_leave_kernel(prev_k);
-    return (DIR *)dir;
-  }
-
-  eos_dev_t *dev = devfs_resolve(path);
-
-  if (!dev) {
-    free(dir);
-    eos_proc_leave_kernel(prev_k);
-    errno = ENOENT;
-    return NULL;
-  }
-
-  dir->dev = dev;
-
-  /*
-   * A device may be both a file and a directory.
-   * The driver's opendir implementation decides whether it can
-   * actually be opened as a directory.
-   */
-  dir->drvdir = eos_dev_opendir(dev, "");
-
-  if (!dir->drvdir) {
-    free(dir);
-    eos_proc_leave_kernel(prev_k);
-    return NULL;
-  }
-
+  int ret = eos_drv_ioctl(df->dev, df->drvfd, cmd, args);
   eos_proc_leave_kernel(prev_k);
-  return (DIR *)dir;
+  return ret;
 }
 
-struct dirent *eos_devfs_readdir(devfs_state_t *dstate, DIR *pdir) {
-  (void)dstate;
+static int devfs_opendir(void *ctx, const char *path, eos_vfs_dir_t **out_dir) {
+  (void)ctx;
+  bool is_root = devfs_is_root(path);
+  eos_dev_t *dev = NULL;
+  DIR *drvdir = NULL;
 
+  if (!is_root) {
+    dev = devfs_resolve(path);
+    if (!dev) {
+      errno = ENOENT;
+      return -1;
+    }
+    drvdir = eos_dev_opendir(dev, "");
+    if (!drvdir) {
+      return -1;
+    }
+  }
+
+  devfs_dir_t *dir = eos_vfs_dir_alloc(NULL, sizeof(devfs_dir_t));
+  if (!dir) {
+    if (drvdir) {
+      eos_dev_closedir(dev, drvdir);
+    }
+    errno = ENOMEM;
+    return -1;
+  }
+
+  dir->root_listing = is_root;
+  dir->dev = dev;
+  dir->drvdir = drvdir;
+  dir->index = 0;
+  *out_dir = &dir->base;
+  return 0;
+}
+
+static struct dirent *devfs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
+  (void)ctx;
   devfs_dir_t *dir = (devfs_dir_t *)pdir;
-
   if (!dir) {
     errno = EINVAL;
     return NULL;
   }
 
-  if (!dir->root_listing)
+  if (!dir->root_listing) {
+    if (!dir->dev || !dir->drvdir) {
+      return NULL;
+    }
     return eos_dev_readdir(dir->dev, dir->drvdir);
+  }
 
-  while (dir->index < eos_dev_count()) {
-    eos_dev_t *dev = eos_dev_get(dir->index++);
+  if (dir->index == 0) {
+    dir->index++;
+    memset(&dir->entry, 0, sizeof(dir->entry));
+    dir->entry.d_ino = 1;
+    dir->entry.d_type = DT_CHR;
+    strlcpy(dir->entry.d_name, "null", sizeof(dir->entry.d_name));
+    return &dir->entry;
+  }
+
+  if (dir->index == 1) {
+    dir->index++;
+    memset(&dir->entry, 0, sizeof(dir->entry));
+    dir->entry.d_ino = 2;
+    dir->entry.d_type = DT_CHR;
+    strlcpy(dir->entry.d_name, "zero", sizeof(dir->entry.d_name));
+    return &dir->entry;
+  }
+
+  uint32_t dev_idx = dir->index - 2;
+  while (dev_idx < eos_dev_count()) {
+    eos_dev_t *dev = eos_dev_get(dev_idx++);
+    dir->index = dev_idx + 2;
     if (!dev || !dev->in_use)
       continue;
 
     if (!dev->driver)
       continue;
-    
+
     if (dev->driver->flags & EOS_DRV_FLAG_NO_VFS)
       continue;
 
@@ -497,170 +416,77 @@ struct dirent *eos_devfs_readdir(devfs_state_t *dstate, DIR *pdir) {
       continue;
 
     memset(&dir->entry, 0, sizeof(dir->entry));
-
     dir->entry.d_ino = dev->id;
-
     dir->entry.d_type = (dev->driver && dev->driver->opendir) ? DT_DIR : DT_REG;
-
     strlcpy(dir->entry.d_name, dev->name, sizeof(dir->entry.d_name));
-
     return &dir->entry;
   }
 
   return NULL;
 }
 
-long eos_devfs_telldir(devfs_state_t *dstate, DIR *pdir) {
-  (void)dstate;
-
+static int devfs_closedir(void *ctx, eos_vfs_dir_t *pdir) {
+  (void)ctx;
   devfs_dir_t *dir = (devfs_dir_t *)pdir;
-
-  if (!dir) {
-    errno = EINVAL;
-    return -1;
-  }
-
-  if (dir->root_listing)
-    return (long)dir->index;
-
-  return eos_dev_telldir(dir->dev, dir->drvdir);
-}
-
-void eos_devfs_seekdir(devfs_state_t *dstate, DIR *pdir, long offset) {
-  (void)dstate;
-
-  devfs_dir_t *dir = (devfs_dir_t *)pdir;
-
-  if (!dir)
-    return;
-
-  if (dir->root_listing) {
-    dir->index = (offset < 0) ? 0 : (uint32_t)offset;
-    return;
-  }
-
-  eos_dev_seekdir(dir->dev, dir->drvdir, offset);
-}
-
-int eos_devfs_closedir(devfs_state_t *dstate, DIR *pdir) {
-  (void)dstate;
-
-  devfs_dir_t *dir = (devfs_dir_t *)pdir;
-
   if (!dir) {
     errno = EINVAL;
     return -1;
   }
 
   int rc = 0;
-
-  if (!dir->root_listing) {
+  if (!dir->root_listing && dir->dev && dir->drvdir) {
     rc = eos_dev_closedir(dir->dev, dir->drvdir);
   }
-
-  bool prev_k = eos_proc_enter_kernel();
-  free(dir);
-  eos_proc_leave_kernel(prev_k);
-
   return rc;
 }
 
-///////////////////////////////////////////////////////////////////
-// Mount / unmount
-///////////////////////////////////////////////////////////////////
-
-int eos_devfs_mount(const char *path, devfs_state_t *dstate) {
-  if (!path || !dstate) {
-    errno = EINVAL;
-    return -1;
+static void devfs_seekdir(void *ctx, eos_vfs_dir_t *pdir, long loc) {
+  (void)ctx;
+  devfs_dir_t *dir = (devfs_dir_t *)pdir;
+  if (!dir) return;
+  if (!dir->root_listing) {
+    if (dir->dev && dir->drvdir) {
+      eos_dev_seekdir(dir->dev, dir->drvdir, loc);
+    }
+  } else {
+    dir->index = (uint32_t)loc;
   }
-
-  if (mkdir(path, 0755) < 0 && errno != EEXIST)
-    return -1;
-
-  static const esp_vfs_t vfs = {
-      .flags = ESP_VFS_FLAG_CONTEXT_PTR,
-
-      .open_p = (void *)eos_devfs_open,
-      .close_p = (void *)eos_devfs_close,
-
-      .read_p = (void *)eos_devfs_read,
-      .write_p = (void *)eos_devfs_write,
-      .lseek_p = (void *)eos_devfs_lseek,
-
-      .fstat_p = (void *)eos_devfs_fstat,
-      .stat_p = (void *)eos_devfs_stat,
-
-      .link_p = (void *)eos_devfs_link,
-      .unlink_p = (void *)eos_devfs_unlink,
-      .rename_p = (void *)eos_devfs_rename,
-
-      .opendir_p = (void *)eos_devfs_opendir,
-      .readdir_p = (void *)eos_devfs_readdir,
-      .telldir_p = (void *)eos_devfs_telldir,
-      .seekdir_p = (void *)eos_devfs_seekdir,
-      .closedir_p = (void *)eos_devfs_closedir,
-
-      .mkdir_p = (void *)eos_devfs_mkdir,
-      .rmdir_p = (void *)eos_devfs_rmdir,
-
-      .fcntl_p = (void *)eos_devfs_fcntl,
-      .ioctl_p = (void *)eos_devfs_ioctl,
-
-      .fsync_p = (void *)eos_devfs_fsync,
-      .access_p = (void *)eos_devfs_access,
-
-      .truncate_p = (void *)eos_devfs_truncate,
-      .ftruncate_p = (void *)eos_devfs_ftruncate,
-
-      .utime_p = (void *)eos_devfs_utime,
-  };
-
-  esp_vfs_register(path, &vfs, dstate);
-
-  return 0;
 }
 
-int eos_devfs_unmount(const char *path, devfs_state_t *dstate) {
-  if (!path || !dstate) {
-    errno = EINVAL;
+static long devfs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
+  (void)ctx;
+  devfs_dir_t *dir = (devfs_dir_t *)pdir;
+  if (!dir) return -1;
+  if (!dir->root_listing) {
     return -1;
   }
-
-  if (kv_size(dstate->fds) != 0) {
-    errno = EBUSY;
-    return -1;
-  }
-
-  return esp_vfs_unregister(path);
+  return (long)dir->index;
 }
-
-///////////////////////////////////////////////////////////////////
-// Init
-///////////////////////////////////////////////////////////////////
 
 void eos_devfs_init(void) {
-  if (eos_devfs_state)
-    return;
+  static const eos_vfs_ops_t ops = {
+      .open = devfs_open,
+      .close = devfs_close,
+      .read = devfs_read,
+      .write = devfs_write,
+      .lseek = devfs_lseek,
+      .fstat = devfs_fstat,
+      .stat = devfs_stat,
+      .link = devfs_link,
+      .unlink = devfs_unlink,
+      .rename = devfs_rename,
+      .mkdir = devfs_mkdir,
+      .rmdir = devfs_rmdir,
+      .access = devfs_access,
+      .ioctl = devfs_ioctl,
+      .opendir = devfs_opendir,
+      .readdir = devfs_readdir,
+      .closedir = devfs_closedir,
+      .seekdir = devfs_seekdir,
+      .telldir = devfs_telldir,
+  };
 
-  eos_devfs_state = eos_psram_calloc_prefer(1, sizeof(*eos_devfs_state));
-
-  if (!eos_devfs_state) {
-    EOS_LOGE("Failed to allocate devfs state\n");
-    return;
-  }
-
-  kv_init(eos_devfs_state->fds);
-
-  if (eos_devfs_mount(EOS_DEVFS_ROOT, eos_devfs_state) < 0) {
-    kv_destroy(eos_devfs_state->fds);
-    free(eos_devfs_state);
-    eos_devfs_state = NULL;
-    return;
-  }
-
-  // Create a dir on tmpfs
   mkdir(EOS_DEVFS_ROOT, 0755);
-
+  eos_vfs_register_ops(EOS_DEVFS_ROOT, &ops, NULL);
   EOS_LOGI("devfs mounted at %s\n", EOS_DEVFS_ROOT);
 }

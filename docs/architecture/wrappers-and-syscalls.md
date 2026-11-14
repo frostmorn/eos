@@ -35,7 +35,13 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 | `opendir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via process CWD and registers `DIR*` handle for auto-close tracking. | Standard POSIX directory open. | `tools/hardware_test.py --suite coreutils` |
 | `readdir` | `main/ewrap/reent_syscalls.c` | Serializes directory traversal using per-stream descriptor lock and disables heap tracking. | Standard POSIX directory entry read. | `tools/hardware_test.py --suite coreutils` |
 | `closedir` | `main/ewrap/reent_syscalls.c` | Untracks directory handle from process context and invokes underlying close. | Standard POSIX directory close. | `tools/hardware_test.py --suite coreutils` |
+| `seekdir` | `main/ewrap/reent_syscalls.c` | Sets the location in a directory stream via central VFS. | Standard POSIX directory seek. | `tools/hardware_test.py --suite coreutils` |
+| `telldir` | `main/ewrap/reent_syscalls.c` | Queries the current location in a directory stream via central VFS. | Standard POSIX directory tell. | `tools/hardware_test.py --suite coreutils` |
+| `rewinddir` | `main/ewrap/reent_syscalls.c` | Resets the directory stream position to the beginning via central VFS. | Standard POSIX directory rewind. | `tools/hardware_test.py --suite coreutils` |
 | `mkdir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via process CWD. | Standard POSIX directory creation. | `tools/hardware_test.py --suite coreutils` |
+| `rmdir` | `main/ewrap/reent_syscalls.c` | Normalizes directory path via process CWD and removes directory. | Standard POSIX directory deletion. | `tools/hardware_test.py --suite coreutils` |
+| `access` | `main/ewrap/reent_syscalls.c` | Normalizes path via process CWD and checks access permissions. | Standard POSIX accessibility test. | `tools/hardware_test.py --suite coreutils` |
+| `ioctl` | `main/ewrap/reent_syscalls.c` | Dispatches device/filesystem-specific control requests via central VFS. | Standard POSIX/ESP-IDF device control call. | `tools/hardware_test.py --suite coreutils` |
 | `chdir` | `main/ewrap/realpath.c` | Updates process Current Working Directory in process context (`eos_proc_t`). | POSIX directory change. | `tools/hardware_test.py --suite coreutils` |
 | `getcwd` | `main/ewrap/realpath.c` | Retrieves process Current Working Directory from process context (`eos_proc_t`). | POSIX CWD retrieval. | `tools/hardware_test.py --suite coreutils` |
 | `system` | `main/ewrap/syscalls.c` | Intercepts shell execution, parses commands/pipelines/redirections, executes native ebins and scripts. | Standard C library command execution entrypoint. | `tools/hardware_test.py --suite coreutils` |

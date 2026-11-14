@@ -1,6 +1,6 @@
 # EOS Executable Binaries (`ebin`) Reference Catalog
 
-This catalog is an everyday operational reference for all **55 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
+This catalog is an everyday operational reference for all **57 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
 
 All binaries reside in `main/ebin/` and are exposed as executable nodes under `/bin/` via `binfs`.
 
@@ -8,7 +8,7 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 
 ## Quick Navigation Index
 
-- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
+- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
 - [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
@@ -72,6 +72,22 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
   echo "data" > /tmp/log.txt
   ```
 
+### `ln` — Make Links Between Files
+* **Syntax:** `ln [-s] [-f] [-v] TARGET LINK_NAME`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-s`, `--symbolic`: Create a symbolic link instead of a hard link.
+  * `-f`, `--force`: Remove existing destination files before linking.
+  * `-v`, `--verbose`: Print names of linked files.
+  * `-h`, `--help`: Display usage information.
+* **Capabilities:** POSIX `link()`, `symlink()`, `unlink()`.
+* **Examples:**
+  ```sh
+  ln /tmp/file.txt /tmp/hardlink.txt
+  ln -s /tmp/target.txt /tmp/symlink.txt
+  ln -sf /bin/sh /tmp/mysh
+  ```
+
 ### `ls` — List Directory Contents
 * **Syntax:** `ls [path...]`
 * **Flags:** `0` (Visible in launcher) | **Stack:** Default (8 KB SRAM)
@@ -133,6 +149,21 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 * **Examples:**
   ```sh
   pwd
+  ```
+
+### `readlink` — Print Resolved Value of a Symbolic Link
+* **Syntax:** `readlink [-f] [-n] [-v] FILE...`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-f`, `--canonicalize`: Canonicalize by following every symlink in every component of the path.
+  * `-n`, `--no-newline`: Do not output the trailing newline delimiter.
+  * `-v`, `--verbose`: Report error messages.
+  * `-h`, `--help`: Display usage information.
+* **Capabilities:** POSIX `readlink()`, `lstat()`.
+* **Examples:**
+  ```sh
+  readlink /tmp/symlink.txt
+  readlink -f /tmp/nested_symlink
   ```
 
 ### `rm` — Remove Files or Directories

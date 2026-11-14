@@ -1,5 +1,6 @@
 #include "pipefs.h"
 #include "ecore/proc.h"
+#include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
@@ -40,13 +41,12 @@ typedef struct {
 } pipe_node_t;
 
 typedef struct {
-  bool in_use;
+  eos_vfs_file_t base;
   int pipe_idx;
-  int flags;
-} pipe_fd_t;
+} pipe_file_t;
 
 typedef struct {
-  uint32_t esp_idf_fs_index;
+  eos_vfs_dir_t base;
   uint32_t idx;
   struct dirent entry;
 } pipe_dir_t;
@@ -54,7 +54,6 @@ typedef struct {
 typedef struct {
   pthread_mutex_t lock;
   kvec_psram_t(pipe_node_t *) nodes;
-  kvec_psram_t(pipe_fd_t) fds;
   uint32_t auto_seq;
   bool initialized;
 } eos_pipe_table_t;
@@ -177,35 +176,11 @@ static void pipe_check_reclaim_locked(int idx) {
   }
 }
 
-static int pipe_alloc_fd_locked(int pipe_idx, int flags) {
-  if (!s_pipe_table)
-    return -1;
-
-  for (size_t i = 0; i < kv_size(s_pipe_table->fds); i++) {
-    if (!kv_A(s_pipe_table->fds, i).in_use) {
-      kv_A(s_pipe_table->fds, i).in_use = true;
-      kv_A(s_pipe_table->fds, i).pipe_idx = pipe_idx;
-      kv_A(s_pipe_table->fds, i).flags = flags;
-      return (int)i;
-    }
-  }
-  pipe_fd_t new_fd = {
-      .in_use = true,
-      .pipe_idx = pipe_idx,
-      .flags = flags,
-  };
-  bool prev_h = eos_proc_heap_tracking_disable();
-  int fd = (int)kv_size(s_pipe_table->fds);
-  kv_push(pipe_fd_t, s_pipe_table->fds, new_fd);
-  eos_proc_heap_tracking_restore(prev_h);
-  return fd;
-}
-
 ///////////////////////////////////////////////////////////////////
-// ESP-IDF VFS Callbacks
+// VFS Callbacks
 ///////////////////////////////////////////////////////////////////
 
-static int pipefs_open(void *ctx, const char *path, int flags, int mode) {
+static int pipefs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_file_t **out_file) {
   (void)ctx;
   (void)mode;
 
@@ -255,12 +230,14 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode) {
     }
   }
 
-  int fd = pipe_alloc_fd_locked(pipe_idx, flags);
-  if (fd < 0) {
+  pipe_file_t *file = eos_vfs_file_alloc(NULL, sizeof(pipe_file_t), flags);
+  if (!file) {
     pipe_check_reclaim_locked(pipe_idx);
     pthread_mutex_unlock(&s_pipe_table->lock);
+    errno = ENFILE;
     return -1;
   }
+  file->pipe_idx = pipe_idx;
 
   pthread_mutex_lock(&node->lock);
   int acc = flags & O_ACCMODE;
@@ -286,30 +263,21 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode) {
   pthread_mutex_unlock(&node->lock);
 
   pthread_mutex_unlock(&s_pipe_table->lock);
-  return fd;
+  *out_file = &file->base;
+  return file->base.fd;
 }
 
-static int pipefs_close(void *ctx, int fd) {
+static int pipefs_close(void *ctx, eos_vfs_file_t *file) {
   (void)ctx;
-
-  if (!s_pipe_table) {
-    errno = ENODEV;
-    return -1;
+  if (!s_pipe_table || !file) {
+    return 0;
   }
+
+  pipe_file_t *pf = (pipe_file_t *)file;
+  int pipe_idx = pf->pipe_idx;
+  int flags = file->flags;
 
   pthread_mutex_lock(&s_pipe_table->lock);
-  if (fd < 0 || (size_t)fd >= kv_size(s_pipe_table->fds) || !kv_A(s_pipe_table->fds, fd).in_use) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
-    errno = EBADF;
-    return -1;
-  }
-
-  int pipe_idx = kv_A(s_pipe_table->fds, fd).pipe_idx;
-  int flags = kv_A(s_pipe_table->fds, fd).flags;
-  kv_A(s_pipe_table->fds, fd).in_use = false;
-  kv_A(s_pipe_table->fds, fd).pipe_idx = -1;
-  kv_A(s_pipe_table->fds, fd).flags = 0;
-
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
@@ -340,7 +308,7 @@ static int pipefs_close(void *ctx, int fd) {
   return 0;
 }
 
-static ssize_t pipefs_read(void *ctx, int fd, void *dst, size_t size) {
+static ssize_t pipefs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t size) {
   (void)ctx;
   if (!dst && size > 0) {
     errno = EINVAL;
@@ -349,24 +317,20 @@ static ssize_t pipefs_read(void *ctx, int fd, void *dst, size_t size) {
   if (size == 0)
     return 0;
 
-  if (!s_pipe_table) {
+  if (!s_pipe_table || !file) {
     errno = ENODEV;
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
-  if (fd < 0 || (size_t)fd >= kv_size(s_pipe_table->fds) || !kv_A(s_pipe_table->fds, fd).in_use) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
-    errno = EBADF;
-    return -1;
-  }
-  int pipe_idx = kv_A(s_pipe_table->fds, fd).pipe_idx;
-  int flags = kv_A(s_pipe_table->fds, fd).flags;
+  pipe_file_t *pf = (pipe_file_t *)file;
+  int pipe_idx = pf->pipe_idx;
+  int flags = file->flags;
   if ((flags & O_ACCMODE) == O_WRONLY) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
     errno = EBADF;
     return -1;
   }
+
+  pthread_mutex_lock(&s_pipe_table->lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
@@ -420,7 +384,7 @@ static ssize_t pipefs_read(void *ctx, int fd, void *dst, size_t size) {
   return (ssize_t)total_read;
 }
 
-static ssize_t pipefs_write(void *ctx, int fd, const void *data, size_t size) {
+static ssize_t pipefs_write(void *ctx, eos_vfs_file_t *file, const void *data, size_t size) {
   (void)ctx;
   if (!data && size > 0) {
     errno = EINVAL;
@@ -429,24 +393,20 @@ static ssize_t pipefs_write(void *ctx, int fd, const void *data, size_t size) {
   if (size == 0)
     return 0;
 
-  if (!s_pipe_table) {
+  if (!s_pipe_table || !file) {
     errno = ENODEV;
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
-  if (fd < 0 || (size_t)fd >= kv_size(s_pipe_table->fds) || !kv_A(s_pipe_table->fds, fd).in_use) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
-    errno = EBADF;
-    return -1;
-  }
-  int pipe_idx = kv_A(s_pipe_table->fds, fd).pipe_idx;
-  int flags = kv_A(s_pipe_table->fds, fd).flags;
+  pipe_file_t *pf = (pipe_file_t *)file;
+  int pipe_idx = pf->pipe_idx;
+  int flags = file->flags;
   if ((flags & O_ACCMODE) == O_RDONLY) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
     errno = EBADF;
     return -1;
   }
+
+  pthread_mutex_lock(&s_pipe_table->lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
@@ -501,25 +461,17 @@ static ssize_t pipefs_write(void *ctx, int fd, const void *data, size_t size) {
   return (ssize_t)total_written;
 }
 
-static int pipefs_fstat(void *ctx, int fd, struct stat *st) {
+static int pipefs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
   (void)ctx;
-  if (!st) {
+  if (!st || !file || !s_pipe_table) {
     errno = EINVAL;
     return -1;
   }
 
-  if (!s_pipe_table) {
-    errno = ENODEV;
-    return -1;
-  }
+  pipe_file_t *pf = (pipe_file_t *)file;
+  int pipe_idx = pf->pipe_idx;
 
   pthread_mutex_lock(&s_pipe_table->lock);
-  if (fd < 0 || (size_t)fd >= kv_size(s_pipe_table->fds) || !kv_A(s_pipe_table->fds, fd).in_use) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
-    errno = EBADF;
-    return -1;
-  }
-  int pipe_idx = kv_A(s_pipe_table->fds, fd).pipe_idx;
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
@@ -605,23 +557,24 @@ static int pipefs_unlink(void *ctx, const char *path) {
   return 0;
 }
 
-static DIR *pipefs_opendir(void *ctx, const char *path) {
+static int pipefs_opendir(void *ctx, const char *path, eos_vfs_dir_t **out_dir) {
   (void)ctx;
   if (!path || (strcmp(path, "/") != 0 && strcmp(path, "") != 0)) {
     errno = ENOTDIR;
-    return NULL;
+    return -1;
   }
 
-  pipe_dir_t *dir = eos_psram_calloc_prefer(1, sizeof(pipe_dir_t));
+  pipe_dir_t *dir = eos_vfs_dir_alloc(NULL, sizeof(pipe_dir_t));
   if (!dir) {
     errno = ENOMEM;
-    return NULL;
+    return -1;
   }
   dir->idx = 0;
-  return (DIR *)dir;
+  *out_dir = &dir->base;
+  return 0;
 }
 
-static struct dirent *pipefs_readdir(void *ctx, DIR *pdir) {
+static struct dirent *pipefs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
   (void)ctx;
   pipe_dir_t *dir = (pipe_dir_t *)pdir;
   if (!dir || !s_pipe_table) {
@@ -646,30 +599,24 @@ static struct dirent *pipefs_readdir(void *ctx, DIR *pdir) {
   return NULL;
 }
 
-static long pipefs_telldir(void *ctx, DIR *pdir) {
+static int pipefs_closedir(void *ctx, eos_vfs_dir_t *pdir) {
   (void)ctx;
-  pipe_dir_t *dir = (pipe_dir_t *)pdir;
-  if (!dir)
-    return -1;
-  return (long)dir->idx;
-}
-
-static void pipefs_seekdir(void *ctx, DIR *pdir, long offset) {
-  (void)ctx;
-  pipe_dir_t *dir = (pipe_dir_t *)pdir;
-  if (!dir)
-    return;
-  dir->idx = (offset < 0) ? 0 : (uint32_t)offset;
-}
-
-static int pipefs_closedir(void *ctx, DIR *pdir) {
-  (void)ctx;
-  if (!pdir) {
-    errno = EBADF;
-    return -1;
-  }
-  free(pdir);
+  (void)pdir;
   return 0;
+}
+
+static void pipefs_seekdir(void *ctx, eos_vfs_dir_t *pdir, long loc) {
+  (void)ctx;
+  pipe_dir_t *dir = (pipe_dir_t *)pdir;
+  if (!dir) return;
+  dir->idx = (uint32_t)loc;
+}
+
+static long pipefs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
+  (void)ctx;
+  pipe_dir_t *dir = (pipe_dir_t *)pdir;
+  if (!dir) return -1;
+  return (long)dir->idx;
 }
 
 ///////////////////////////////////////////////////////////////////
@@ -752,27 +699,26 @@ void eos_pipefs_init(void) {
   pthread_mutexattr_destroy(&attr);
 
   kv_init(s_pipe_table->nodes);
-  kv_init(s_pipe_table->fds);
   s_pipe_table->auto_seq = 0;
   s_pipe_table->initialized = true;
   eos_proc_heap_tracking_restore(prev_h);
 
-  static const esp_vfs_t vfs = {
-      .flags = ESP_VFS_FLAG_CONTEXT_PTR,
-      .open_p = pipefs_open,
-      .close_p = pipefs_close,
-      .read_p = pipefs_read,
-      .write_p = pipefs_write,
-      .stat_p = pipefs_stat,
-      .fstat_p = pipefs_fstat,
-      .unlink_p = pipefs_unlink,
-      .opendir_p = pipefs_opendir,
-      .readdir_p = pipefs_readdir,
-      .telldir_p = pipefs_telldir,
-      .seekdir_p = pipefs_seekdir,
-      .closedir_p = pipefs_closedir,
+  static const eos_vfs_ops_t ops = {
+      .open = pipefs_open,
+      .close = pipefs_close,
+      .read = pipefs_read,
+      .write = pipefs_write,
+      .stat = pipefs_stat,
+      .fstat = pipefs_fstat,
+      .unlink = pipefs_unlink,
+      .opendir = pipefs_opendir,
+      .readdir = pipefs_readdir,
+      .closedir = pipefs_closedir,
+      .seekdir = pipefs_seekdir,
+      .telldir = pipefs_telldir,
   };
 
-  esp_vfs_register(EOS_PIPEFS_ROOT, &vfs, NULL);
+  mkdir(EOS_PIPEFS_ROOT, 0755);
+  eos_vfs_register_ops(EOS_PIPEFS_ROOT, &ops, NULL);
   EOS_LOGI("pipefs mounted at %s\n", EOS_PIPEFS_ROOT);
 }

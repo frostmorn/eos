@@ -1871,8 +1871,7 @@ eos_proc_fd_snapshot_t eos_proc_snapshot_fds(void) {
   snap.valid = true;
   size_t n_fds = kv_size(proc->fds);
   if (n_fds > 0) {
-    extern void *__real_heap_caps_aligned_alloc_base(size_t, size_t, uint32_t);
-    snap.fds = __real_heap_caps_aligned_alloc_base(4, n_fds * sizeof(int), MALLOC_CAP_DEFAULT);
+    snap.fds = eos_psram_malloc_prefer(n_fds * sizeof(int));
     if (snap.fds) {
       for (size_t j = 0; j < n_fds; j++) {
         snap.fds[j] = kv_A(proc->fds, j);
@@ -1883,8 +1882,7 @@ eos_proc_fd_snapshot_t eos_proc_snapshot_fds(void) {
 
   size_t n_dirs = kv_size(proc->dirs);
   if (n_dirs > 0) {
-    extern void *__real_heap_caps_aligned_alloc_base(size_t, size_t, uint32_t);
-    snap.dirs = __real_heap_caps_aligned_alloc_base(4, n_dirs * sizeof(DIR *), MALLOC_CAP_DEFAULT);
+    snap.dirs = eos_psram_malloc_prefer(n_dirs * sizeof(DIR *));
     if (snap.dirs) {
       for (size_t j = 0; j < n_dirs; j++) {
         snap.dirs[j] = kv_A(proc->dirs, j);
@@ -1901,9 +1899,8 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
   if (!snap || !snap->valid) return;
   eos_proc_t *proc = eos_proc_current();
   if (!proc) {
-    extern void __real_heap_caps_free(void *);
-    if (snap->fds) __real_heap_caps_free(snap->fds);
-    if (snap->dirs) __real_heap_caps_free(snap->dirs);
+    if (snap->fds) eos_psram_free(snap->fds);
+    if (snap->dirs) eos_psram_free(snap->dirs);
     snap->fds = NULL;
     snap->dirs = NULL;
     snap->count = 0;
@@ -1962,13 +1959,12 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
     closedir(dirs_to_close[i]);
   }
 
-  extern void __real_heap_caps_free(void *);
   if (snap->fds) {
-    __real_heap_caps_free(snap->fds);
+    eos_psram_free(snap->fds);
     snap->fds = NULL;
   }
   if (snap->dirs) {
-    __real_heap_caps_free(snap->dirs);
+    eos_psram_free(snap->dirs);
     snap->dirs = NULL;
   }
   snap->count = 0;

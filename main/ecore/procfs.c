@@ -28,14 +28,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#define EOS_PROCFS_MAX_FDS 8
+#include "ecore/vfs.h"
 
 typedef struct {
+  eos_vfs_file_t base;
   char *data;
   size_t size;
   off_t offset;
-  bool in_use;
-} procfs_fd_t;
+} procfs_file_t;
 
 typedef enum {
   PROCFS_NODE_INVALID = 0,
@@ -60,7 +60,7 @@ typedef struct {
 } procfs_parsed_path_t;
 
 typedef struct {
-  uint32_t esp_idf_fs_index; // Must be first field for ESP-IDF VFS
+  eos_vfs_dir_t base;
   procfs_node_type_t dir_type;
   pid_t pid;
   uint32_t index;
@@ -68,8 +68,6 @@ typedef struct {
   kvec_psram_t(int) fds;
   struct dirent entry;
 } procfs_dir_t;
-
-static kvec_psram_t(procfs_fd_t) s_procfs_fds;
 
 static const char *s_proc_entries[] = {
     ".",
@@ -558,36 +556,6 @@ static char *procfs_gen_stat(void) {
   return sb.buf;
 }
 
-// ── VFS Implementation ─────────────────────────────────────────
-
-static int procfs_fd_alloc(char *data) {
-  if (!data) return -1;
-  for (size_t i = 0; i < kv_size(s_procfs_fds); i++) {
-    if (!kv_A(s_procfs_fds, i).in_use) {
-      kv_A(s_procfs_fds, i).data = data;
-      kv_A(s_procfs_fds, i).size = strlen(data);
-      kv_A(s_procfs_fds, i).offset = 0;
-      kv_A(s_procfs_fds, i).in_use = true;
-      return (int)i;
-    }
-  }
-  procfs_fd_t entry = {
-      .data = data,
-      .size = strlen(data),
-      .offset = 0,
-      .in_use = true,
-  };
-  int fd = (int)kv_size(s_procfs_fds);
-  kv_push(procfs_fd_t, s_procfs_fds, entry);
-  return fd;
-}
-
-static procfs_fd_t *procfs_fd_get(int fd) {
-  if (fd < 0 || (size_t)fd >= kv_size(s_procfs_fds) || !kv_A(s_procfs_fds, fd).in_use) {
-    return NULL;
-  }
-  return &kv_A(s_procfs_fds, fd);
-}
 
 // ── Dynamic PID Generators & Path Parsing ────────────────────────
 
@@ -808,7 +776,7 @@ static char *procfs_gen_pid_fd_info(eos_proc_t *p, int fd) {
   return sb.buf;
 }
 
-static int procfs_open(void *ctx, const char *path, int flags, int mode) {
+static int procfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_file_t **out_file) {
   (void)ctx;
   (void)mode;
 
@@ -911,68 +879,62 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode) {
     return -1;
   }
 
-  int fd = procfs_fd_alloc(content);
-  if (fd < 0) {
+  procfs_file_t *file = eos_vfs_file_alloc(NULL, sizeof(procfs_file_t), flags);
+  if (!file) {
     free(content);
     errno = ENFILE;
     return -1;
   }
-  return fd;
+
+  file->data = content;
+  file->size = strlen(content);
+  file->offset = 0;
+  *out_file = &file->base;
+  return file->base.fd;
 }
 
-static int procfs_close(void *ctx, int fd) {
+static int procfs_close(void *ctx, eos_vfs_file_t *file) {
   (void)ctx;
-  procfs_fd_t *e = procfs_fd_get(fd);
-  if (!e) {
-    errno = EBADF;
-    return -1;
+  procfs_file_t *pf = (procfs_file_t *)file;
+  if (pf && pf->data) {
+    free(pf->data);
+    pf->data = NULL;
   }
-  if (e->data) {
-    free(e->data);
-    e->data = NULL;
-  }
-  e->in_use = false;
-  e->size = 0;
-  e->offset = 0;
   return 0;
 }
 
-static ssize_t procfs_read(void *ctx, int fd, void *dst, size_t size) {
+static ssize_t procfs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t size) {
   (void)ctx;
-  procfs_fd_t *e = procfs_fd_get(fd);
-  if (!e) {
-    errno = EBADF;
-    return -1;
-  }
-  if (!dst || size == 0) return 0;
+  procfs_file_t *pf = (procfs_file_t *)file;
+  if (!pf || !pf->data || !dst || size == 0) return 0;
 
-  if (e->offset >= (off_t)e->size) {
+  if (pf->offset >= (off_t)pf->size) {
     return 0; // EOF
   }
 
-  size_t available = e->size - (size_t)e->offset;
+  size_t available = pf->size - (size_t)pf->offset;
   size_t to_copy = (size > available) ? available : size;
 
-  memcpy(dst, e->data + e->offset, to_copy);
-  e->offset += (off_t)to_copy;
+  memcpy(dst, pf->data + pf->offset, to_copy);
+  pf->offset += (off_t)to_copy;
   return (ssize_t)to_copy;
 }
 
-static off_t procfs_lseek(void *ctx, int fd, off_t offset, int whence) {
+static off_t procfs_lseek(void *ctx, eos_vfs_file_t *file, off_t offset, int whence) {
   (void)ctx;
-  procfs_fd_t *e = procfs_fd_get(fd);
-  if (!e) {
+  procfs_file_t *pf = (procfs_file_t *)file;
+  if (!pf) {
     errno = EBADF;
     return -1;
   }
 
-  off_t new_off = e->offset;
+  off_t new_off = pf->offset;
   if (whence == SEEK_SET) {
     new_off = offset;
   } else if (whence == SEEK_CUR) {
     new_off += offset;
   } else if (whence == SEEK_END) {
-    new_off = (off_t)e->size + offset;
+    new_off = (off_t)pf->size + offset;
   } else {
     errno = EINVAL;
     return -1;
@@ -983,21 +945,21 @@ static off_t procfs_lseek(void *ctx, int fd, off_t offset, int whence) {
     return -1;
   }
 
-  e->offset = new_off;
+  pf->offset = new_off;
   return new_off;
 }
 
-static int procfs_fstat(void *ctx, int fd, struct stat *st) {
+static int procfs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
   (void)ctx;
-  procfs_fd_t *e = procfs_fd_get(fd);
-  if (!e || !st) {
+  procfs_file_t *pf = (procfs_file_t *)file;
+  if (!pf || !st) {
     errno = EBADF;
     return -1;
   }
 
   memset(st, 0, sizeof(*st));
   st->st_mode = S_IFREG | 0444;
-  st->st_size = (off_t)e->size;
+  st->st_size = (off_t)pf->size;
   return 0;
 }
 
@@ -1076,12 +1038,12 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
   }
 }
 
-static DIR *procfs_opendir(void *ctx, const char *path) {
+static int procfs_opendir(void *ctx, const char *path, eos_vfs_dir_t **out_dir) {
   (void)ctx;
   procfs_parsed_path_t parsed;
   if (!procfs_parse_path(path, &parsed)) {
     errno = ENOENT;
-    return NULL;
+    return -1;
   }
 
   if (parsed.type != PROCFS_NODE_ROOT &&
@@ -1089,7 +1051,7 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
       parsed.type != PROCFS_NODE_PID_DIR &&
       parsed.type != PROCFS_NODE_PID_FD_DIR) {
     errno = ENOTDIR;
-    return NULL;
+    return -1;
   }
 
   // If opening PID or PID_FD dir, verify process exists
@@ -1097,14 +1059,14 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
     eos_proc_t p_check;
     if (!eos_proc_get_copy(parsed.pid, &p_check)) {
       errno = ENOENT;
-      return NULL;
+      return -1;
     }
   }
 
-  procfs_dir_t *dir = (procfs_dir_t *)eos_psram_calloc_prefer(1, sizeof(procfs_dir_t));
+  procfs_dir_t *dir = (procfs_dir_t *)eos_vfs_dir_alloc(NULL, sizeof(procfs_dir_t));
   if (!dir) {
     errno = ENOMEM;
-    return NULL;
+    return -1;
   }
 
   dir->dir_type = parsed.type;
@@ -1140,10 +1102,11 @@ static DIR *procfs_opendir(void *ctx, const char *path) {
     }
   }
 
-  return (DIR *)dir;
+  *out_dir = &dir->base;
+  return 0;
 }
 
-static struct dirent *procfs_readdir(void *ctx, DIR *pdir) {
+static struct dirent *procfs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
   (void)ctx;
   procfs_dir_t *dir = (procfs_dir_t *)pdir;
   if (!dir) {
@@ -1219,52 +1182,48 @@ static struct dirent *procfs_readdir(void *ctx, DIR *pdir) {
   return NULL;
 }
 
-static long procfs_telldir(void *ctx, DIR *pdir) {
-  (void)ctx;
-  procfs_dir_t *dir = (procfs_dir_t *)pdir;
-  if (!dir) return -1;
-  return (long)dir->index;
-}
-
-static void procfs_seekdir(void *ctx, DIR *pdir, long offset) {
-  (void)ctx;
-  procfs_dir_t *dir = (procfs_dir_t *)pdir;
-  if (!dir) return;
-  dir->index = (uint32_t)offset;
-}
-
-static int procfs_closedir(void *ctx, DIR *pdir) {
+static int procfs_closedir(void *ctx, eos_vfs_dir_t *pdir) {
   (void)ctx;
   if (pdir) {
     procfs_dir_t *dir = (procfs_dir_t *)pdir;
     kv_destroy(dir->pids);
     kv_destroy(dir->fds);
-    free(dir);
   }
   return 0;
+}
+
+static void procfs_seekdir(void *ctx, eos_vfs_dir_t *pdir, long loc) {
+  (void)ctx;
+  if (!pdir) return;
+  procfs_dir_t *dir = (procfs_dir_t *)pdir;
+  dir->index = (uint32_t)loc;
+}
+
+static long procfs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
+  (void)ctx;
+  if (!pdir) return -1;
+  procfs_dir_t *dir = (procfs_dir_t *)pdir;
+  return (long)dir->index;
 }
 
 // ── Initialization ────────────────────────────────────────────
 
 void eos_procfs_init(void) {
-  kv_init(s_procfs_fds);
-
-  static const esp_vfs_t vfs = {
-      .flags = ESP_VFS_FLAG_CONTEXT_PTR,
-      .open_p = procfs_open,
-      .close_p = procfs_close,
-      .read_p = procfs_read,
-      .lseek_p = procfs_lseek,
-      .fstat_p = procfs_fstat,
-      .stat_p = procfs_stat,
-      .opendir_p = procfs_opendir,
-      .readdir_p = procfs_readdir,
-      .seekdir_p = procfs_seekdir,
-      .telldir_p = procfs_telldir,
-      .closedir_p = procfs_closedir,
+  static const eos_vfs_ops_t ops = {
+      .open = procfs_open,
+      .close = procfs_close,
+      .read = procfs_read,
+      .lseek = procfs_lseek,
+      .fstat = procfs_fstat,
+      .stat = procfs_stat,
+      .opendir = procfs_opendir,
+      .readdir = procfs_readdir,
+      .closedir = procfs_closedir,
+      .seekdir = procfs_seekdir,
+      .telldir = procfs_telldir,
   };
 
   mkdir(EOS_PROCFS_ROOT, 0755);
-  esp_vfs_register(EOS_PROCFS_ROOT, &vfs, NULL);
+  eos_vfs_register_ops(EOS_PROCFS_ROOT, &ops, NULL);
   EOS_LOGI("procfs mounted at %s", EOS_PROCFS_ROOT);
 }

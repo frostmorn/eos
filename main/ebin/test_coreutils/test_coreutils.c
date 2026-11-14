@@ -7,12 +7,16 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+extern int lstat(const char *path, struct stat *st);
+
 // Forward declarations of ebin entry points
 extern int sleep_main(int argc, char **argv);
 extern int rm_main(int argc, char **argv);
 extern int cp_main(int argc, char **argv);
 extern int mv_main(int argc, char **argv);
 extern int tree_main(int argc, char **argv);
+extern int ln_main(int argc, char **argv);
+extern int readlink_main(int argc, char **argv);
 
 typedef struct {
   int passed;
@@ -520,10 +524,105 @@ static void test_tree_suite(test_ctx_t *ctx) {
   }
 }
 
+// ── 6. Hard Link & Symlink Tests ─────────────────────────────────
+
+static void test_links_suite(test_ctx_t *ctx) {
+  printf("--- Link & Symlink Tests ---\n");
+
+  // Hard link test: shared data and nlink count
+  {
+    const char *orig = "/tmp/hl_orig.txt";
+    const char *link_dst = "/tmp/hl_link.txt";
+    unlink(orig);
+    unlink(link_dst);
+
+    bool w = helper_write_file(orig, "shared_hardlink_data");
+    report_test(ctx, "ln: write original file", w);
+
+    char *argv_ln[] = {"ln", (char *)orig, (char *)link_dst, NULL};
+    int ret_ln = ln_main(3, argv_ln);
+    report_test(ctx, "ln: create hard link", ret_ln == 0);
+
+    struct stat st1, st2;
+    int s1 = stat(orig, &st1);
+    int s2 = stat(link_dst, &st2);
+    report_test(ctx, "ln: stat original has nlink == 2", s1 == 0 && st1.st_nlink == 2);
+    report_test(ctx, "ln: stat link has nlink == 2", s2 == 0 && st2.st_nlink == 2);
+    report_test(ctx, "ln: link content matches original", helper_read_matches(link_dst, "shared_hardlink_data"));
+
+    // Modify original and verify link sees changes
+    helper_write_file(orig, "modified_hardlink_data");
+    report_test(ctx, "ln: modified content reflects on link", helper_read_matches(link_dst, "modified_hardlink_data"));
+
+    // Unlink original and verify link persists
+    unlink(orig);
+    report_test(ctx, "ln: link persists after unlinking original", helper_read_matches(link_dst, "modified_hardlink_data"));
+    report_test(ctx, "ln: link nlink decrements to 1", stat(link_dst, &st2) == 0 && st2.st_nlink == 1);
+
+    unlink(link_dst);
+  }
+
+  // Symlink test: lstat, stat, readlink, cat through link
+  {
+    const char *target = "/tmp/sl_target.txt";
+    const char *slink = "/tmp/sl_link.txt";
+    unlink(target);
+    unlink(slink);
+
+    bool w = helper_write_file(target, "symlink_payload_777");
+    report_test(ctx, "ln -s: write target file", w);
+
+    char *argv_sl[] = {"ln", "-s", (char *)target, (char *)slink, NULL};
+    int ret_sl = ln_main(4, argv_sl);
+    report_test(ctx, "ln -s: create symbolic link", ret_sl == 0);
+
+    struct stat st_lstat, st_stat;
+    int r_lstat = lstat(slink, &st_lstat);
+    int r_stat = stat(slink, &st_stat);
+    report_test(ctx, "ln -s: lstat detects S_IFLNK", r_lstat == 0 && S_ISLNK(st_lstat.st_mode));
+    report_test(ctx, "ln -s: stat resolves target S_IFREG", r_stat == 0 && S_ISREG(st_stat.st_mode));
+
+    // readlink test via C API
+    char rlink_buf[128];
+    ssize_t rlen = readlink(slink, rlink_buf, sizeof(rlink_buf) - 1);
+    if (rlen >= 0) rlink_buf[rlen] = '\0';
+    report_test(ctx, "readlink: returns correct target path", rlen > 0 && strcmp(rlink_buf, target) == 0);
+
+    // readlink test via ebin CLI
+    char *argv_rl[] = {"readlink", (char *)slink, NULL};
+    int ret_rl = readlink_main(2, argv_rl);
+    report_test(ctx, "readlink: CLI invocation returns 0", ret_rl == 0);
+
+    // Reading file through symlink
+    report_test(ctx, "ln -s: reading through symlink delivers payload", helper_read_matches(slink, "symlink_payload_777"));
+
+    unlink(slink);
+    unlink(target);
+  }
+
+  // Symlink loop test: cycle detection ELOOP
+  {
+    const char *loopA = "/tmp/loopA";
+    const char *loopB = "/tmp/loopB";
+    unlink(loopA);
+    unlink(loopB);
+
+    symlink(loopB, loopA);
+    symlink(loopA, loopB);
+
+    struct stat st;
+    int ret = stat(loopA, &st);
+    report_test(ctx, "symlink: circular loop triggers ELOOP", ret != 0 && errno == ELOOP);
+
+    unlink(loopA);
+    unlink(loopB);
+  }
+}
+
 // ── Entry Point ────────────────────────────────────────────────
 
 int test_coreutils_main(int argc, char **argv) {
-  printf("\n=== Running Coreutils (rm, cp, mv, sleep, tree) Unit Tests ===\n");
+  printf("\n=== Running Coreutils (rm, cp, mv, sleep, tree, ln, readlink) Unit Tests ===\n");
   test_ctx_t ctx = {0, 0};
 
   test_sleep_suite(&ctx);
@@ -531,6 +630,7 @@ int test_coreutils_main(int argc, char **argv) {
   test_cp_suite(&ctx);
   test_mv_suite(&ctx);
   test_tree_suite(&ctx);
+  test_links_suite(&ctx);
 
   printf("\nCoreutils Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);
   return (ctx.failed == 0) ? 0 : 1;

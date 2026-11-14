@@ -12,7 +12,7 @@ This documentation center is structured into dedicated topic directories for eve
 docs/
 ├── Readme.md                          # Master documentation index & quick reference
 ├── binaries/                          # Executable binaries & execution environment
-│   ├── catalog.md                     # Everyday command catalog (all 55 binaries with options & syntax)
+│   ├── catalog.md                     # Everyday command catalog (all 57 binaries with options & syntax)
 │   ├── execution-architecture.md      # BinFS (/bin), statically linked .eos_bins, ush shell, execve
 │   ├── manifest-flags-and-stacks.md   # eos_bin_t flags, PSRAM stack routing, graceful SRAM fallback
 │   └── elf-applications.md            # Dynamic ELF loading, standalone apps, compilation & runtime symbols
@@ -47,8 +47,8 @@ docs/
 
 ## 1. Binaries & Command-Line Tools (`docs/binaries/`)
 
-* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 55 native binaries:
-  * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ls`, `mkdir`, `mv`, `pwd`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`.
+* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 57 native binaries:
+  * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`.
   * **Checksums & Encoding:** `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `cksum`, `base64`.
   * **System & Shell:** `ush`, `launcher`, `mount`, `umount`.
   * **Hardware & Bus Control:** `battery`, `devctl`, `lsi2c`, `soldercheck`.

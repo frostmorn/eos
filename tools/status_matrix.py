@@ -45,6 +45,22 @@ FEATURE_MATRIX = [
     },
     {
         "category": "Kernel & Filesystem",
+        "feature": "Centralized VFS & PSRAM Descriptors",
+        "state": "Implemented",
+        "test_suite": "coreutils, pratt, procfs",
+        "env": "QEMU, Lilka, JC",
+        "notes": "Central dispatcher with dynamic kvec_psram_t tables, eliminating esp_vfs_register across EOS filesystems"
+    },
+    {
+        "category": "Kernel & Filesystem",
+        "feature": "Symlinks, Hard Links & /dev/null",
+        "state": "Implemented",
+        "test_suite": "coreutils, pratt",
+        "env": "QEMU, Lilka, JC",
+        "notes": "POSIX link/unlink/symlink/readlink/lstat, ELOOP cutoff, /dev/null & /dev/zero pseudo-character devices"
+    },
+    {
+        "category": "Kernel & Filesystem",
         "feature": "Virtual procfs (/proc)",
         "state": "Implemented",
         "test_suite": "procfs (19/19 tests)",
@@ -151,12 +167,12 @@ FEATURE_MATRIX = [
 
 TEST_SUITE_SPECS = [
     {"suite": "proc", "name": "Process Table, Syscalls & Lifecycle", "tag": "qemu", "asserts": 49, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "procfs", "name": "Virtual /proc Filesystem", "tag": "qemu", "asserts": 18, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "pratt", "name": "Shell & Pratt Parser", "tag": "qemu", "asserts": 27, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "procfs", "name": "Virtual /proc Filesystem", "tag": "qemu", "asserts": 20, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "pratt", "name": "Shell & Pratt Parser", "tag": "qemu", "asserts": 30, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "devctl", "name": "Device Control & DevTree", "tag": "qemu", "asserts": 63, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "gui", "name": "GUI Launcher & IPC", "tag": "qemu", "asserts": 1, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "emisc", "name": "Hierarchy & Math Utils", "tag": "qemu", "asserts": 1, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "coreutils", "name": "POSIX Core Utilities", "tag": "qemu", "asserts": 33, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "coreutils", "name": "POSIX Core Utilities", "tag": "qemu", "asserts": 40, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "hash", "name": "Cryptographic Hashes & Base64", "tag": "qemu", "asserts": 23, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "wlanctl", "name": "WLAN Radio & Sniffer", "tag": "hardware-only", "asserts": 17, "qemu": "SKIP", "lilka": "PASS", "jc": "PASS"},
     {"suite": "netctl", "name": "Network Management (ip vibe)", "tag": "hardware-only", "asserts": 30, "qemu": "SKIP", "lilka": "PASS", "jc": "PASS"},
@@ -297,8 +313,8 @@ def generate_markdown():
     md.append("\n")
 
     md.append("## 5. Architectural Quality Audits\n")
-    md.append("- **Declarative Layer Audit (`tools/layer_audit.py`):** 15/15 rules passed (`tools/layer_audit_rules.json`).")
-    md.append("- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 25/25 wrapped symbols documented and verified in `main/ewrap/`.")
+    md.append("- **Declarative Layer Audit (`tools/layer_audit.py`):** 16/16 rules passed (`tools/layer_audit_rules.json`).")
+    md.append("- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 34/34 wrapped symbols documented and verified in `main/ewrap/`.")
     md.append("- **Unused Code Tracking (`tools/unused_code_audit.py`):** Clean analysis of whole-archive core objects.\n")
 
     return "\n".join(md)

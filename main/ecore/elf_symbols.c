@@ -10,6 +10,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+extern int lstat(const char *path, struct stat *st);
+extern ssize_t readlink(const char *path, char *buf, size_t bufsiz);
+extern int symlink(const char *target, const char *linkpath);
+
 #include "SDL.h"
 #include "esp_elf.h"
 
@@ -48,6 +52,11 @@ static const struct esp_elfsym g_eos_posix_elfsyms[] = {
     ESP_ELFSYM_EXPORT(mkdir),
     ESP_ELFSYM_EXPORT(rmdir),
     ESP_ELFSYM_EXPORT(unlink),
+    ESP_ELFSYM_EXPORT(link),
+    ESP_ELFSYM_EXPORT(symlink),
+    ESP_ELFSYM_EXPORT(readlink),
+    ESP_ELFSYM_EXPORT(lstat),
+    ESP_ELFSYM_EXPORT(access),
     ESP_ELFSYM_EXPORT(rename),
     ESP_ELFSYM_EXPORT(chdir),
     ESP_ELFSYM_EXPORT(getcwd),

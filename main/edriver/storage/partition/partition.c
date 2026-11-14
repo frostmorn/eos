@@ -7,6 +7,7 @@
 #include "ecore/diskpart.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "ecore/vfs.h"
 #include "emisc/psram_alloc.h"
 #include "includes.h"
 
@@ -322,7 +323,7 @@ bool driver_storage_partition_fat_umount(eos_dev_t *dev) {
   EOS_LOGI("partition: unmounted %s from %s (pdrv=%d)", dev->name,
            state->mount_path, state->fat_pdrv);
 
-  esp_vfs_unregister(state->mount_path);
+  eos_vfs_unregister(state->mount_path);
 
   state->fat_mounted = false;
   state->fat_pdrv = 0;

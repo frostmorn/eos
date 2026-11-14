@@ -8,7 +8,7 @@ idf_component_register(
 )
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::mbedtls)
 idf_build_set_property(
-    COMPILE_OPTIONS "-DFD_SETSIZE=128" APPEND
+    COMPILE_OPTIONS "-DFD_SETSIZE=64" APPEND
 )
 
 target_link_libraries(
@@ -26,7 +26,13 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=opendir"
 "-Wl,--wrap=readdir"
 "-Wl,--wrap=closedir"
+"-Wl,--wrap=seekdir"
+"-Wl,--wrap=telldir"
+"-Wl,--wrap=rewinddir"
 "-Wl,--wrap=mkdir"
+"-Wl,--wrap=rmdir"
+"-Wl,--wrap=access"
+"-Wl,--wrap=ioctl"
 "-Wl,--wrap=system"
 "-Wl,--wrap=chdir"
 "-Wl,--wrap=getcwd"

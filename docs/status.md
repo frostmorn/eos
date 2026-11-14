@@ -17,12 +17,12 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | Test Suite | Category Tag | Assertions | QEMU (`esp32s3_qemu`) | Lilka (`lilka_v23`) | JC (`jc4880p443c_i_w_y`) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **`proc`** (Process Table, Syscalls & Lifecycle) | `qemu` | 49 | **PASS** | **PASS** | **PASS** |
-| **`procfs`** (Virtual /proc Filesystem) | `qemu` | 18 | **PASS** | **PASS** | **PASS** |
-| **`pratt`** (Shell & Pratt Parser) | `qemu` | 27 | **PASS** | **PASS** | **PASS** |
+| **`procfs`** (Virtual /proc Filesystem) | `qemu` | 20 | **PASS** | **PASS** | **PASS** |
+| **`pratt`** (Shell & Pratt Parser) | `qemu` | 30 | **PASS** | **PASS** | **PASS** |
 | **`devctl`** (Device Control & DevTree) | `qemu` | 63 | **PASS** | **PASS** | **PASS** |
 | **`gui`** (GUI Launcher & IPC) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
 | **`emisc`** (Hierarchy & Math Utils) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
-| **`coreutils`** (POSIX Core Utilities) | `qemu` | 33 | **PASS** | **PASS** | **PASS** |
+| **`coreutils`** (POSIX Core Utilities) | `qemu` | 40 | **PASS** | **PASS** | **PASS** |
 | **`hash`** (Cryptographic Hashes & Base64) | `qemu` | 23 | **PASS** | **PASS** | **PASS** |
 | **`wlanctl`** (WLAN Radio & Sniffer) | `hardware-only` | 17 | SKIP | **PASS** | **PASS** |
 | **`netctl`** (Network Management (ip vibe)) | `hardware-only` | 30 | SKIP | **PASS** | **PASS** |
@@ -63,6 +63,8 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | Category | Subsystem / Feature | Implementation State | Test Suite | Verified Environments | Notes |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | Kernel & Filesystem | **Process Table & Context** | **Implemented** | `proc (49/49 tests)` | QEMU, Lilka, JC | Unified process table, waitpid, pgid, sid, orphan reparenting, pipe/redir, 1000 cycle stress |
+| Kernel & Filesystem | **Centralized VFS & PSRAM Descriptors** | **Implemented** | `coreutils, pratt, procfs` | QEMU, Lilka, JC | Central dispatcher with dynamic kvec_psram_t tables, eliminating esp_vfs_register across EOS filesystems |
+| Kernel & Filesystem | **Symlinks, Hard Links & /dev/null** | **Implemented** | `coreutils, pratt` | QEMU, Lilka, JC | POSIX link/unlink/symlink/readlink/lstat, ELOOP cutoff, /dev/null & /dev/zero pseudo-character devices |
 | Kernel & Filesystem | **Virtual procfs (/proc)** | **Implemented** | `procfs (19/19 tests)` | QEMU, Lilka, JC | /proc/{version,meminfo,drivers,devices,mounts,interrupts,fds,gpio,heapinfo,cpuinfo,uptime} |
 | Kernel & Filesystem | **Shell & Pratt Parser** | **Implemented** | `pratt (27/27 tests)` | QEMU, Lilka, JC | Precedence, ;, &&, ||, >, >>, quotes, escaping, globbing, & |
 | Kernel & Filesystem | **Device Control (devctl)** | **Implemented** | `devctl (51-59 tests)` | QEMU, Lilka, JC | Topological DevTree attach, detach, info, and dynamic lifecycle re-attachment |
@@ -80,6 +82,6 @@ This document tracks the implementation, test coverage, and hardware verificatio
 
 ## 5. Architectural Quality Audits
 
-- **Declarative Layer Audit (`tools/layer_audit.py`):** 15/15 rules passed (`tools/layer_audit_rules.json`).
-- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 25/25 wrapped symbols documented and verified in `main/ewrap/`.
+- **Declarative Layer Audit (`tools/layer_audit.py`):** 16/16 rules passed (`tools/layer_audit_rules.json`).
+- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 34/34 wrapped symbols documented and verified in `main/ewrap/`.
 - **Unused Code Tracking (`tools/unused_code_audit.py`):** Clean analysis of whole-archive core objects.
