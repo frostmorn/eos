@@ -58,15 +58,6 @@ def get_target_cfg():
 
 
 def jtag_reset(port):
-    print(f"{Colors.CYAN}Resetting target via esptool ({port})...{Colors.RESET}")
-    try:
-        subprocess.run([sys.executable, "-m", "esptool", "--port", port, "run"],
-                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
-        time.sleep(1.0)
-        return
-    except Exception:
-        pass
-
     loc, serial_num = get_port_usb_info(port)
     cfg = get_target_cfg()
     cmd = [
@@ -79,7 +70,7 @@ def jtag_reset(port):
     print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
-        time.sleep(1.5)
+        time.sleep(1.0)
     except Exception as e:
         print(f"{Colors.YELLOW}Warning: OpenOCD reset failed: {e}{Colors.RESET}")
 
@@ -725,6 +716,17 @@ class EOSTestHarness:
         self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net &",
                    r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.5)
         time.sleep(1.0)
+        self.check(suite, "Launch lvgl_term through launcher IPC", "launcher lvgl_term &",
+                   r"(requesting launch of 'lvgl_term'|Starting 'lvgl_term')", wait=2.5)
+        time.sleep(1.0)
+        self.check(suite, "lvgl_term help banner", "lvgl_term -h",
+                   r"Usage:\s+<cmd> \| lvgl_term", wait=2.0)
+        self.check(suite, "lvgl_term execution (-c and -t)",
+                   "lvgl_term -c \"echo __TERM_STREAM_OK__\" -t 400",
+                   r"(__TERM_STREAM_OK__|Terminal Viewer|exit 0)", wait=2.5)
+        self.check(suite, "lvgl_term piped input streaming",
+                   "echo __PIPED_TERM_OK__ | lvgl_term -t 400",
+                   r"(__PIPED_TERM_OK__|Piped Stream Output|done)", wait=2.5)
 
     def test_emisc(self):
         suite = "emisc"
