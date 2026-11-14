@@ -56,6 +56,11 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 | `heap_caps_realloc_base` | `main/ewrap/heap_caps.c` | Updates tracked allocation pointers in process context upon reallocation. | Core ESP-IDF heap reallocator backend. | `tools/hardware_test.py --suite emisc` |
 | `heap_caps_free` | `main/ewrap/heap_caps.c` | Removes tracked memory block from process context and frees underlying heap memory. | Core ESP-IDF heap free backend. | `tools/hardware_test.py --suite emisc` |
 | `usb_serial_jtag_is_connected` | `main/ewrap/reent_syscalls.c` | Overrides ESP-IDF USB Serial/JTAG SOF monitor to keep console VFS active across JTAG resets. | ESP-IDF USB Serial/JTAG connection monitor. | Hardware testing on ESP32-S3 / ESP32-P4 |
+| `lwip_socket` | `main/ewrap/socket.c` | Registers exit cleanup hook on socket descriptor in process context for auto-close tracking. | Core lwIP socket allocation. | `tools/hardware_test.py --suite leaks` |
+| `lwip_accept` | `main/ewrap/socket.c` | Registers exit cleanup hook on accepted client socket descriptor for auto-close tracking. | Core lwIP socket accept handler. | `tools/hardware_test.py --suite leaks` |
+| `lwip_close` | `main/ewrap/socket.c` | Cancels exit cleanup hook on socket descriptor upon explicit closure. | Core lwIP socket close handler. | `tools/hardware_test.py --suite leaks` |
+| `esp_timer_create` | `main/ewrap/esp_timer.c` | Registers exit cleanup hook on high-resolution timer handle in process context. | ESP-IDF esp_timer instance initialization. | `tools/hardware_test.py --suite leaks` |
+| `esp_timer_delete` | `main/ewrap/esp_timer.c` | Cancels exit cleanup hook on high-resolution timer handle upon explicit deletion. | ESP-IDF esp_timer deletion handler. | `tools/hardware_test.py --suite leaks` |
 
 ---
 

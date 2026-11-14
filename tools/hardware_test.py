@@ -282,6 +282,26 @@ class EOSTestHarness:
         self.check(suite, "System uptime in /proc/uptime", "cat /proc/uptime", r"uptime:\s+\d+s[\s\S]+reset reason:")
         self.check(suite, "/proc/stat cpu and irq lines", "cat /proc/stat", r"cpu\s+\d+\s+\d+\s+\d+\s+\d+[\s\S]+irq\s+\d+")
         self.check(suite, "time utility executes", "time -p echo eos_time_ok", r"eos_time_ok[\s\S]+real\s+[0-9\.]+")
+        self.check(suite, "time execution accounting with sleep (O2)", "time sleep 0.2",
+                   r"real\s+\d+m0\.2\d+s[\s\S]+wait\s+\d+m0\.20\ds", wait=3.0)
+        self.check(suite, "time posix format with sleep (O2)", "time -p sleep 0.2",
+                   r"real\s+0\.2\d[\s\S]+user\s+0\.0\d[\s\S]+sys\s+0\.00", wait=3.0)
+        self.check(suite, "time help flag", "time --help", r"Usage:\s+time\s+\[-p\]")
+
+        # /proc/stat idle tick progression check (O1)
+        stat_out1 = self.run_cmd("cat /proc/stat")
+        m1 = re.search(r"cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", stat_out1)
+        self.run_cmd("sleep 0.2")
+        stat_out2 = self.run_cmd("cat /proc/stat")
+        m2 = re.search(r"cpu\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", stat_out2)
+        if m1 and m2 and int(m2.group(4)) > int(m1.group(4)):
+            print(f"  [{Colors.GREEN}PASS{Colors.RESET}] /proc/stat idle tick advancement (O1)")
+            self.passed += 1
+            self.suite_counts[suite]["pass"] += 1
+        else:
+            print(f"  [{Colors.RED}FAIL{Colors.RESET}] /proc/stat idle tick advancement (O1)")
+            self.failed += 1
+            self.suite_counts[suite]["fail"] += 1
 
     def test_pratt_parser(self):
         suite = "pratt"
@@ -350,6 +370,15 @@ class EOSTestHarness:
 
         # 9. Background Execution (&)
         self.check(suite, "Background execution (&)", "echo bg_task &", r"bg_task")
+
+        # 10. Failure Resilience & Boundary Recovery (B1)
+        self.check(suite, "Unknown command error and shell recovery (B1)",
+                   "nonexistent_cmd_xyz ; echo recovered_after_notfound",
+                   r"(not found|No such file)[\s\S]+recovered_after_notfound")
+        self.check(suite, "Consecutive semicolons handling (B1)",
+                   ";; echo semis_ok", r"semis_ok")
+        self.check(suite, "Leading semicolon handling (B1)",
+                   "; echo leading_semi_ok", r"leading_semi_ok")
 
     def test_devctl(self):
         suite = "devctl"
@@ -447,6 +476,13 @@ class EOSTestHarness:
             self.check(suite, "devctl devices lists battery0", "devctl devices", r"battery0\s+power/battery")
             self.check(suite, "devctl info battery0", "devctl info battery0", r"Driver:\s+power/battery")
             self.check(suite, "Query battery status via battery CLI", "battery", r"Battery:")
+
+        self.check(suite, "lsi2c usage / help", "lsi2c --help", r"Usage:\s+lsi2c")
+        if "i2c" in devctl_devs:
+            self.check(suite, "devctl devices lists i2c bus", "devctl devices", r"i2c\s+bus/i2c")
+            self.check(suite, "devctl info i2c", "devctl info i2c", r"Driver:\s+bus/i2c")
+            self.check(suite, "lsi2c without probe lists device nodes", "lsi2c --no-probe", r"Device nodes in /dev/i2c")
+            self.check(suite, "lsi2c wire probe scan executes cleanly", "lsi2c", r"Scanning I2C bus: /dev/i2c", wait=4.0)
         # Comprehensive lifecycle test: detach all present devices and reattach them back
         self.test_devtree_detach_reattach_cycle()
 
@@ -735,6 +771,13 @@ class EOSTestHarness:
         self.check(suite, "rm -r removes directory tree", "rm -r -v /tmp/h_rm_dir", r"removed directory '/tmp/h_rm_dir'", not_pattern=r"cannot")
         self.check(suite, "rm -r directory is gone", "ls /tmp", r"^((?!h_rm_dir).)*$")
 
+        # rmdir on non-empty directory fails (F4)
+        self.run_cmd("mkdir /tmp/h_ne_dir")
+        self.run_cmd("echo sub > /tmp/h_ne_dir/sub.txt")
+        self.check(suite, "rmdir non-empty directory fails (F4)", "rmdir /tmp/h_ne_dir", r"Directory not empty")
+        self.check(suite, "rm -rf removes non-empty directory tree (F4)", "rm -rf /tmp/h_ne_dir", r".*", not_pattern=r"(cannot|error)")
+        self.check(suite, "rmdir target directory is gone (F4)", "ls /tmp", r"^((?!h_ne_dir).)*$")
+
         # 4. Shell Integration: cp tests
         self.run_cmd("echo cp_payload_888 > /tmp/h_cp_src.txt")
         self.check(suite, "cp file copy", "cp -v /tmp/h_cp_src.txt /tmp/h_cp_dst.txt", r"'/tmp/h_cp_src\.txt' -> '/tmp/h_cp_dst\.txt'", not_pattern=r"cannot")
@@ -799,8 +842,30 @@ class EOSTestHarness:
         self.run_cmd("ln -s /tmp/h_loop1 /tmp/h_loop2")
         self.check(suite, "cat detects symlink loop without hang", "cat /tmp/h_loop1", r"(Too many|levels|failed|error|cannot|Can't)", wait=3.0)
 
+        # Multi-hop symlink resolution and loop/depth limits (V6)
+        self.run_cmd("echo symlink_chain_data > /tmp/h_target.txt")
+        self.run_cmd("ln -s /tmp/h_target.txt /tmp/h_s1")
+        self.run_cmd("ln -s /tmp/h_s1 /tmp/h_s2")
+        self.run_cmd("ln -s /tmp/h_s2 /tmp/h_s3")
+        self.run_cmd("ln -s /tmp/h_s3 /tmp/h_s4")
+        self.run_cmd("ln -s /tmp/h_s4 /tmp/h_s5")
+        self.run_cmd("ln -s /tmp/h_s5 /tmp/h_s6")
+        self.run_cmd("ln -s /tmp/h_s6 /tmp/h_s7")
+        self.check(suite, "cat resolves 7-hop symlink chain (V6)", "cat /tmp/h_s7", r"symlink_chain_data")
+        self.run_cmd("ln -s /tmp/h_s7 /tmp/h_s8")
+        self.check(suite, "cat detects symlink depth cutoff at 8 hops (V6)", "cat /tmp/h_s8",
+                   r"Too many symbolic links")
+        self.run_cmd("rm -f /tmp/h_s* /tmp/h_target.txt")
+
+        # Relative symlink resolution (V6)
+        self.run_cmd("echo rel_payload_777 > /tmp/h_rel_tgt.txt")
+        self.run_cmd("ln -s h_rel_tgt.txt /tmp/h_rel_sym")
+        self.check(suite, "readlink prints relative symlink target (V6)", "readlink /tmp/h_rel_sym",
+                   r"h_rel_tgt\.txt")
+        self.run_cmd("rm -f /tmp/h_rel_sym /tmp/h_rel_tgt.txt")
+
         # Cleanup all test artifacts
-        self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_* /tmp/h_hl_* /tmp/h_sl_* /tmp/h_loop*")
+        self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_* /tmp/h_hl_* /tmp/h_sl_* /tmp/h_loop* /tmp/h_ne_* /tmp/h_s*")
 
     def test_hash(self):
         suite = "hash"
@@ -858,14 +923,29 @@ class EOSTestHarness:
         self.check(suite, "base64 round trip restores the file", "base64 -d /tmp/h_hash.b64", r"eos_hash_payload")
         self.check(suite, "base64 --help", "base64 --help", r"Usage:\s+base64")
 
+        # 6. NIST empty file hash vectors (HS1)
+        self.run_cmd("touch /tmp/h_empty.txt")
+        self.check(suite, "sha256sum empty file matches NIST vector (HS1)", "sha256sum /tmp/h_empty.txt",
+                   r"^e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /tmp/h_empty\.txt\s*$")
+        self.check(suite, "md5sum empty file matches known vector (HS1)", "md5sum /tmp/h_empty.txt",
+                   r"^d41d8cd98f00b204e9800998ecf8427e  /tmp/h_empty\.txt\s*$")
+        self.check(suite, "sha1sum empty file matches known vector (HS1)", "sha1sum /tmp/h_empty.txt",
+                   r"^da39a3ee5e6b4b0d3255bfef95601890afd80709  /tmp/h_empty\.txt\s*$")
+
         # Cleanup
-        self.run_cmd("rm -f /tmp/h_hash.txt /tmp/h_hash.lst /tmp/h_hash.b64")
+        self.run_cmd("rm -f /tmp/h_hash.txt /tmp/h_hash.lst /tmp/h_hash.b64 /tmp/h_empty.txt")
 
     def test_proc(self):
         suite = "proc"
         print(f"\n{Colors.BOLD}=== 11. Process Table, Syscalls & Lifecycle Tests ==={Colors.RESET}")
         self.check(suite, "Process table test binary passes with 0 failures", "test_proc",
                    r"Process Table Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=25.0)
+
+    def test_leaks(self):
+        suite = "leaks"
+        print(f"\n{Colors.BOLD}=== 12. Cleanup-Hook Registry & Leak Reaping Tests (F03) ==={Colors.RESET}")
+        self.check(suite, "Cleanup hooks and leak reaping test binary passes with 0 failures", "test_leaks",
+                   r"Leak Registry Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=15.0)
 
     def print_summary(self):
         total = self.passed + self.failed
@@ -916,6 +996,7 @@ SUITE_REGISTRY = {
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},
     "hash": {"name": "Hash, Checksum & Base64 Tests", "tag": "qemu", "func": lambda h: h.test_hash()},
+    "leaks": {"name": "Cleanup-Hook Registry & Resource Leak Tests", "tag": "qemu", "func": lambda h: h.test_leaks()},
     "wlanctl": {"name": "WLAN Radio & Sniffer (wlanctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_wlanctl()},
     "netctl": {"name": "Network Interface Management (netctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_netctl()},
     "sdio": {"name": "Generic SDIO Driver Tests", "tag": "hardware-only", "func": lambda h: h.test_sdio()},

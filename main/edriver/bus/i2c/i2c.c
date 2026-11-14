@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <esp_err.h>
 #include <esp_log.h>
+#include <esp_rom_sys.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <stdlib.h>
@@ -590,6 +591,24 @@ ssize_t driver_bus_i2c_write(eos_dev_t *dev, int fd, const void *data,
   return (ssize_t)size;
 }
 
+static esp_err_t i2c_bus_probe_verified(i2c_master_bus_handle_t bus,
+                                        uint16_t addr, int timeout_ms) {
+  esp_err_t err = i2c_master_probe(bus, addr, timeout_ms);
+  if (err != ESP_OK) {
+    return err;
+  }
+  // Verify with subsequent probes to filter out transient noise / floating pin glitches.
+  // Real I2C devices reliably ACK every query; open/floating pins or noise spikes fail.
+  for (int retry = 0; retry < 2; retry++) {
+    esp_rom_delay_us(100);
+    esp_err_t v_err = i2c_master_probe(bus, addr, timeout_ms);
+    if (v_err != ESP_OK) {
+      return v_err;
+    }
+  }
+  return ESP_OK;
+}
+
 int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   if (!dev || !dev->state) {
     errno = EBADF;
@@ -656,7 +675,7 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return -1;
     }
     esp_log_level_set("i2c.master", ESP_LOG_NONE);
-    esp_err_t err = i2c_master_probe(st->i2c_bus, addr, timeout_ms);
+    esp_err_t err = i2c_bus_probe_verified(st->i2c_bus, addr, timeout_ms);
     if (err == ESP_OK && !st->dev_handles[addr]) {
       i2c_master_dev_handle_t dev_h = NULL;
       get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
@@ -691,7 +710,7 @@ int driver_bus_i2c_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
     esp_log_level_set("i2c.master", ESP_LOG_NONE);
     for (uint16_t addr = 0x08; addr <= 0x77; addr++) {
-      esp_err_t err = i2c_master_probe(st->i2c_bus, addr, timeout_ms);
+      esp_err_t err = i2c_bus_probe_verified(st->i2c_bus, addr, timeout_ms);
       if (err == ESP_OK) {
         if (scan->count < sizeof(scan->addrs)) {
           scan->addrs[scan->count++] = (uint8_t)addr;

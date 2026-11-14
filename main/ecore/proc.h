@@ -33,6 +33,16 @@ typedef struct {
   bool is_psram;
 } eos_memblock_t;
 
+// Cleanup hook definition (F03)
+typedef void (*eos_proc_cleanup_fn_t)(void *arg);
+
+typedef struct {
+  uint32_t hook_id;
+  eos_proc_cleanup_fn_t fn;
+  void *arg;
+  const char *desc;
+} eos_proc_cleanup_hook_t;
+
 struct eos_proc_t {
   // Identification & Hierarchy
   pid_t pid;
@@ -79,6 +89,11 @@ struct eos_proc_t {
   kvec_psram_t(TaskHandle_t) threads;
   pthread_cond_t wait_cond;
   int last_exit_status;
+
+  // Cleanup hooks (PSRAM-backed, LIFO execution on exit) (F03)
+  kvec_psram_t(eos_proc_cleanup_hook_t) cleanup_hooks;
+  pthread_mutex_t cleanup_mutex;
+  uint32_t next_hook_id;
 };
 
 // Process subsystem initialization (called from app_main)
@@ -106,6 +121,13 @@ int eos_proc_set_pgid(pid_t pid, pid_t pgid);
 pid_t eos_proc_setsid(pid_t pid);
 size_t eos_proc_count_active(void);
 size_t eos_proc_snapshot(eos_proc_t *out_table, size_t max_count);
+
+// Process exit cleanup hooks (F03)
+int eos_proc_on_exit(eos_proc_cleanup_fn_t fn, void *arg, const char *desc);
+int eos_proc_cancel_exit(int hook_id);
+int eos_proc_on_exit_pid(pid_t pid, eos_proc_cleanup_fn_t fn, void *arg, const char *desc);
+int eos_proc_cancel_exit_pid(pid_t pid, int hook_id);
+int eos_proc_cancel_exit_match(pid_t pid, eos_proc_cleanup_fn_t fn, void *arg);
 
 // POSIX API implementations
 pid_t eos_getpid(void);

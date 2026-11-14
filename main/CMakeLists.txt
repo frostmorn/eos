@@ -47,6 +47,11 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=usleep"
 "-Wl,--wrap=getpid"
 "-Wl,--wrap=usb_serial_jtag_is_connected"
+"-Wl,--wrap=lwip_socket"
+"-Wl,--wrap=lwip_accept"
+"-Wl,--wrap=lwip_close"
+"-Wl,--wrap=esp_timer_create"
+"-Wl,--wrap=esp_timer_delete"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

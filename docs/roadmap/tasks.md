@@ -14,7 +14,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 |---|---|---|---|---|---|---|
 | Done | F01 | IDF pin, wrapper inventory, CI matrix | Foundation | S | – | 0 |
 | Done | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
-| Pending | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
+| Done | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
 | Done | F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
 | Pending | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
 | Done | F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
@@ -88,7 +88,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F03 — Cleanup-hook registry
+### F03 — Cleanup-hook registry [DONE]
 `Size: M · Depends: F04`
 
 **Why:** The tracker covers fds, dirs and heap. The docs do not mention sockets, timers, spawned tasks, ISR registrations or device claims *(verify)*. T05, T11, T14 and T16 each add such a resource.

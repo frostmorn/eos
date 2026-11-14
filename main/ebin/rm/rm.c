@@ -9,6 +9,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+extern int lstat(const char *path, struct stat *st);
+
 static void print_usage(void) {
   printf("Usage: rm [-r|-R] [-f] [-v] FILE...\n"
          "Remove (unlink) the FILE(s).\n\n"
@@ -21,7 +23,7 @@ static void print_usage(void) {
 
 static int remove_recursive(const char *path, bool force, bool verbose) {
   struct stat st;
-  if (stat(path, &st) != 0) {
+  if (lstat(path, &st) != 0) {
     if (force && errno == ENOENT) {
       return 0;
     }

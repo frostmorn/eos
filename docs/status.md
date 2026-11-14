@@ -17,13 +17,13 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | Test Suite | Category Tag | Assertions | QEMU (`esp32s3_qemu`) | Lilka (`lilka_v23`) | JC (`jc4880p443c_i_w_y`) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **`proc`** (Process Table, Syscalls & Lifecycle) | `qemu` | 49 | **PASS** | **PASS** | **PASS** |
-| **`procfs`** (Virtual /proc Filesystem) | `qemu` | 20 | **PASS** | **PASS** | **PASS** |
-| **`pratt`** (Shell & Pratt Parser) | `qemu` | 30 | **PASS** | **PASS** | **PASS** |
+| **`procfs`** (Virtual /proc Filesystem) | `qemu` | 24 | **PASS** | **PASS** | **PASS** |
+| **`pratt`** (Shell & Pratt Parser) | `qemu` | 33 | **PASS** | **PASS** | **PASS** |
 | **`devctl`** (Device Control & DevTree) | `qemu` | 63 | **PASS** | **PASS** | **PASS** |
 | **`gui`** (GUI Launcher & IPC) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
 | **`emisc`** (Hierarchy & Math Utils) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
-| **`coreutils`** (POSIX Core Utilities) | `qemu` | 40 | **PASS** | **PASS** | **PASS** |
-| **`hash`** (Cryptographic Hashes & Base64) | `qemu` | 23 | **PASS** | **PASS** | **PASS** |
+| **`coreutils`** (POSIX Core Utilities) | `qemu` | 46 | **PASS** | **PASS** | **PASS** |
+| **`hash`** (Cryptographic Hashes & Base64) | `qemu` | 26 | **PASS** | **PASS** | **PASS** |
 | **`wlanctl`** (WLAN Radio & Sniffer) | `hardware-only` | 17 | SKIP | **PASS** | **PASS** |
 | **`netctl`** (Network Management (ip vibe)) | `hardware-only` | 30 | SKIP | **PASS** | **PASS** |
 | **`sdio`** (Generic SDIO Bus & Slot Attachment) | `hardware-only` | 9 | SKIP | SKIP | **PASS** |
@@ -63,17 +63,18 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | Category | Subsystem / Feature | Implementation State | Test Suite | Verified Environments | Notes |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | Kernel & Filesystem | **Process Table & Context** | **Implemented** | `proc (49/49 tests)` | QEMU, Lilka, JC | Unified process table, waitpid, pgid, sid, orphan reparenting, pipe/redir, 1000 cycle stress |
+| Kernel & Filesystem | **Cleanup-Hook Registry & Leak Reaping (F03)** | **Implemented** | `leaks (test_leaks)` | QEMU, Lilka, JC | LIFO process exit hooks, automatic socket/timer leak reaping, thread leak warnings |
 | Kernel & Filesystem | **Centralized VFS & PSRAM Descriptors** | **Implemented** | `coreutils, pratt, procfs` | QEMU, Lilka, JC | Central dispatcher with dynamic kvec_psram_t tables, eliminating esp_vfs_register across EOS filesystems |
 | Kernel & Filesystem | **Symlinks, Hard Links & /dev/null** | **Implemented** | `coreutils, pratt` | QEMU, Lilka, JC | POSIX link/unlink/symlink/readlink/lstat, ELOOP cutoff, /dev/null & /dev/zero pseudo-character devices |
-| Kernel & Filesystem | **Virtual procfs (/proc)** | **Implemented** | `procfs (19/19 tests)` | QEMU, Lilka, JC | /proc/{version,meminfo,drivers,devices,mounts,interrupts,fds,gpio,heapinfo,cpuinfo,uptime} |
-| Kernel & Filesystem | **Shell & Pratt Parser** | **Implemented** | `pratt (27/27 tests)` | QEMU, Lilka, JC | Precedence, ;, &&, ||, >, >>, quotes, escaping, globbing, & |
+| Kernel & Filesystem | **Virtual procfs (/proc)** | **Implemented** | `procfs (23-25 tests)` | QEMU, Lilka, JC | /proc/{version,meminfo,drivers,devices,mounts,interrupts,fds,gpio,heapinfo,cpuinfo,uptime,stat} |
+| Kernel & Filesystem | **Shell & Pratt Parser** | **Implemented** | `pratt (33/33 tests)` | QEMU, Lilka, JC | Precedence, ;, &&, ||, >, >>, quotes, escaping, globbing, &, B1 error recovery |
 | Kernel & Filesystem | **Device Control (devctl)** | **Implemented** | `devctl (51-59 tests)` | QEMU, Lilka, JC | Topological DevTree attach, detach, info, and dynamic lifecycle re-attachment |
 | Kernel & Filesystem | **Virtual RAM tmpfs (/tmp)** | **Implemented** | `coreutils, hash` | QEMU, Lilka, JC | Fast in-memory filesystem for temporary buffers, pipes, and IPC commands |
 | Kernel & Filesystem | **Dynamic kvec_psram_t vector** | **Implemented** | `emisc, membench` | QEMU, Lilka, JC | SPIRAM-backed dynamically resizing vectors with DRAM fallback |
 | Binary & Loader | **Dynamic Relocatable ELF Loader** | **Implemented** | `test_elf_loader (13/13 tests)` | QEMU, Lilka, JC | Loads standalone relocatable ELF binaries with manifest symbols and arguments |
 | Binary & Loader | **Embedded binfs (/bin)** | **Implemented** | `coreutils` | QEMU, Lilka, JC | Read-only filesystem exposing all builtin firmware utilities |
-| Userland & Utilities | **POSIX Core Utilities** | **Implemented** | `coreutils (33/33 tests)` | QEMU, Lilka, JC | rm, cp, mv, sleep, cat, echo, ls, mkdir, rmdir, tree, write |
-| Userland & Utilities | **Cryptographic Hashes & Base64** | **Implemented** | `hash (23/23 tests)` | QEMU, Lilka, JC | md5sum, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, cksum, base64 |
+| Userland & Utilities | **POSIX Core Utilities** | **Implemented** | `coreutils (46/46 tests)` | QEMU, Lilka, JC | rm, cp, mv, sleep, cat, echo, ls, mkdir, rmdir, tree, write |
+| Userland & Utilities | **Cryptographic Hashes & Base64** | **Implemented** | `hash (26/26 tests)` | QEMU, Lilka, JC | md5sum, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, cksum, base64 |
 | Userland & Utilities | **Memory Benchmark (membench)** | **Implemented** | `membench` | QEMU, Lilka, JC | Multi-block DRAM, DRAM DMA, and PSRAM throughput profiling with OOM guard |
 | Networking | **WLAN Radio & Sniffer (wlanctl)** | **Implemented** | `wlanctl (17/17 tests)` | Lilka, JC (Hardware) | Scan, channel config, 802.11 promiscuous packet capture, hopping, PCAP dump |
 | Networking | **Network Interface Management (netctl)** | **Implemented** | `netctl (30/30 tests)` | Lilka, JC (Hardware) | Linux 'ip' style link up/down, static IP configuration, virtual bridge port add/del |

@@ -45,6 +45,14 @@ FEATURE_MATRIX = [
     },
     {
         "category": "Kernel & Filesystem",
+        "feature": "Cleanup-Hook Registry & Leak Reaping (F03)",
+        "state": "Implemented",
+        "test_suite": "leaks (test_leaks)",
+        "env": "QEMU, Lilka, JC",
+        "notes": "LIFO process exit hooks, automatic socket/timer leak reaping, thread leak warnings"
+    },
+    {
+        "category": "Kernel & Filesystem",
         "feature": "Centralized VFS & PSRAM Descriptors",
         "state": "Implemented",
         "test_suite": "coreutils, pratt, procfs",
@@ -63,17 +71,17 @@ FEATURE_MATRIX = [
         "category": "Kernel & Filesystem",
         "feature": "Virtual procfs (/proc)",
         "state": "Implemented",
-        "test_suite": "procfs (19/19 tests)",
+        "test_suite": "procfs (23-25 tests)",
         "env": "QEMU, Lilka, JC",
-        "notes": "/proc/{version,meminfo,drivers,devices,mounts,interrupts,fds,gpio,heapinfo,cpuinfo,uptime}"
+        "notes": "/proc/{version,meminfo,drivers,devices,mounts,interrupts,fds,gpio,heapinfo,cpuinfo,uptime,stat}"
     },
     {
         "category": "Kernel & Filesystem",
         "feature": "Shell & Pratt Parser",
         "state": "Implemented",
-        "test_suite": "pratt (27/27 tests)",
+        "test_suite": "pratt (33/33 tests)",
         "env": "QEMU, Lilka, JC",
-        "notes": "Precedence, ;, &&, ||, >, >>, quotes, escaping, globbing, &"
+        "notes": "Precedence, ;, &&, ||, >, >>, quotes, escaping, globbing, &, B1 error recovery"
     },
     {
         "category": "Kernel & Filesystem",
@@ -119,7 +127,7 @@ FEATURE_MATRIX = [
         "category": "Userland & Utilities",
         "feature": "POSIX Core Utilities",
         "state": "Implemented",
-        "test_suite": "coreutils (33/33 tests)",
+        "test_suite": "coreutils (46/46 tests)",
         "env": "QEMU, Lilka, JC",
         "notes": "rm, cp, mv, sleep, cat, echo, ls, mkdir, rmdir, tree, write"
     },
@@ -127,7 +135,7 @@ FEATURE_MATRIX = [
         "category": "Userland & Utilities",
         "feature": "Cryptographic Hashes & Base64",
         "state": "Implemented",
-        "test_suite": "hash (23/23 tests)",
+        "test_suite": "hash (26/26 tests)",
         "env": "QEMU, Lilka, JC",
         "notes": "md5sum, sha1sum, sha224sum, sha256sum, sha384sum, sha512sum, cksum, base64"
     },
@@ -167,13 +175,13 @@ FEATURE_MATRIX = [
 
 TEST_SUITE_SPECS = [
     {"suite": "proc", "name": "Process Table, Syscalls & Lifecycle", "tag": "qemu", "asserts": 49, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "procfs", "name": "Virtual /proc Filesystem", "tag": "qemu", "asserts": 20, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "pratt", "name": "Shell & Pratt Parser", "tag": "qemu", "asserts": 30, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "procfs", "name": "Virtual /proc Filesystem", "tag": "qemu", "asserts": 24, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "pratt", "name": "Shell & Pratt Parser", "tag": "qemu", "asserts": 33, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "devctl", "name": "Device Control & DevTree", "tag": "qemu", "asserts": 63, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "gui", "name": "GUI Launcher & IPC", "tag": "qemu", "asserts": 1, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "emisc", "name": "Hierarchy & Math Utils", "tag": "qemu", "asserts": 1, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "coreutils", "name": "POSIX Core Utilities", "tag": "qemu", "asserts": 40, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
-    {"suite": "hash", "name": "Cryptographic Hashes & Base64", "tag": "qemu", "asserts": 23, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "coreutils", "name": "POSIX Core Utilities", "tag": "qemu", "asserts": 46, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
+    {"suite": "hash", "name": "Cryptographic Hashes & Base64", "tag": "qemu", "asserts": 26, "qemu": "PASS", "lilka": "PASS", "jc": "PASS"},
     {"suite": "wlanctl", "name": "WLAN Radio & Sniffer", "tag": "hardware-only", "asserts": 17, "qemu": "SKIP", "lilka": "PASS", "jc": "PASS"},
     {"suite": "netctl", "name": "Network Management (ip vibe)", "tag": "hardware-only", "asserts": 30, "qemu": "SKIP", "lilka": "PASS", "jc": "PASS"},
     {"suite": "sdio", "name": "Generic SDIO Bus & Slot Attachment", "tag": "hardware-only", "asserts": 9, "qemu": "SKIP", "lilka": "SKIP", "jc": "PASS"},
