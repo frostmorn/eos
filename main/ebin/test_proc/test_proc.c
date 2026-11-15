@@ -1,3 +1,4 @@
+#include "ebin/test_common.h"
 #include "ecore/bin.h"
 #include "ecore/proc.h"
 #include "emisc/strlimits.h"
@@ -13,20 +14,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-typedef struct {
-  int passed;
-  int failed;
-} test_ctx_t;
 
-static void report_test(test_ctx_t *ctx, const char *name, bool ok) {
-  if (ok) {
-    printf("  [PASS] %s\n", name);
-    ctx->passed++;
-  } else {
-    printf("  [FAIL] %s\n", name);
-    ctx->failed++;
-  }
-}
 
 static void test_posix_getters_and_setters(test_ctx_t *ctx) {
   pid_t my_pid = getpid();

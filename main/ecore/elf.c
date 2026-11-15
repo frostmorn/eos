@@ -1,3 +1,4 @@
+#include "ecore/bin.h"
 #include "ecore/elf.h"
 #include "ecore/proc.h"
 #include "emisc/fancymacro.h"
@@ -94,23 +95,11 @@ int eos_elf_exec(const char *path, int argc, char **argv) {
   FILE *f = fopen(path, "rb");
   char resolved[EOS_MID_STR_LEN];
   if (!f && path[0] != '/' && !strchr(path, '/')) {
-    // Try resolving bare command via PATH
-    char *path_env = getenv("PATH");
-    if (!path_env || !path_env[0]) {
-      path_env = "/bin";
-    }
-    char path_buf[EOS_MID_STR_LEN];
-    strlcpy(path_buf, path_env, sizeof(path_buf));
-    char *saveptr = NULL;
-    char *dir = strtok_r(path_buf, ":", &saveptr);
-    while (dir) {
-      snprintf(resolved, sizeof(resolved), "%s/%s", dir, path);
+    if (eos_resolve_path(path, resolved, sizeof(resolved)) == 0) {
       f = fopen(resolved, "rb");
       if (f) {
         path = resolved;
-        break;
       }
-      dir = strtok_r(NULL, ":", &saveptr);
     }
   }
 

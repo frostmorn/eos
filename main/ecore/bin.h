@@ -5,6 +5,7 @@
 
 #include "emisc/strlimits.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define EOS_BIN_MAGIC 0x0C0A00AC
@@ -88,6 +89,9 @@ void eos_pthread_set_stack_cfg(uint32_t stack_size, bool prefer_psram, const cha
 // our list of bins here (^____^)==\~
 extern const eos_bin_t _eos_bins_start[];
 extern const eos_bin_t _eos_bins_end[];
+
+// Canonical executable / script PATH resolution helper
+int eos_resolve_path(const char *name, char *out, size_t out_len);
 
 // Empty bin entry point implementation
 int eos_bin_main(int argc, char **argv);

@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "ebin/bar_common.h"
 #include "ebin/lvfont_render.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -19,55 +20,19 @@ typedef struct {
   char line2[SBAR_MAX_LINE];
 } sbar_content_t;
 
-static ssize_t read_file_posix(const char *path, char *buf, size_t max_len) {
-  int fd = open(path, O_RDONLY);
-  if (fd < 0) {
-    buf[0] = '\0';
-    return -1;
-  }
-  ssize_t n = read(fd, buf, max_len - 1);
-  if (n > 0) {
-    buf[n] = '\0';
-  } else {
-    buf[0] = '\0';
-  }
-  close(fd);
-  return n;
-}
-
 static bool read_sbar_file(sbar_content_t *out) {
   char buf[SBAR_MAX_LINE * 2] = {0};
-  if (read_file_posix("/tmp/sbar", buf, sizeof(buf)) <= 0) {
+  if (bar_read_file("/tmp/sbar", buf, sizeof(buf)) <= 0) {
     return false;
   }
 
-  char *line1 = buf;
-  char *nl = strchr(buf, '\n');
+  char *line1 = NULL;
   char *line2 = NULL;
-  if (nl) {
-    *nl = '\0';
-    line2 = nl + 1;
-    char *nl2 = strchr(line2, '\n');
-    if (nl2) *nl2 = '\0';
-    nl2 = strchr(line2, '\r');
-    if (nl2) *nl2 = '\0';
-  }
-  char *cr = strchr(line1, '\r');
-  if (cr) *cr = '\0';
+  bar_split_lines(buf, &line1, &line2);
 
-  const char *text = line1;
-  if (line1[0] == '@') {
-    char *endp = NULL;
-    long pid = strtol(line1 + 1, &endp, 10);
-    if (endp && *endp == ' ') {
-      char proc_path[32];
-      snprintf(proc_path, sizeof(proc_path), "/proc/%ld", pid);
-      struct stat st;
-      if (stat(proc_path, &st) != 0) {
-        return false;
-      }
-      text = endp + 1;
-    }
+  const char *text = NULL;
+  if (!bar_validate_pid_prefix(line1, &text)) {
+    return false;
   }
 
   snprintf(out->line1, sizeof(out->line1), "%.*s", (int)(sizeof(out->line1) - 1), text);
@@ -85,7 +50,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   uint32_t mem_spi_kb = 0;
 
   char pbuf[384];
-  if (read_file_posix("/proc/meminfo", pbuf, sizeof(pbuf)) > 0) {
+  if (bar_read_file("/proc/meminfo", pbuf, sizeof(pbuf)) > 0) {
     char *line = pbuf;
     while (line && *line) {
       char *next_line = strchr(line, '\n');
@@ -106,7 +71,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   }
 
   uint64_t uptime_sec = 0;
-  if (read_file_posix("/proc/uptime", pbuf, sizeof(pbuf)) > 0) {
+  if (bar_read_file("/proc/uptime", pbuf, sizeof(pbuf)) > 0) {
     double up_val = 0;
     if (sscanf(pbuf, "%lf", &up_val) == 1) {
       uptime_sec = (uint64_t)up_val;
@@ -120,7 +85,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   // Read load and task count from /proc/loadavg
   unsigned int task_count = 0;
   float load1 = 0.0f;
-  if (read_file_posix("/proc/loadavg", pbuf, sizeof(pbuf)) > 0) {
+  if (bar_read_file("/proc/loadavg", pbuf, sizeof(pbuf)) > 0) {
     (void)sscanf(pbuf, "%f %*f %*f 1/%u", &load1, &task_count);
   }
 
@@ -190,14 +155,7 @@ static void read_fallback_stats(sbar_content_t *out) {
 int statusbar_main(int argc, char **argv) {
   bool auto_mode = false;
   int timeout_ms = -1;
-
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--auto") == 0) {
-      auto_mode = true;
-    } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
-      timeout_ms = atoi(argv[++i]);
-    }
-  }
+  bar_parse_args(argc, argv, &auto_mode, &timeout_ms);
 
   const char *fb_path = getenv("EOS_FB");
   if (!fb_path || !*fb_path) {
@@ -215,12 +173,7 @@ int statusbar_main(int argc, char **argv) {
   }
 
   uint32_t width = 0, height = 0;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width) != 0 || width == 0) {
-    width = 280;
-  }
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height) != 0 || height == 0) {
-    height = 32;
-  }
+  bar_query_display_size(fd, &width, &height, 280, 32);
 
   size_t buf_pixels = (size_t)width * height;
   uint16_t *buf = (uint16_t *)malloc(buf_pixels * sizeof(uint16_t));

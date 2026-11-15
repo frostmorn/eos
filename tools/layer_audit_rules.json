@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "version": "1.1",
+  "version": "1.2",
   "rules": [
     {
       "id": "rtos_in_ebin",
@@ -280,6 +280,66 @@
       "file_extensions": [".c", ".h"],
       "min_normalized_lines": 8,
       "rationale": "Shared logic of 8+ normalized lines across multiple files must be extracted into main/emisc/ or a shared subsystem helper."
+    },
+    {
+      "id": "macros_in_headers_only",
+      "name": "Macro constants (#define) inside .c files instead of .h headers",
+      "type": "macros_in_headers_only",
+      "paths": ["main/ecore", "main/edriver", "main/ewrap", "main/ebin", "main/emisc", "main/eos.c"],
+      "file_extensions": [".c"],
+      "allowed_macros": ["_GNU_SOURCE", "_POSIX_C_SOURCE", "_DEFAULT_SOURCE"],
+      "rationale": "All #define constants and configuration macros must reside in .h header files so hardware dimensions, limits, and protocol constants have a single source of truth."
+    },
+    {
+      "id": "no_magic_constants_in_code",
+      "name": "Hardcoded magic numbers and raw array bounds in .c files",
+      "type": "magic_numbers",
+      "paths": ["main/ecore", "main/edriver", "main/ewrap", "main/ebin", "main/emisc", "main/eos.c"],
+      "file_extensions": [".c"],
+      "ignore_const_tables": true,
+      "flag_array_declarators": true,
+      "allowed_array_sizes": [1, 2, 3, 4, 6],
+      "allowed_literals": [-1, 0, 1, 2, 3, 4, 8, 10, 16, 100],
+      "min_cross_file_value": 36,
+      "max_cross_file_occurrences": 4,
+      "flagged_literals": {
+        "240": "Display dimension (use EOS_DISPLAY_DEFAULT_WIDTH / HEIGHT in header)",
+        "280": "Display dimension (use EOS_DISPLAY_DEFAULT_HEIGHT / WIDTH in header)",
+        "320": "Display dimension (use header macro)",
+        "480": "Display dimension (use header macro)",
+        "800": "Display dimension (use header macro)",
+        "0xF800": "RGB565 red channel mask (use EOS_RGB565_RED_MASK in header)",
+        "0x07E0": "RGB565 green channel mask (use EOS_RGB565_GREEN_MASK in header)",
+        "0x001F": "RGB565 blue channel mask (use EOS_RGB565_BLUE_MASK in header)",
+        "0x1d4c00": "QEMU VRAM byte cap (use EOS_QEMU_VRAM_MAX_BYTES in header)",
+        "0x0B1120": "LVGL theme background color (use EOS_THEME_BG_COLOR in header)",
+        "0x0F172A": "LVGL theme panel color (use EOS_THEME_PANEL_COLOR in header)",
+        "0x1E293B": "LVGL theme surface color (use EOS_THEME_SURFACE_COLOR in header)",
+        "0x94A3B8": "LVGL theme muted text color (use EOS_THEME_TEXT_MUTED in header)",
+        "0x34D399": "LVGL theme accent color (use EOS_THEME_ACCENT_GREEN in header)",
+        "0xFDE047": "LVGL theme highlight color (use EOS_THEME_HIGHLIGHT_YELLOW in header)",
+        "0x38BDF8": "LVGL theme info color (use EOS_THEME_INFO_BLUE in header)",
+        "0x334155": "LVGL theme border color (use EOS_THEME_BORDER_COLOR in header)",
+        "128": "Buffer/size constant (use EOS_SMALL_STR_LEN or named header macro)",
+        "256": "Buffer/size constant (use EOS_MID_STR_LEN or named header macro)",
+        "384": "Buffer/size constant (use named header macro)",
+        "512": "Sector/buffer size constant (use EOS_SECTOR_SIZE or named header macro)",
+        "1024": "Buffer/KibiByte constant (use EOS_LARGE_STR_LEN or named header macro)",
+        "4096": "Page/chunk size constant (use EOS_XLARGE_STR_LEN or named header macro)",
+        "8192": "DMA/strip size constant (use named header macro)",
+        "16384": "DMA/strip size constant (use named header macro)",
+        "12288": "Thread stack size constant (use EOS_BIN_*_STACK_SIZE in header)",
+        "1000": "Time/unit conversion factor (use EOS_MS_PER_SEC / EOS_US_PER_MS in header)",
+        "10000": "Timeout/poll interval constant (use named timeout macro in header)",
+        "1000000": "Microsecond conversion/sleep constant (use EOS_US_PER_SEC in header)",
+        "0755": "POSIX directory/exec mode (use EOS_DEFAULT_DIR_MODE in header)",
+        "0644": "POSIX file mode (use EOS_DEFAULT_FILE_MODE in header)",
+        "0666": "POSIX device/pipe mode (use EOS_DEFAULT_DEV_MODE in header)",
+        "0x08": "I2C minimum 7-bit address (use EOS_I2C_ADDR_MIN in header)",
+        "0x77": "I2C maximum 7-bit scan address (use EOS_I2C_ADDR_SCAN_MAX in header)",
+        "0x7F": "I2C 7-bit address ceiling (use EOS_I2C_ADDR_MAX in header)"
+      },
+      "rationale": "Hardware dimensions, pixel formats, UI theme colors, buffer sizes, timeouts, and file modes must be defined as named macros in .h headers rather than scattered as magic numbers in .c files."
     }
   ]
 }

@@ -1,3 +1,4 @@
+#include "ebin/test_common.h"
 #include "ecore/bin.h"
 #include "emisc/fancymacro.h"
 #include "emisc/fancytree.h"
@@ -16,20 +17,7 @@
 
 // ── Test Context ──────────────────────────────────────────────
 
-typedef struct {
-  int passed;
-  int failed;
-} test_ctx_t;
 
-static void report_test(test_ctx_t *ctx, const char *name, bool ok) {
-  if (ok) {
-    printf("  [PASS] %s\n", name);
-    ctx->passed++;
-  } else {
-    printf("  [FAIL] %s\n", name);
-    ctx->failed++;
-  }
-}
 
 // ── 1. FNV-1a 32-bit Hash Tests ───────────────────────────────
 

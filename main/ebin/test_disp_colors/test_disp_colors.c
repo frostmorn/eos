@@ -9,23 +9,15 @@
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 static void test_colors(int fd) {
   int w = 0, h = 0;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0 || w <= 0)
-    return;
-  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0 || h <= 0)
+  if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0 || ioctl(fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) != 0 || w <= 0 || h <= 0)
     return;
 
   size_t frame_bytes = (size_t)w * (size_t)h * sizeof(uint16_t);
-#ifdef MALLOC_CAP_SPIRAM
-  uint16_t *buf = heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-  uint16_t *buf = NULL;
-#endif
-  if (!buf) {
-    buf = malloc(frame_bytes);
-  }
+  uint16_t *buf = (uint16_t *)eos_psram_malloc_prefer(frame_bytes);
   if (!buf) {
     perror("test_disp_colors: malloc frame buffer");
     return;

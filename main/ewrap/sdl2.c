@@ -51,43 +51,11 @@ struct SDL_Texture {
   uint16_t *pixels;
 };
 
+#include "sdl_common.h"
+
 static void sdl2_query_display_and_input(sdl2_context_t *ctx) {
   if (!ctx) return;
-  if (ctx->fb_fd < 0) {
-    const char *fb_path = getenv("EOS_FB");
-    if (!fb_path) {
-      fb_path = (access("/dev/vfb0", F_OK) == 0) ? "/dev/vfb0" : "/dev/fb0";
-    }
-    ctx->fb_fd = open(fb_path, O_RDWR);
-  }
-  if (ctx->fb_fd >= 0) {
-    uint32_t w = 0, h = 0;
-    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) == 0 && w > 0) {
-      ctx->width = (int)w;
-    }
-    if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &h) == 0 && h > 0) {
-      ctx->height = (int)h;
-    }
-  }
-
-  if (ctx->keyboard_fd < 0) {
-    const char *kbd_path = getenv("EOS_KEYBOARD");
-    if (!kbd_path) {
-      kbd_path = "/dev/keyboard0";
-    }
-    ctx->keyboard_fd = open(kbd_path, O_RDONLY);
-  }
-
-  if (ctx->touch_fd < 0) {
-    const char *touch_path = getenv("EOS_TOUCH");
-    if (!touch_path) {
-      touch_path = "/dev/touch0";
-    }
-    ctx->touch_fd = open(touch_path, O_RDONLY);
-    if (ctx->touch_fd < 0 && strcmp(touch_path, "/dev/touch0") == 0) {
-      ctx->touch_fd = open("/dev/touch", O_RDONLY);
-    }
-  }
+  eos_sdl_open_devices(&ctx->fb_fd, &ctx->keyboard_fd, &ctx->touch_fd, &ctx->width, &ctx->height);
 }
 
 int __attribute__((weak)) SDL_Init(Uint32 flags) {
@@ -284,20 +252,7 @@ void __attribute__((weak)) SDL_PumpEvents(void) {
 }
 
 static Uint32 eos_to_sdl2_key(uint16_t code) {
-  switch (code) {
-    case KEY_UP: return 1073741906;
-    case KEY_DOWN: return 1073741905;
-    case KEY_LEFT: return 1073741904;
-    case KEY_RIGHT: return 1073741903;
-    case KEY_ENTER: return 13;
-    case KEY_SPACE: return 32;
-    case KEY_A: return 97;
-    case KEY_B: return 98;
-    case KEY_C: return 99;
-    case KEY_D: return 100;
-    case KEY_ESC: return 27;
-    default: return 0;
-  }
+  return (Uint32)eos_sdl_map_key(code, 1);
 }
 
 int __attribute__((weak)) SDL_PollEvent(SDL_Event *event) {
@@ -319,53 +274,46 @@ int __attribute__((weak)) SDL_PollEvent(SDL_Event *event) {
     }
   }
 
-  if (ctx->touch_fd >= 0) {
-    eos_input_event_t ev;
-    int ret = ioctl(ctx->touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
-    if (ret > 0 && ev.type == EOS_INPUT_EVENT_TOUCH) {
-      if (ev.state) {
-        if (!ctx->touch_pressed) {
-          ctx->touch_pressed = true;
-          ctx->last_touch_x = ev.x;
-          ctx->last_touch_y = ev.y;
-          event->type = SDL_MOUSEBUTTONDOWN;
-          event->button.timestamp = SDL_GetTicks();
-          event->button.windowID = 0;
-          event->button.which = 0;
-          event->button.button = SDL_BUTTON_LEFT;
-          event->button.state = SDL_PRESSED;
-          event->button.clicks = 1;
-          event->button.x = (Sint32)ev.x;
-          event->button.y = (Sint32)ev.y;
-          return 1;
-        } else if (ev.x != ctx->last_touch_x || ev.y != ctx->last_touch_y) {
-          event->type = SDL_MOUSEMOTION;
-          event->motion.timestamp = SDL_GetTicks();
-          event->motion.windowID = 0;
-          event->motion.which = 0;
-          event->motion.state = SDL_BUTTON(SDL_BUTTON_LEFT);
-          event->motion.x = (Sint32)ev.x;
-          event->motion.y = (Sint32)ev.y;
-          event->motion.xrel = (Sint32)(ev.x - ctx->last_touch_x);
-          event->motion.yrel = (Sint32)(ev.y - ctx->last_touch_y);
-          ctx->last_touch_x = ev.x;
-          ctx->last_touch_y = ev.y;
-          return 1;
-        }
-      } else if (ctx->touch_pressed) {
-        ctx->touch_pressed = false;
-        event->type = SDL_MOUSEBUTTONUP;
-        event->button.timestamp = SDL_GetTicks();
-        event->button.windowID = 0;
-        event->button.which = 0;
-        event->button.button = SDL_BUTTON_LEFT;
-        event->button.state = SDL_RELEASED;
-        event->button.clicks = 1;
-        event->button.x = (Sint32)ev.x;
-        event->button.y = (Sint32)ev.y;
-        return 1;
-      }
-    }
+  uint16_t tx = 0, ty = 0;
+  int16_t tdx = 0, tdy = 0;
+  eos_sdl_touch_kind_t tkind = eos_sdl_process_touch(ctx->touch_fd, &ctx->touch_pressed,
+                                                     &ctx->last_touch_x, &ctx->last_touch_y,
+                                                     &tx, &ty, &tdx, &tdy);
+  if (tkind == EOS_SDL_TOUCH_DOWN) {
+    event->type = SDL_MOUSEBUTTONDOWN;
+    event->button.timestamp = SDL_GetTicks();
+    event->button.windowID = 0;
+    event->button.which = 0;
+    event->button.button = SDL_BUTTON_LEFT;
+    event->button.state = SDL_PRESSED;
+    event->button.clicks = 1;
+    event->button.x = (Sint32)tx;
+    event->button.y = (Sint32)ty;
+    return 1;
+  }
+  if (tkind == EOS_SDL_TOUCH_MOTION) {
+    event->type = SDL_MOUSEMOTION;
+    event->motion.timestamp = SDL_GetTicks();
+    event->motion.windowID = 0;
+    event->motion.which = 0;
+    event->motion.state = SDL_BUTTON(SDL_BUTTON_LEFT);
+    event->motion.x = (Sint32)tx;
+    event->motion.y = (Sint32)ty;
+    event->motion.xrel = (Sint32)tdx;
+    event->motion.yrel = (Sint32)tdy;
+    return 1;
+  }
+  if (tkind == EOS_SDL_TOUCH_UP) {
+    event->type = SDL_MOUSEBUTTONUP;
+    event->button.timestamp = SDL_GetTicks();
+    event->button.windowID = 0;
+    event->button.which = 0;
+    event->button.button = SDL_BUTTON_LEFT;
+    event->button.state = SDL_RELEASED;
+    event->button.clicks = 1;
+    event->button.x = (Sint32)tx;
+    event->button.y = (Sint32)ty;
+    return 1;
   }
 
   return 0;
@@ -373,12 +321,9 @@ int __attribute__((weak)) SDL_PollEvent(SDL_Event *event) {
 
 Uint32 __attribute__((weak)) SDL_GetMouseState(int *x, int *y) {
   sdl2_context_t *ctx = sdl2_get_context();
-  if (ctx) {
-    if (x) *x = (int)ctx->last_touch_x;
-    if (y) *y = (int)ctx->last_touch_y;
-    return ctx->touch_pressed ? SDL_BUTTON(SDL_BUTTON_LEFT) : 0;
-  }
-  return 0;
+  if (!ctx) return 0;
+  eos_sdl_get_mouse_coords(x, y, ctx->last_touch_x, ctx->last_touch_y);
+  return ctx->touch_pressed ? SDL_BUTTON(SDL_BUTTON_LEFT) : 0;
 }
 
 int __attribute__((weak)) SDL_WaitEvent(SDL_Event *event) {

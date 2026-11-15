@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ebin/fs_common.h"
 #include <dirent.h>
 #include <errno.h>
 #include <limits.h>
@@ -99,50 +100,12 @@ int rm_main(int argc, char **argv) {
   bool recursive = false;
   bool verbose = false;
   int first_file = 0;
-
-  for (int i = 1; i < argc; i++) {
-    if (argv[i][0] == '-' && argv[i][1] != '\0') {
-      if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-        print_usage();
-        return 0;
-      }
-      if (strcmp(argv[i], "--force") == 0) {
-        force = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--recursive") == 0) {
-        recursive = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--verbose") == 0) {
-        verbose = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--") == 0) {
-        first_file = i + 1;
-        break;
-      }
-
-      bool valid = true;
-      for (size_t c = 1; argv[i][c] != '\0'; c++) {
-        switch (argv[i][c]) {
-        case 'f': force = true; break;
-        case 'r':
-        case 'R': recursive = true; break;
-        case 'v': verbose = true; break;
-        default:
-          printf("rm: invalid option -- '%c'\n", argv[i][c]);
-          valid = false;
-          break;
-        }
-      }
-      if (!valid) {
-        return -1;
-      }
-    } else {
-      first_file = i;
-      break;
-    }
+  fs_opts_config_t opt_cfg = {.tool_name = "rm", .print_help = print_usage, .allow_recursive = true};
+  if (fs_parse_options(argc, argv, &opt_cfg, &force, &recursive, &verbose, &first_file) != 0) {
+    return -1;
+  }
+  if (first_file == -2) {
+    return 0;
   }
 
   if (first_file == 0 || first_file >= argc) {

@@ -91,28 +91,11 @@ static int ush_readline(char *buf, size_t size) {
 
 static FILE *fopen_path(const char *name) {
   if (!name) return NULL;
-  if (name[0] == '/' || strchr(name, '/')) {
-    return fopen(name, "r");
-  }
-
-  char *path_env = getenv("PATH");
-  if (!path_env || !path_env[0]) {
-    path_env = "/bin";
-  }
-
-  char path_buf[EOS_MID_STR_LEN];
-  strlcpy(path_buf, path_env, sizeof(path_buf));
-
-  char *saveptr = NULL;
-  char *dir = strtok_r(path_buf, ":", &saveptr);
-  while (dir) {
-    char candidate[EOS_MID_STR_LEN];
-    snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
-    FILE *f = fopen(candidate, "r");
+  char resolved[EOS_MID_STR_LEN];
+  if (eos_resolve_path(name, resolved, sizeof(resolved)) == 0) {
+    FILE *f = fopen(resolved, "r");
     if (f) return f;
-    dir = strtok_r(NULL, ":", &saveptr);
   }
-
   return fopen(name, "r");
 }
 

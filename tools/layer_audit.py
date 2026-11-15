@@ -2,7 +2,7 @@
 """
 EOS Layer Separation & Complexity Audit Tool
 Automated static analysis tool to check adherence to EOS architectural,
-complexity, and code-duplication rules.
+complexity, code-duplication, and named-constant rules.
 Rules are declaratively defined in tools/layer_audit_rules.json (or specified via --rules).
 """
 
@@ -35,6 +35,17 @@ BRANCH_TOKEN_RE = re.compile(
 FUNC_START_RE = re.compile(
     r"^(?:static\s+|inline\s+|const\s+|unsigned\s+|signed\s+|struct\s+|enum\s+|__attribute__\s*\(\([^)]*\)\)\s*)*"
     r"[a-zA-Z_][\w\s\*]*?\b([a-zA-Z_]\w*)\s*\([^{;]*\)\s*\{?\s*$"
+)
+
+DEFINE_MACRO_RE = re.compile(r"^\s*#\s*define\s+([A-Za-z_]\w*)\b(.*)$")
+
+ARRAY_DECL_MAGIC_RE = re.compile(
+    r"\b(?:char|uint8_t|int8_t|uint16_t|int16_t|uint32_t|int32_t|int|unsigned|size_t)\s+"
+    r"[a-zA-Z_]\w*\s*\[\s*(\d+|0x[0-9a-fA-F]+)\s*\]"
+)
+
+NUMERIC_LITERAL_RE = re.compile(
+    r"(?<![.\w])(0x[0-9a-fA-F]+|0[0-7]{3,}|\d+)(?:[uUlL]*)\b(?![.\w])"
 )
 
 NON_FUNC_PREFIXES = (
@@ -78,6 +89,18 @@ def strip_comments_and_strings_keep_lines(content):
         return "".join("\n" if ch == "\n" else " " for ch in text)
 
     return COMMENT_AND_STRING_RE.sub(_repl, content)
+
+
+def parse_int_literal(tok):
+    try:
+        t = tok.rstrip("uUlL")
+        if t.lower().startswith("0x"):
+            return int(t, 16)
+        if t.startswith("0") and len(t) > 1 and all(c in "01234567" for c in t):
+            return int(t, 8)
+        return int(t, 10)
+    except ValueError:
+        return None
 
 
 def iter_target_files(paths, file_exts, exclude_dirs=None, exclude_files=None):
@@ -365,6 +388,178 @@ def run_rule_duplicate_blocks(rule):
     return violations
 
 
+def run_rule_macros_in_headers_only(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c"]))
+    allowed_macros = set(rule.get("allowed_macros", []))
+    allowed_patterns = [re.compile(p) for p in rule.get("allowed_patterns", [])]
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                raw_content = f.read()
+            clean_lines = strip_comments_and_strings_keep_lines(raw_content).splitlines()
+            raw_lines = raw_content.splitlines()
+
+            for idx, (cl, rl) in enumerate(zip(clean_lines, raw_lines), 1):
+                m = DEFINE_MACRO_RE.match(cl)
+                if not m:
+                    continue
+                macro_name = m.group(1)
+                if macro_name in allowed_macros:
+                    continue
+                if any(pat.search(macro_name) for pat in allowed_patterns):
+                    continue
+                print(
+                    f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx} "
+                    f"defines '#define {macro_name}' inside a .c file (move to a .h header)"
+                )
+                print(f"    Match: {rl.strip()}")
+                violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No unauthorized #define macros found in .c files.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} #define macro(s) in .c files that belong in .h headers.")
+    return violations
+
+
+def run_rule_magic_numbers(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c"]))
+    ignore_const_tables = bool(rule.get("ignore_const_tables", True))
+    flag_array_declarators = bool(rule.get("flag_array_declarators", True))
+    allowed_array_sizes = set(rule.get("allowed_array_sizes", [1, 2, 3, 4, 6]))
+    allowed_literals = set(rule.get("allowed_literals", [-1, 0, 1, 2, 3, 4, 8, 10, 16, 100]))
+    flagged_literals = rule.get("flagged_literals", {})
+    max_cross_file = rule.get("max_cross_file_occurrences", 4)
+    min_cross_file_value = int(rule.get("min_cross_file_value", 36))
+
+    # Match hex/octal keys by exact normalized token, and decimal keys by integer value
+    flagged_by_str = {str(k).lower(): v for k, v in flagged_literals.items()}
+    flagged_decimal_by_val = {}
+    for k, v in flagged_literals.items():
+        ks = str(k).strip()
+        if not ks.lower().startswith("0"):
+            parsed = parse_int_literal(ks)
+            if parsed is not None:
+                flagged_decimal_by_val[parsed] = (ks, v)
+
+    cross_file_tracker = collections.defaultdict(list)
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                raw_content = f.read()
+            clean_lines = strip_comments_and_strings_keep_lines(raw_content).splitlines()
+            raw_lines = raw_content.splitlines()
+
+            in_const_table_depth = 0
+            in_enum_depth = 0
+
+            for idx, (cl, rl) in enumerate(zip(clean_lines, raw_lines), 1):
+                s = cl.strip()
+                if not s or s.startswith("#"):
+                    continue
+
+                # Track enum blocks so enum constant definitions aren't flagged as magic numbers
+                if re.search(r"\benum\b", s) and "{" in s:
+                    in_enum_depth += s.count("{") - s.count("}")
+                    continue
+                if in_enum_depth > 0:
+                    in_enum_depth += s.count("{") - s.count("}")
+                    continue
+
+                # Optionally skip static const lookup tables and compound literal byte arrays
+                if ignore_const_tables:
+                    if in_const_table_depth == 0 and (
+                        re.search(r"\bconst\b.*=\s*\{", s)
+                        or re.search(r"\(\s*const\s+\w+\s*\[\s*\d+\s*\]\s*\)\s*\{", s)
+                    ):
+                        in_const_table_depth = s.count("{") - s.count("}")
+                        continue
+                    elif in_const_table_depth > 0:
+                        in_const_table_depth += s.count("{") - s.count("}")
+                        continue
+
+                # 1. Check hardcoded numeric array bounds in declarations (e.g. char buf[64])
+                flagged_spans = []
+                if flag_array_declarators:
+                    for m_arr in ARRAY_DECL_MAGIC_RE.finditer(s):
+                        arr_tok = m_arr.group(1)
+                        arr_val = parse_int_literal(arr_tok)
+                        if arr_val is not None and arr_val not in allowed_array_sizes:
+                            flagged_spans.append(m_arr.span(1))
+                            print(
+                                f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx} "
+                                f"hardcoded array size [{arr_tok}] (use EOS_*_STR_LEN or a header macro)"
+                            )
+                            print(f"    Match: {rl.strip()}")
+                            violations += 1
+
+                # 2. Scan numeric literals on the line
+                for m_num in NUMERIC_LITERAL_RE.finditer(s):
+                    if any( start <= m_num.start(1) and m_num.end(1) <= end for start, end in flagged_spans ):
+                        continue
+                    tok = m_num.group(1)
+                    val = parse_int_literal(tok)
+                    if val is None:
+                        continue
+
+                    tok_lower = tok.lower()
+                    is_hex_or_oct = tok_lower.startswith("0x") or (tok_lower.startswith("0") and len(tok_lower) > 1)
+                    reason = None
+                    if tok_lower in flagged_by_str:
+                        reason = flagged_by_str[tok_lower]
+                    elif not is_hex_or_oct and val in flagged_decimal_by_val:
+                        reason = flagged_decimal_by_val[val][1]
+
+                    if reason:
+                        print(
+                            f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx} "
+                            f"magic constant '{tok}': {reason}"
+                        )
+                        print(f"    Match: {rl.strip()}")
+                        violations += 1
+                    elif val not in allowed_literals and (is_hex_or_oct or abs(val) >= min_cross_file_value):
+                        cross_file_tracker[tok].append((filepath, idx, rl.strip()))
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+
+    # 3. Report unlisted numeric literals repeated across >= max_cross_file distinct files
+    if max_cross_file is not None:
+        for tok, locs in sorted(
+            cross_file_tracker.items(),
+            key=lambda item: (len(set(x[0] for x in item[1])), len(item[1])),
+            reverse=True,
+        ):
+            unique_files = sorted(set(x[0] for x in locs))
+            if len(unique_files) < int(max_cross_file):
+                continue
+            loc_preview = ", ".join(f"{f}:{l}" for f, l, _ in locs[:5])
+            if len(locs) > 5:
+                loc_preview += f" (+{len(locs) - 5} more)"
+            print(
+                f"  [{Colors.RED}VIOLATION{Colors.RESET}] Repeated magic literal '{tok}' "
+                f"({len(locs)}x across {len(unique_files)} files — move to a shared .h macro): {loc_preview}"
+            )
+            violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No magic number violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} magic number / array bound violation(s) for {name}.")
+    return violations
+
+
 def run_rule_no_calls_between_patterns(rule):
     violations = 0
     name = rule.get("name", rule.get("id"))
@@ -612,6 +807,8 @@ DISPATCHER = {
     "max_pattern_occurrences_per_file": run_rule_max_pattern_occurrences_per_file,
     "function_metrics": run_rule_function_metrics,
     "duplicate_blocks": run_rule_duplicate_blocks,
+    "macros_in_headers_only": run_rule_macros_in_headers_only,
+    "magic_numbers": run_rule_magic_numbers,
     "no_calls_between_patterns": run_rule_no_calls_between_patterns,
     "no_globals": run_rule_no_globals,
     "mandatory_include_guards": run_rule_include_guards,

@@ -1,3 +1,4 @@
+#include "ebin/fs_common.h"
 #include "ecore/bin.h"
 #include <dirent.h>
 #include <errno.h>
@@ -21,43 +22,10 @@ static void print_usage(void) {
          "  -h, --help           Display this help and exit\n");
 }
 
-static const char *get_basename(const char *path) {
-  if (!path || !path[0]) return "";
-  const char *p = path + strlen(path) - 1;
-  while (p > path && *p == '/') p--;
-  while (p > path && *(p - 1) != '/') p--;
-  return p;
-}
-
-static void join_path(char *dst, size_t dst_size, const char *dir, const char *name) {
-  size_t len = strlen(dir);
-  if (len > 0 && dir[len - 1] == '/') {
-    snprintf(dst, dst_size, "%s%s", dir, name);
-  } else {
-    snprintf(dst, dst_size, "%s/%s", dir, name);
-  }
-}
-
-static bool is_directory(const char *path) {
-  struct stat st;
-  if (stat(path, &st) == 0) {
-    return S_ISDIR(st.st_mode);
-  }
-  return false;
-}
-
-static bool is_same_file(const char *src, const char *dst) {
-  if (strcmp(src, dst) == 0) {
-    return true;
-  }
-  struct stat st_src, st_dst;
-  if (stat(src, &st_src) == 0 && stat(dst, &st_dst) == 0) {
-    if (st_src.st_dev == st_dst.st_dev && st_src.st_ino == st_dst.st_ino && st_src.st_ino != 0) {
-      return true;
-    }
-  }
-  return false;
-}
+#define get_basename fs_get_basename
+#define join_path fs_join_path
+#define is_directory fs_is_directory
+#define is_same_file fs_is_same_file
 
 static int remove_path_recursive(const char *path) {
   struct stat st;
@@ -135,6 +103,16 @@ static int fallback_copy_file(const char *src, const char *dst, bool force) {
   return ret;
 }
 
+static int fallback_copy_dir(const char *src, const char *dst, bool force);
+
+static int mv_fallback_walk_entry(const char *src, const char *dst, bool is_dir, void *ctx) {
+  bool force = *(bool *)ctx;
+  if (is_dir) {
+    return fallback_copy_dir(src, dst, force);
+  }
+  return fallback_copy_file(src, dst, force);
+}
+
 static int fallback_copy_dir(const char *src, const char *dst, bool force) {
   if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
     return -1;
@@ -145,46 +123,7 @@ static int fallback_copy_dir(const char *src, const char *dst, bool force) {
     return -1;
   }
 
-  int ret = 0;
-  struct dirent *entry;
-  char *child_src = malloc(PATH_MAX);
-  char *child_dst = malloc(PATH_MAX);
-  if (!child_src || !child_dst) {
-    if (child_src) free(child_src);
-    if (child_dst) free(child_dst);
-    closedir(dir);
-    return -1;
-  }
-
-  while ((entry = readdir(dir)) != NULL) {
-    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
-      continue;
-    }
-
-    join_path(child_src, PATH_MAX, src, entry->d_name);
-    join_path(child_dst, PATH_MAX, dst, entry->d_name);
-
-    struct stat st_child;
-    if (stat(child_src, &st_child) != 0) {
-      ret = -1;
-      continue;
-    }
-
-    if (S_ISDIR(st_child.st_mode)) {
-      if (fallback_copy_dir(child_src, child_dst, force) != 0) {
-        ret = -1;
-      }
-    } else {
-      if (fallback_copy_file(child_src, child_dst, force) != 0) {
-        ret = -1;
-      }
-    }
-  }
-
-  free(child_src);
-  free(child_dst);
-  closedir(dir);
-  return ret;
+  return fs_walk_dir_pairs(dir, src, dst, mv_fallback_walk_entry, &force);
 }
 
 static int move_entry(const char *src, const char *dst, bool force, bool verbose) {
@@ -247,44 +186,12 @@ int mv_main(int argc, char **argv) {
   bool force = false;
   bool verbose = false;
   int first_file = 0;
-
-  for (int i = 1; i < argc; i++) {
-    if (argv[i][0] == '-' && argv[i][1] != '\0') {
-      if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-        print_usage();
-        return 0;
-      }
-      if (strcmp(argv[i], "--force") == 0) {
-        force = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--verbose") == 0) {
-        verbose = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--") == 0) {
-        first_file = i + 1;
-        break;
-      }
-
-      bool valid = true;
-      for (size_t c = 1; argv[i][c] != '\0'; c++) {
-        switch (argv[i][c]) {
-        case 'f': force = true; break;
-        case 'v': verbose = true; break;
-        default:
-          printf("mv: invalid option -- '%c'\n", argv[i][c]);
-          valid = false;
-          break;
-        }
-      }
-      if (!valid) {
-        return -1;
-      }
-    } else {
-      first_file = i;
-      break;
-    }
+  fs_opts_config_t opt_cfg = {.tool_name = "mv", .print_help = print_usage, .allow_recursive = false};
+  if (fs_parse_options(argc, argv, &opt_cfg, &force, NULL, &verbose, &first_file) != 0) {
+    return -1;
+  }
+  if (first_file == -2) {
+    return 0;
   }
 
   int num_sources = (argc - 1) - first_file;

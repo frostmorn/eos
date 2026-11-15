@@ -9,6 +9,7 @@
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/psram_alloc.h"
 
 static void draw_bars(int fd) {
   int w = 0, h = 0;
@@ -18,14 +19,7 @@ static void draw_bars(int fd) {
     return;
 
   size_t frame_bytes = (size_t)w * (size_t)h * sizeof(uint16_t);
-#ifdef MALLOC_CAP_SPIRAM
-  uint16_t *buf = heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-  uint16_t *buf = NULL;
-#endif
-  if (!buf) {
-    buf = malloc(frame_bytes);
-  }
+  uint16_t *buf = (uint16_t *)eos_psram_malloc_prefer(frame_bytes);
   if (!buf) {
     perror("test_disp_bars: malloc frame buffer");
     return;

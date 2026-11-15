@@ -12,6 +12,50 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+
+int eos_resolve_path(const char *name, char *out, size_t out_len) {
+  if (!name || !out || out_len == 0) return -1;
+
+  if (name[0] == '/' || strchr(name, '/')) {
+    strlcpy(out, name, out_len);
+    struct stat st;
+    return (stat(name, &st) == 0) ? 0 : -1;
+  }
+
+  const char *path_env = getenv("PATH");
+  if (!path_env || !path_env[0]) {
+    path_env = "/bin";
+  }
+
+  char path_buf[EOS_MID_STR_LEN];
+  strlcpy(path_buf, path_env, sizeof(path_buf));
+
+  char *saveptr = NULL;
+  char *dir = strtok_r(path_buf, ":", &saveptr);
+  char first_dir[EOS_MID_STR_LEN] = "";
+  if (dir) {
+    strlcpy(first_dir, dir, sizeof(first_dir));
+  }
+
+  while (dir) {
+    char candidate[EOS_MID_STR_LEN];
+    snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
+    struct stat st;
+    if (stat(candidate, &st) == 0) {
+      strlcpy(out, candidate, out_len);
+      return 0;
+    }
+    dir = strtok_r(NULL, ":", &saveptr);
+  }
+
+  if (first_dir[0]) {
+    snprintf(out, out_len, "%s/%s", first_dir, name);
+  } else {
+    snprintf(out, out_len, "/bin/%s", name);
+  }
+  return -1;
+}
 
 typedef struct {
   const eos_bin_t *bin;
@@ -66,6 +110,53 @@ static void *exec_thread_entry(void *arg) {
   return (void *)(intptr_t)ret;
 }
 
+static char **duplicate_argv(char *const argv[], int *out_argc) {
+  int argc = 0;
+  while (argv && argv[argc]) {
+    argc++;
+  }
+  *out_argc = argc;
+
+  bool prev_h = eos_proc_heap_tracking_disable();
+  char **dup_argv = eos_psram_calloc_prefer(argc + 1, sizeof(char *));
+  if (!dup_argv) {
+    eos_proc_heap_tracking_restore(prev_h);
+    errno = ENOMEM;
+    return NULL;
+  }
+
+  for (int i = 0; i < argc; i++) {
+    dup_argv[i] = eos_psram_strdup(argv[i]);
+    if (!dup_argv[i]) {
+      for (int j = 0; j < i; j++)
+        free(dup_argv[j]);
+      free(dup_argv);
+      eos_proc_heap_tracking_restore(prev_h);
+      errno = ENOMEM;
+      return NULL;
+    }
+  }
+  dup_argv[argc] = NULL;
+  eos_proc_heap_tracking_restore(prev_h);
+  return dup_argv;
+}
+
+static void apply_envp(pid_t child_pid, char *const envp[]) {
+  if (!envp) return;
+  for (int i = 0; envp[i] != NULL; i++) {
+    const char *eq = strchr(envp[i], '=');
+    if (eq) {
+      size_t klen = (size_t)(eq - envp[i]);
+      char key[64];
+      if (klen < sizeof(key)) {
+        memcpy(key, envp[i], klen);
+        key[klen] = '\0';
+        eos_proc_setenv_pid(child_pid, key, eq + 1, 1);
+      }
+    }
+  }
+}
+
 int execve(const char *path, char *const argv[], char *const envp[]) {
   if (!path) {
     errno = EINVAL;
@@ -85,41 +176,18 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   }
 
   int argc = 0;
-  while (argv && argv[argc]) {
-    argc++;
-  }
+  char **dup_argv = duplicate_argv(argv, &argc);
+  if (!dup_argv) return -1;
 
   bool prev_h = eos_proc_heap_tracking_disable();
-  char **dup_argv = eos_psram_calloc_prefer(argc + 1, sizeof(char *));
-  if (!dup_argv) {
-    eos_proc_heap_tracking_restore(prev_h);
-    errno = ENOMEM;
-    return -1;
-  }
-
-  for (int i = 0; i < argc; i++) {
-    dup_argv[i] = eos_psram_strdup(argv[i]);
-    if (!dup_argv[i]) {
-      for (int j = 0; j < i; j++)
-        free(dup_argv[j]);
-      free(dup_argv);
-      eos_proc_heap_tracking_restore(prev_h);
-      errno = ENOMEM;
-      return -1;
-    }
-  }
-  dup_argv[argc] = NULL;
-
   exec_arg_t *ex = eos_psram_malloc_prefer(sizeof(exec_arg_t));
+  eos_proc_heap_tracking_restore(prev_h);
   if (!ex) {
-    for (int i = 0; i < argc; i++)
-      free(dup_argv[i]);
+    for (int i = 0; i < argc; i++) free(dup_argv[i]);
     free(dup_argv);
-    eos_proc_heap_tracking_restore(prev_h);
     errno = ENOMEM;
     return -1;
   }
-  eos_proc_heap_tracking_restore(prev_h);
 
   if (is_elf) {
     memset(&ex->elf_manifest, 0, sizeof(ex->elf_manifest));
@@ -141,8 +209,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   pid_t parent_sid = (cur && cur->sid > 0) ? cur->sid : 1;
   pid_t child_pid = eos_proc_create(path, NULL, parent_pid, parent_pgid);
   if (child_pid < 0) {
-    for (int i = 0; i < argc; i++)
-      free(dup_argv[i]);
+    for (int i = 0; i < argc; i++) free(dup_argv[i]);
     free(dup_argv);
     free(ex);
     errno = EAGAIN;
@@ -156,23 +223,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   ex->pgid = parent_pgid;
   ex->sid = parent_sid;
 
-  // Propagate explicit envp if provided
-  if (envp) {
-    for (int i = 0; envp[i] != NULL; i++) {
-      const char *eq = strchr(envp[i], '=');
-      if (eq) {
-        size_t klen = (size_t)(eq - envp[i]);
-        char key[64];
-        if (klen < sizeof(key)) {
-          memcpy(key, envp[i], klen);
-          key[klen] = '\0';
-          eos_proc_setenv_pid(child_pid, key, eq + 1, 1);
-        }
-      }
-    }
-  }
-
-  // Display role and framebuffer resolution
+  apply_envp(child_pid, envp);
   eos_proc_resolve_display_env(child_pid, bin ? bin->flags : EOS_BIN_FLAG_NONE);
 
   pthread_t thread;
@@ -184,8 +235,7 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
     eos_proc_exit(child_pid, -1);
     int dummy = 0;
     waitpid(child_pid, &dummy, WNOHANG);
-    for (int i = 0; i < argc; i++)
-      free(dup_argv[i]);
+    for (int i = 0; i < argc; i++) free(dup_argv[i]);
     free(dup_argv);
     free(ex);
     errno = ENOMEM;

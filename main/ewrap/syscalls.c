@@ -1,3 +1,4 @@
+#include "ecore/bin.h"
 #include "ecore/binfs.h"
 #include "ecore/elf.h"
 #include "ecore/pipefs.h"
@@ -50,51 +51,8 @@ typedef struct {
 } eos_stage_exec_t;
 
 static void resolve_path(const char *name, char *out, size_t len) {
-  if (!name) {
-    strlcpy(out, "", len);
-    return;
-  }
-
-  // If absolute path or contains '/', use directly
-  if (name[0] == '/' || strchr(name, '/')) {
-    strlcpy(out, name, len);
-    return;
-  }
-
-  // Get PATH environment variable (handled by system)
-  char *path_env = getenv("PATH");
-  if (!path_env || !path_env[0]) {
-    path_env = "/bin";
-  }
-
-  // Iterate through colon-separated PATH directories
-  char path_buf[EOS_MID_STR_LEN];
-  strlcpy(path_buf, path_env, sizeof(path_buf));
-
-  char *saveptr = NULL;
-  char *dir = strtok_r(path_buf, ":", &saveptr);
-  while (dir) {
-    char candidate[EOS_MID_STR_LEN];
-    snprintf(candidate, sizeof(candidate), "%s/%s", dir, name);
-
-    // Test if file exists / is a regular file
-    struct stat st;
-    if (stat(candidate, &st) == 0 && S_ISREG(st.st_mode)) {
-      strlcpy(out, candidate, len);
-      return;
-    }
-
-    dir = strtok_r(NULL, ":", &saveptr);
-  }
-
-  // Default to first PATH directory combined with name if not found in PATH
-  strlcpy(path_buf, path_env, sizeof(path_buf));
-  dir = strtok_r(path_buf, ":", &saveptr);
-  if (dir) {
-    snprintf(out, len, "%s/%s", dir, name);
-  } else {
-    strlcpy(out, name, len);
-  }
+  if (!name || !out || len == 0) return;
+  eos_resolve_path(name, out, len);
 }
 
 static void expand_env_vars(const char **src_ptr, char **arena_ptr,

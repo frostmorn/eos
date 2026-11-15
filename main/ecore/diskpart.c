@@ -77,123 +77,77 @@ typedef struct __attribute__((packed)) {
 // GPT type GUIDs that indicate used partitions (non-empty)
 static const uint8_t GPT_UNUSED_GUID[16] = {0};
 
+typedef struct {
+  eos_part_type_t type;
+  const char *str;
+} eos_part_type_desc_t;
+
+static const eos_part_type_desc_t PART_TYPE_DESCS[] = {
+    {EOS_PART_EMPTY, "Empty"},
+    {EOS_PART_FAT12, "FAT12"},
+    {EOS_PART_FAT16_LT32MB, "FAT16 <32MB"},
+    {EOS_PART_FAT16B, "FAT16B"},
+    {EOS_PART_FAT32, "FAT32"},
+    {EOS_PART_FAT32_LBA, "FAT32 LBA"},
+    {EOS_PART_FAT16_LBA, "FAT16 LBA"},
+    {EOS_PART_FAT12_HIDDEN, "FAT12 Hidden"},
+    {EOS_PART_FAT16_HIDDEN, "FAT16 Hidden"},
+    {EOS_PART_FAT16B_HIDDEN, "FAT16B Hidden"},
+    {EOS_PART_FAT32_HIDDEN, "FAT32 Hidden"},
+    {EOS_PART_FAT32_LBA_HIDDEN, "FAT32 LBA Hidden"},
+    {EOS_PART_FAT16_LBA_HIDDEN, "FAT16 LBA Hidden"},
+    {EOS_PART_EXTENDED_CHS, "Extended CHS"},
+    {EOS_PART_EXTENDED_LBA, "Extended LBA"},
+    {EOS_PART_EXTENDED_HIDDEN, "Extended Hidden"},
+    {EOS_PART_EXTENDED_LBA2, "Extended LBA Hidden"},
+    {EOS_PART_NTFS_EXFAT, "NTFS/exFAT"},
+    {EOS_PART_NTFS_HIDDEN, "NTFS Hidden"},
+    {EOS_PART_WINRE, "Windows RE"},
+    {EOS_PART_LINUX_SWAP, "Linux Swap"},
+    {EOS_PART_LINUX_FS, "Linux FS"},
+    {EOS_PART_LINUX_EXTENDED, "Linux Extended"},
+    {EOS_PART_LINUX_LVM, "Linux LVM"},
+    {EOS_PART_LINUX_RAID, "Linux RAID"},
+    {EOS_PART_LINUX_FS_HIDDEN, "Linux FS Hidden"},
+    {EOS_PART_FREEBSD, "FreeBSD"},
+    {EOS_PART_OPENBSD, "OpenBSD"},
+    {EOS_PART_NETBSD, "NetBSD"},
+    {EOS_PART_DRAGONFLY, "DragonFly BSD"},
+    {EOS_PART_MACOS_X, "macOS X"},
+    {EOS_PART_MACOS_X_BOOT, "macOS X Boot"},
+    {EOS_PART_MACOS_X_HFS, "macOS X HFS+"},
+    {EOS_PART_WIN_DYNAMIC, "Windows Dynamic"},
+    {EOS_PART_WIN_LDM_META, "Windows LDM Meta"},
+    {EOS_PART_WIN_LDM_DATA, "Windows LDM Data"},
+    {EOS_PART_WIN_RECOVERY, "Windows Recovery"},
+    {EOS_PART_IBM_RECOVERY, "IBM/Compaq Diag"},
+    {EOS_PART_GPT_PROTECTIVE, "GPT Protective"},
+    {EOS_PART_EFI_SYSTEM, "EFI System"},
+    {EOS_PART_SOLARIS_X86, "Solaris x86"},
+    {EOS_PART_SOLARIS_BOOT, "Solaris Boot"},
+    {EOS_PART_UNIX_SYS_V, "Unix System V"},
+    {EOS_PART_QNX4_P1, "QNX4 P1"},
+    {EOS_PART_QNX4_P2, "QNX4 P2"},
+    {EOS_PART_QNX4_P3, "QNX4 P3"},
+    {EOS_PART_OS2_BOOT_MGR, "OS/2 Boot Mgr"},
+    {EOS_PART_INTEL_RST, "Intel RST/Hibernate"},
+    {EOS_PART_LUKS, "Linux LUKS"},
+    {EOS_PART_VMWARE_VMFS, "VMware VMFS"},
+    {EOS_PART_VMWARE_SWAP, "VMware Swap"},
+    {EOS_PART_XENIX_ROOT, "XENIX Root"},
+    {EOS_PART_XENIX_USR, "XENIX Usr"},
+    {EOS_PART_PLAN9, "Plan 9"},
+    {EOS_PART_WHOLE_DISK, "Whole Disk"},
+    {EOS_PART_GPT_ENTRY, "GPT Entry"},
+};
+
 const char *eos_part_type_str(eos_part_type_t type) {
-  switch (type) {
-  case EOS_PART_EMPTY:
-    return "Empty";
-  case EOS_PART_FAT12:
-    return "FAT12";
-  case EOS_PART_FAT16_LT32MB:
-    return "FAT16 <32MB";
-  case EOS_PART_FAT16B:
-    return "FAT16B";
-  case EOS_PART_FAT32:
-    return "FAT32";
-  case EOS_PART_FAT32_LBA:
-    return "FAT32 LBA";
-  case EOS_PART_FAT16_LBA:
-    return "FAT16 LBA";
-  case EOS_PART_FAT12_HIDDEN:
-    return "FAT12 Hidden";
-  case EOS_PART_FAT16_HIDDEN:
-    return "FAT16 Hidden";
-  case EOS_PART_FAT16B_HIDDEN:
-    return "FAT16B Hidden";
-  case EOS_PART_FAT32_HIDDEN:
-    return "FAT32 Hidden";
-  case EOS_PART_FAT32_LBA_HIDDEN:
-    return "FAT32 LBA Hidden";
-  case EOS_PART_FAT16_LBA_HIDDEN:
-    return "FAT16 LBA Hidden";
-  case EOS_PART_EXTENDED_CHS:
-    return "Extended CHS";
-  case EOS_PART_EXTENDED_LBA:
-    return "Extended LBA";
-  case EOS_PART_EXTENDED_HIDDEN:
-    return "Extended Hidden";
-  case EOS_PART_EXTENDED_LBA2:
-    return "Extended LBA Hidden";
-  case EOS_PART_NTFS_EXFAT:
-    return "NTFS/exFAT";
-  case EOS_PART_NTFS_HIDDEN:
-    return "NTFS Hidden";
-  case EOS_PART_WINRE:
-    return "Windows RE";
-  case EOS_PART_LINUX_SWAP:
-    return "Linux Swap";
-  case EOS_PART_LINUX_FS:
-    return "Linux FS";
-  case EOS_PART_LINUX_EXTENDED:
-    return "Linux Extended";
-  case EOS_PART_LINUX_LVM:
-    return "Linux LVM";
-  case EOS_PART_LINUX_RAID:
-    return "Linux RAID";
-  case EOS_PART_LINUX_FS_HIDDEN:
-    return "Linux FS Hidden";
-  case EOS_PART_FREEBSD:
-    return "FreeBSD";
-  case EOS_PART_OPENBSD:
-    return "OpenBSD";
-  case EOS_PART_NETBSD:
-    return "NetBSD";
-  case EOS_PART_DRAGONFLY:
-    return "DragonFly BSD";
-  case EOS_PART_MACOS_X:
-    return "macOS X";
-  case EOS_PART_MACOS_X_BOOT:
-    return "macOS X Boot";
-  case EOS_PART_MACOS_X_HFS:
-    return "macOS X HFS+";
-  case EOS_PART_WIN_DYNAMIC:
-    return "Windows Dynamic";
-  case EOS_PART_WIN_LDM_META:
-    return "Windows LDM Meta";
-  case EOS_PART_WIN_LDM_DATA:
-    return "Windows LDM Data";
-  case EOS_PART_WIN_RECOVERY:
-    return "Windows Recovery";
-  case EOS_PART_IBM_RECOVERY:
-    return "IBM/Compaq Diag";
-  case EOS_PART_GPT_PROTECTIVE:
-    return "GPT Protective";
-  case EOS_PART_EFI_SYSTEM:
-    return "EFI System";
-  case EOS_PART_SOLARIS_X86:
-    return "Solaris x86";
-  case EOS_PART_SOLARIS_BOOT:
-    return "Solaris Boot";
-  case EOS_PART_UNIX_SYS_V:
-    return "Unix System V";
-  case EOS_PART_QNX4_P1:
-    return "QNX4 P1";
-  case EOS_PART_QNX4_P2:
-    return "QNX4 P2";
-  case EOS_PART_QNX4_P3:
-    return "QNX4 P3";
-  case EOS_PART_OS2_BOOT_MGR:
-    return "OS/2 Boot Mgr";
-  case EOS_PART_INTEL_RST:
-    return "Intel RST/Hibernate";
-  case EOS_PART_LUKS:
-    return "Linux LUKS";
-  case EOS_PART_VMWARE_VMFS:
-    return "VMware VMFS";
-  case EOS_PART_VMWARE_SWAP:
-    return "VMware Swap";
-  case EOS_PART_XENIX_ROOT:
-    return "XENIX Root";
-  case EOS_PART_XENIX_USR:
-    return "XENIX Usr";
-  case EOS_PART_PLAN9:
-    return "Plan 9";
-  case EOS_PART_WHOLE_DISK:
-    return "Whole Disk";
-  case EOS_PART_GPT_ENTRY:
-    return "GPT Entry";
-  default:
-    return "Unknown";
+  for (size_t i = 0; i < sizeof(PART_TYPE_DESCS) / sizeof(PART_TYPE_DESCS[0]); i++) {
+    if (PART_TYPE_DESCS[i].type == type) {
+      return PART_TYPE_DESCS[i].str;
+    }
   }
+  return "Unknown";
 }
 
 // ── Internal: sector I/O ──────────────────────────────────────

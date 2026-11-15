@@ -160,6 +160,54 @@ static int parse_pin_arg(const char *arg, eos_pin_t *pins, size_t *count, size_t
   return 0;
 }
 
+static void parse_val_string(char *val_str, eos_cfg_type_t *out_type, int32_t *out_i, float *out_f, char **out_s) {
+  size_t vlen = strlen(val_str);
+  if (vlen >= 2 && ((val_str[0] == '"' && val_str[vlen - 1] == '"') ||
+                    (val_str[0] == '\'' && val_str[vlen - 1] == '\''))) {
+    *out_type = EOS_CFG_STR;
+    val_str[vlen - 1] = '\0';
+    *out_s = strdup(val_str + 1);
+  } else if (strcasecmp(val_str, "true") == 0 || strcasecmp(val_str, "yes") == 0 ||
+             strcasecmp(val_str, "on") == 0) {
+    *out_type = EOS_CFG_INT;
+    *out_i = 1;
+  } else if (strcasecmp(val_str, "false") == 0 || strcasecmp(val_str, "no") == 0 ||
+             strcasecmp(val_str, "off") == 0) {
+    *out_type = EOS_CFG_INT;
+    *out_i = 0;
+  } else if (val_str[0] == '0' && (val_str[1] == 'x' || val_str[1] == 'X')) {
+    char *endptr = NULL;
+    long num = strtol(val_str, &endptr, 16);
+    if (endptr != val_str && *endptr == '\0') {
+      *out_type = EOS_CFG_INT;
+      *out_i = (int32_t)num;
+    } else {
+      *out_type = EOS_CFG_STR;
+      *out_s = strdup(val_str);
+    }
+  } else if (strchr(val_str, '.') != NULL) {
+    char *endptr = NULL;
+    float f = strtof(val_str, &endptr);
+    if (endptr != val_str && *endptr == '\0') {
+      *out_type = EOS_CFG_FLOAT;
+      *out_f = f;
+    } else {
+      *out_type = EOS_CFG_STR;
+      *out_s = strdup(val_str);
+    }
+  } else {
+    char *endptr = NULL;
+    long num = strtol(val_str, &endptr, 10);
+    if (endptr != val_str && *endptr == '\0') {
+      *out_type = EOS_CFG_INT;
+      *out_i = (int32_t)num;
+    } else {
+      *out_type = EOS_CFG_STR;
+      *out_s = strdup(val_str);
+    }
+  }
+}
+
 static int parse_cfg_arg(const char *arg, eos_cfg_t *cfg, size_t *count, size_t max_count) {
   if (!arg || !arg[0]) return 0;
   char *copy = strdup(arg);
@@ -200,52 +248,7 @@ static int parse_cfg_arg(const char *arg, eos_cfg_t *cfg, size_t *count, size_t 
       int32_t val_i = 0;
       float val_f = 0.0f;
       char *val_s = NULL;
-
-      size_t vlen = strlen(val_str);
-      if (vlen >= 2 && ((val_str[0] == '"' && val_str[vlen - 1] == '"') ||
-                        (val_str[0] == '\'' && val_str[vlen - 1] == '\''))) {
-        type = EOS_CFG_STR;
-        val_str[vlen - 1] = '\0';
-        val_s = strdup(val_str + 1);
-      } else if (strcasecmp(val_str, "true") == 0 || strcasecmp(val_str, "yes") == 0 ||
-                 strcasecmp(val_str, "on") == 0) {
-        type = EOS_CFG_INT;
-        val_i = 1;
-      } else if (strcasecmp(val_str, "false") == 0 || strcasecmp(val_str, "no") == 0 ||
-                 strcasecmp(val_str, "off") == 0) {
-        type = EOS_CFG_INT;
-        val_i = 0;
-      } else if (val_str[0] == '0' && (val_str[1] == 'x' || val_str[1] == 'X')) {
-        char *endptr = NULL;
-        long num = strtol(val_str, &endptr, 16);
-        if (endptr != val_str && *endptr == '\0') {
-          type = EOS_CFG_INT;
-          val_i = (int32_t)num;
-        } else {
-          type = EOS_CFG_STR;
-          val_s = strdup(val_str);
-        }
-      } else if (strchr(val_str, '.') != NULL) {
-        char *endptr = NULL;
-        float f = strtof(val_str, &endptr);
-        if (endptr != val_str && *endptr == '\0') {
-          type = EOS_CFG_FLOAT;
-          val_f = f;
-        } else {
-          type = EOS_CFG_STR;
-          val_s = strdup(val_str);
-        }
-      } else {
-        char *endptr = NULL;
-        long num = strtol(val_str, &endptr, 10);
-        if (endptr != val_str && *endptr == '\0') {
-          type = EOS_CFG_INT;
-          val_i = (int32_t)num;
-        } else {
-          type = EOS_CFG_STR;
-          val_s = strdup(val_str);
-        }
-      }
+      parse_val_string(val_str, &type, &val_i, &val_f, &val_s);
 
       cfg[*count].key = strdup(key);
       cfg[*count].type = type;
@@ -261,6 +264,90 @@ static int parse_cfg_arg(const char *arg, eos_cfg_t *cfg, size_t *count, size_t 
   }
 
   free(copy);
+  return 0;
+}
+
+static int perform_attach(const char *scope, const char *drv_name, const char *parent_name,
+                          eos_pin_t *parsed_pins, size_t pin_count,
+                          eos_cfg_t *parsed_cfg, size_t cfg_count) {
+  eos_drv_t *drv = eos_drv_find(scope, drv_name);
+  if (!drv) {
+    fprintf(stderr, "devctl: driver \"%s/%s\" not found\n", scope, drv_name);
+    return -1;
+  }
+
+  eos_dev_t *parent = NULL;
+  if (parent_name && parent_name[0]) {
+    if (strcmp(parent_name, "root") == 0) {
+      parent = eos_devtree_root();
+    } else {
+      parent = eos_dev_find_by_name(parent_name);
+    }
+    if (!parent) {
+      fprintf(stderr, "devctl: parent device \"%s\" not found\n", parent_name);
+      return -1;
+    }
+  } else {
+    parent = eos_devtree_root();
+  }
+
+  eos_dev_t *dev = eos_dev_alloc();
+  if (!dev) {
+    fprintf(stderr, "devctl: failed to allocate device slot (ENFILE)\n");
+    return -1;
+  }
+
+  dev->driver = drv;
+
+  if (pin_count > 0) {
+    eos_pin_t *pins_arr = calloc(pin_count + 1, sizeof(eos_pin_t));
+    if (!pins_arr) {
+      fprintf(stderr, "devctl: out of memory for pins\n");
+      bzero(dev, sizeof(eos_dev_t));
+      return -1;
+    }
+    memcpy(pins_arr, parsed_pins, pin_count * sizeof(eos_pin_t));
+    dev->pins = pins_arr;
+    dev->dynamic_pins = true;
+  }
+
+  if (cfg_count > 0) {
+    eos_cfg_t *cfg_arr = calloc(cfg_count + 1, sizeof(eos_cfg_t));
+    if (!cfg_arr) {
+      fprintf(stderr, "devctl: out of memory for cfg\n");
+      if (dev->pins) free(dev->pins);
+      bzero(dev, sizeof(eos_dev_t));
+      return -1;
+    }
+    memcpy(cfg_arr, parsed_cfg, cfg_count * sizeof(eos_cfg_t));
+    dev->cfg = cfg_arr;
+    dev->dynamic_cfg = true;
+  }
+
+  int rc = eos_dev_attach(dev, parent);
+  if (rc != 0) {
+    fprintf(stderr, "devctl: failed to attach %s/%s under %s: %s\n",
+            scope, drv_name, parent->name[0] ? parent->name : "root", strerror(errno));
+    fflush(stderr);
+    if (dev->parent == NULL) {
+      if (dev->dynamic_pins && dev->pins) {
+        for (eos_pin_t *p = dev->pins; p->key != NULL; p++) free(p->key);
+        free(dev->pins);
+      }
+      if (dev->dynamic_cfg && dev->cfg) {
+        for (eos_cfg_t *c = dev->cfg; c->key != NULL; c++) {
+          free((void *)c->key);
+          if (c->type == EOS_CFG_STR && c->val.s) free(c->val.s);
+        }
+        free(dev->cfg);
+      }
+      bzero(dev, sizeof(eos_dev_t));
+    }
+    return -1;
+  }
+
+  printf("Attached %s/%s as /dev/%s (parent: %s)\n",
+         scope, drv_name, dev->name, parent->name[0] ? parent->name : "root");
   return 0;
 }
 
@@ -290,117 +377,33 @@ static int cmd_attach(int argc, char **argv) {
         goto cleanup_err;
       }
       i++;
-      if (parse_pin_arg(argv[i], parsed_pins, &pin_count, 64) != 0) {
-        goto cleanup_err;
-      }
+      if (parse_pin_arg(argv[i], parsed_pins, &pin_count, 64) != 0) goto cleanup_err;
     } else if (strncmp(arg, "--pin=", 6) == 0) {
-      if (parse_pin_arg(arg + 6, parsed_pins, &pin_count, 64) != 0) {
-        goto cleanup_err;
-      }
+      if (parse_pin_arg(arg + 6, parsed_pins, &pin_count, 64) != 0) goto cleanup_err;
     } else if (strcmp(arg, "--cfg") == 0 || strcmp(arg, "-c") == 0) {
       if (i + 1 >= argc) {
         fprintf(stderr, "devctl: option '%s' requires an argument\n", arg);
         goto cleanup_err;
       }
       i++;
-      if (parse_cfg_arg(argv[i], parsed_cfg, &cfg_count, 64) != 0) {
-        goto cleanup_err;
-      }
+      if (parse_cfg_arg(argv[i], parsed_cfg, &cfg_count, 64) != 0) goto cleanup_err;
     } else if (strncmp(arg, "--cfg=", 6) == 0) {
-      if (parse_cfg_arg(arg + 6, parsed_cfg, &cfg_count, 64) != 0) {
-        goto cleanup_err;
-      }
+      if (parse_cfg_arg(arg + 6, parsed_cfg, &cfg_count, 64) != 0) goto cleanup_err;
     } else if (arg[0] == '-') {
       fprintf(stderr, "devctl: unrecognized option '%s'\n", arg);
       goto cleanup_err;
     } else {
-      if (!parent_name) {
-        parent_name = arg;
-      } else {
+      if (!parent_name) parent_name = arg;
+      else {
         fprintf(stderr, "devctl: unexpected positional argument '%s'\n", arg);
         goto cleanup_err;
       }
     }
   }
 
-  eos_drv_t *drv = eos_drv_find(scope, drv_name);
-  if (!drv) {
-    fprintf(stderr, "devctl: driver \"%s/%s\" not found\n", scope, drv_name);
-    goto cleanup_err;
-  }
-
-  eos_dev_t *parent = NULL;
-  if (parent_name && parent_name[0]) {
-    if (strcmp(parent_name, "root") == 0) {
-      parent = eos_devtree_root();
-    } else {
-      parent = eos_dev_find_by_name(parent_name);
-    }
-    if (!parent) {
-      fprintf(stderr, "devctl: parent device \"%s\" not found\n", parent_name);
-      goto cleanup_err;
-    }
-  } else {
-    parent = eos_devtree_root();
-  }
-
-  eos_dev_t *dev = eos_dev_alloc();
-  if (!dev) {
-    fprintf(stderr, "devctl: failed to allocate device slot (ENFILE)\n");
-    goto cleanup_err;
-  }
-
-  dev->driver = drv;
-
-  if (pin_count > 0) {
-    eos_pin_t *pins_arr = calloc(pin_count + 1, sizeof(eos_pin_t));
-    if (!pins_arr) {
-      fprintf(stderr, "devctl: out of memory for pins\n");
-      bzero(dev, sizeof(eos_dev_t));
-      goto cleanup_err;
-    }
-    memcpy(pins_arr, parsed_pins, pin_count * sizeof(eos_pin_t));
-    dev->pins = pins_arr;
-    dev->dynamic_pins = true;
-  }
-
-  if (cfg_count > 0) {
-    eos_cfg_t *cfg_arr = calloc(cfg_count + 1, sizeof(eos_cfg_t));
-    if (!cfg_arr) {
-      fprintf(stderr, "devctl: out of memory for cfg\n");
-      if (dev->pins) free(dev->pins);
-      bzero(dev, sizeof(eos_dev_t));
-      goto cleanup_err;
-    }
-    memcpy(cfg_arr, parsed_cfg, cfg_count * sizeof(eos_cfg_t));
-    dev->cfg = cfg_arr;
-    dev->dynamic_cfg = true;
-  }
-
-  int rc = eos_dev_attach(dev, parent);
-  if (rc != 0) {
-    fprintf(stderr, "devctl: failed to attach %s/%s under %s: %s\n",
-            scope, drv_name, parent->name[0] ? parent->name : "root", strerror(errno));
-    fflush(stderr);
-    if (dev->parent == NULL) {
-      if (dev->dynamic_pins && dev->pins) {
-        for (eos_pin_t *p = dev->pins; p->key != NULL; p++) free(p->key);
-        free(dev->pins);
-      }
-      if (dev->dynamic_cfg && dev->cfg) {
-        for (eos_cfg_t *c = dev->cfg; c->key != NULL; c++) {
-          free((void *)c->key);
-          if (c->type == EOS_CFG_STR && c->val.s) free(c->val.s);
-        }
-        free(dev->cfg);
-      }
-      bzero(dev, sizeof(eos_dev_t));
-    }
+  if (perform_attach(scope, drv_name, parent_name, parsed_pins, pin_count, parsed_cfg, cfg_count) != 0) {
     return 1;
   }
-
-  printf("Attached %s/%s as /dev/%s (parent: %s)\n",
-         scope, drv_name, dev->name, parent->name[0] ? parent->name : "root");
   return 0;
 
 cleanup_err:
@@ -516,6 +519,63 @@ static int cmd_info(const char *dev_name) {
   return 0;
 }
 
+static int dispatch_scopes(int argc, char **argv) {
+  (void)argc; (void)argv;
+  return cmd_scopes();
+}
+
+static int dispatch_drivers(int argc, char **argv) {
+  return cmd_drivers(argc >= 3 ? argv[2] : NULL);
+}
+
+static int dispatch_devices(int argc, char **argv) {
+  (void)argc; (void)argv;
+  return cmd_devices();
+}
+
+static int dispatch_attach(int argc, char **argv) {
+  return cmd_attach(argc, argv);
+}
+
+static int dispatch_detach(int argc, char **argv) {
+  if (argc < 3) {
+    fprintf(stderr, "Usage: devctl detach <dev_name>\n");
+    return 1;
+  }
+  return cmd_detach(argv[2]);
+}
+
+static int dispatch_info(int argc, char **argv) {
+  if (argc < 3) {
+    fprintf(stderr, "Usage: devctl info <dev_name>\n");
+    return 1;
+  }
+  return cmd_info(argv[2]);
+}
+
+static int dispatch_help(int argc, char **argv) {
+  (void)argc; (void)argv;
+  print_usage();
+  return 0;
+}
+
+typedef struct {
+  const char *name;
+  const char *alt;
+  int (*handler)(int argc, char **argv);
+} devctl_cmd_entry_t;
+
+static const devctl_cmd_entry_t DEVCTL_CMDS[] = {
+  {"scopes", NULL, dispatch_scopes},
+  {"drivers", NULL, dispatch_drivers},
+  {"devices", "list", dispatch_devices},
+  {"attach", NULL, dispatch_attach},
+  {"detach", NULL, dispatch_detach},
+  {"info", NULL, dispatch_info},
+  {"help", "-h", dispatch_help},
+  {"--help", NULL, dispatch_help},
+};
+
 int devctl_main(int argc, char **argv) {
   if (argc < 2) {
     print_usage();
@@ -523,34 +583,16 @@ int devctl_main(int argc, char **argv) {
   }
 
   const char *cmd = argv[1];
-  if (strcmp(cmd, "scopes") == 0) {
-    return cmd_scopes();
-  } else if (strcmp(cmd, "drivers") == 0) {
-    return cmd_drivers(argc >= 3 ? argv[2] : NULL);
-  } else if (strcmp(cmd, "devices") == 0 || strcmp(cmd, "list") == 0) {
-    return cmd_devices();
-  } else if (strcmp(cmd, "attach") == 0) {
-    return cmd_attach(argc, argv);
-  } else if (strcmp(cmd, "detach") == 0) {
-    if (argc < 3) {
-      fprintf(stderr, "Usage: devctl detach <dev_name>\n");
-      return 1;
+  for (size_t i = 0; i < sizeof(DEVCTL_CMDS) / sizeof(DEVCTL_CMDS[0]); i++) {
+    if (strcmp(cmd, DEVCTL_CMDS[i].name) == 0 ||
+        (DEVCTL_CMDS[i].alt && strcmp(cmd, DEVCTL_CMDS[i].alt) == 0)) {
+      return DEVCTL_CMDS[i].handler(argc, argv);
     }
-    return cmd_detach(argv[2]);
-  } else if (strcmp(cmd, "info") == 0) {
-    if (argc < 3) {
-      fprintf(stderr, "Usage: devctl info <dev_name>\n");
-      return 1;
-    }
-    return cmd_info(argv[2]);
-  } else if (strcmp(cmd, "help") == 0 || strcmp(cmd, "-h") == 0 || strcmp(cmd, "--help") == 0) {
-    print_usage();
-    return 0;
-  } else {
-    fprintf(stderr, "devctl: unknown command \"%s\"\n", cmd);
-    print_usage();
-    return 1;
   }
+
+  fprintf(stderr, "devctl: unknown command \"%s\"\n", cmd);
+  print_usage();
+  return 1;
 }
 
 EOS_BIN_ATTR eos_bin_t devctl_bin = {

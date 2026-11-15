@@ -1,3 +1,4 @@
+#include "ebin/test_common.h"
 #include "ecore/bin.h"
 #include "ecore/elf.h"
 
@@ -9,20 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-typedef struct {
-  int passed;
-  int failed;
-} test_ctx_t;
 
-static void report_test(test_ctx_t *ctx, const char *name, bool ok) {
-  if (ok) {
-    printf("  [PASS] %s\n", name);
-    ctx->passed++;
-  } else {
-    printf("  [FAIL] %s\n", name);
-    ctx->failed++;
-  }
-}
 
 #if defined(__XTENSA__)
 static const uint8_t s_sample_elf[] = {

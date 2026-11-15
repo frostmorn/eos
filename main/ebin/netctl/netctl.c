@@ -400,6 +400,272 @@ static void print_usage(void) {
          "  netctl <br> napt on|off             Enable/disable NAPT routing\n");
 }
 
+static int handle_dev_updown(int argc, char **argv, const char *dev) {
+  (void)argc;
+  char *sub_argv[] = {(char *)dev, argv[2]};
+  return cmd_link_set(2, sub_argv);
+}
+
+static int handle_dev_status(int argc, char **argv, const char *dev) {
+  (void)argc; (void)argv;
+  return cmd_status_line(dev);
+}
+
+static int handle_dev_ip(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s ip <ip_addr> [netmask] [gateway]\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open interface");
+    return 1;
+  }
+  eos_netif_ip_info_t ip_info;
+  memset(&ip_info, 0, sizeof(ip_info));
+  strncpy(ip_info.ip, argv[3], sizeof(ip_info.ip) - 1);
+  if (argc > 4) {
+    if (strchr(argv[4], '.')) {
+      strncpy(ip_info.netmask, argv[4], sizeof(ip_info.netmask) - 1);
+    } else {
+      eos_net_prefix_to_mask(atoi(argv[4]), ip_info.netmask, sizeof(ip_info.netmask));
+    }
+  } else {
+    strncpy(ip_info.netmask, "255.255.255.0", sizeof(ip_info.netmask) - 1);
+  }
+  if (argc > 5) {
+    strncpy(ip_info.gw, argv[5], sizeof(ip_info.gw) - 1);
+  } else {
+    eos_net_calc_default_gw(ip_info.ip, ip_info.gw, sizeof(ip_info.gw));
+  }
+  if (ioctl(fd, EOS_NETIF_IOCTL_SET_IP, &ip_info) == 0) {
+    printf("%s: IP set to %s (mask: %s, gw: %s)\n", dev, ip_info.ip, ip_info.netmask, ip_info.gw);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: set IP failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_dhcp(int argc, char **argv, const char *dev) {
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open interface");
+    return 1;
+  }
+  bool start = (argc > 3 && strcmp(argv[3], "stop") == 0) ? false : true;
+  int req;
+  if (strcmp(dev, "ap0") == 0 || strcmp(argv[2], "dhcps") == 0) {
+    req = start ? EOS_NETIF_IOCTL_START_DHCPS : EOS_NETIF_IOCTL_STOP_DHCPS;
+  } else {
+    req = start ? EOS_NETIF_IOCTL_START_DHCPC : EOS_NETIF_IOCTL_STOP_DHCPC;
+  }
+  if (ioctl(fd, req) == 0) {
+    printf("%s: DHCP %s\n", dev, start ? "started" : "stopped");
+    close(fd);
+    return 0;
+  }
+  perror("netctl: DHCP command failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_connect(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s connect <ssid> [password]\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open sta interface");
+    return 1;
+  }
+  eos_sta_connect_t conn;
+  memset(&conn, 0, sizeof(conn));
+  strncpy(conn.ssid, argv[3], sizeof(conn.ssid) - 1);
+  if (argc > 4) {
+    strncpy(conn.password, argv[4], sizeof(conn.password) - 1);
+  }
+  conn.timeout_ms = 10000;
+  printf("%s: connecting to \"%s\"...\n", dev, conn.ssid);
+  if (ioctl(fd, EOS_STA_IOCTL_CONNECT, &conn) == 0) {
+    printf("%s: connected to \"%s\"\n", dev, conn.ssid);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: connect failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_disconnect(int argc, char **argv, const char *dev) {
+  (void)argc; (void)argv;
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open interface");
+    return 1;
+  }
+  if (ioctl(fd, EOS_STA_IOCTL_DISCONNECT) == 0) {
+    printf("%s: disconnected\n", dev);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: disconnect failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_ap(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s ap <ssid> [password] [channel]\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open ap interface");
+    return 1;
+  }
+  eos_ap_config_t ap_cfg;
+  memset(&ap_cfg, 0, sizeof(ap_cfg));
+  strncpy(ap_cfg.ssid, argv[3], sizeof(ap_cfg.ssid) - 1);
+  if (argc > 4 && strlen(argv[4]) > 0) {
+    strncpy(ap_cfg.password, argv[4], sizeof(ap_cfg.password) - 1);
+    ap_cfg.authmode = 3; // WPA2_PSK
+  } else {
+    ap_cfg.authmode = 0; // OPEN
+  }
+  ap_cfg.channel = (argc > 5) ? (uint8_t)atoi(argv[5]) : 1;
+  ap_cfg.max_connection = 4;
+  if (ioctl(fd, EOS_AP_IOCTL_SET_CONFIG, &ap_cfg) == 0) {
+    printf("%s: AP configured (SSID: \"%s\", ch %d)\n", dev, ap_cfg.ssid, ap_cfg.channel);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: configure AP failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_clients(int argc, char **argv, const char *dev) {
+  (void)argc; (void)argv;
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open interface");
+    return 1;
+  }
+  eos_ap_sta_list_t stas;
+  memset(&stas, 0, sizeof(stas));
+  if (ioctl(fd, EOS_AP_IOCTL_GET_STAS, &stas) == 0) {
+    printf("%s: %d connected client(s)\n", dev, stas.count);
+    for (int i = 0; i < stas.count && i < 8; i++) {
+      printf("  [%d] MAC %02x:%02x:%02x:%02x:%02x:%02x  RSSI %d dBm\n",
+             i + 1,
+             stas.stas[i].mac[0], stas.stas[i].mac[1], stas.stas[i].mac[2],
+             stas.stas[i].mac[3], stas.stas[i].mac[4], stas.stas[i].mac[5],
+             stas.stas[i].rssi);
+    }
+    close(fd);
+    return 0;
+  }
+  perror("netctl: get clients failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_add(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s add <port_iface>\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open bridge interface");
+    return 1;
+  }
+  if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_ADD_IF, argv[3]) == 0) {
+    printf("%s: attached port \"%s\"\n", dev, argv[3]);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: add port failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_del(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s del <port_iface>\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open bridge interface");
+    return 1;
+  }
+  if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_DEL_IF, argv[3]) == 0) {
+    printf("%s: removed port \"%s\"\n", dev, argv[3]);
+    close(fd);
+    return 0;
+  }
+  perror("netctl: del port failed");
+  close(fd);
+  return 1;
+}
+
+static int handle_dev_napt(int argc, char **argv, const char *dev) {
+  if (argc < 4) {
+    fprintf(stderr, "Usage: netctl %s napt on|off\n", dev);
+    return 1;
+  }
+  int fd = open_iface(dev);
+  if (fd < 0) {
+    perror("netctl: failed to open bridge interface");
+    return 1;
+  }
+  bool enable = (strcmp(argv[3], "on") == 0);
+  if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_SET_NAPT, (int)enable) == 0) {
+    printf("%s: NAPT %s\n", dev, enable ? "enabled" : "disabled");
+    close(fd);
+    return 0;
+  }
+  perror("netctl: set NAPT failed");
+  close(fd);
+  return 1;
+}
+
+typedef struct {
+  const char *name;
+  const char *alt;
+  int (*handler)(int argc, char **argv, const char *dev);
+} netctl_dev_subcmd_t;
+
+static const netctl_dev_subcmd_t NETCTL_DEV_CMDS[] = {
+  {"up", "down", handle_dev_updown},
+  {"status", NULL, handle_dev_status},
+  {"ip", NULL, handle_dev_ip},
+  {"dhcp", "dhcps", handle_dev_dhcp},
+  {"dhcpc", NULL, handle_dev_dhcp},
+  {"connect", NULL, handle_dev_connect},
+  {"disconnect", NULL, handle_dev_disconnect},
+  {"ap", NULL, handle_dev_ap},
+  {"clients", NULL, handle_dev_clients},
+  {"add", NULL, handle_dev_add},
+  {"del", NULL, handle_dev_del},
+  {"napt", NULL, handle_dev_napt},
+};
+
+static int dispatch_dev_subcmd(int argc, char **argv, const char *dev, const char *cmd) {
+  for (size_t i = 0; i < sizeof(NETCTL_DEV_CMDS) / sizeof(NETCTL_DEV_CMDS[0]); i++) {
+    if (strcmp(cmd, NETCTL_DEV_CMDS[i].name) == 0 ||
+        (NETCTL_DEV_CMDS[i].alt && strcmp(cmd, NETCTL_DEV_CMDS[i].alt) == 0)) {
+      return NETCTL_DEV_CMDS[i].handler(argc, argv, dev);
+    }
+  }
+  fprintf(stderr, "Unknown command \"%s\" for interface \"%s\". Try 'netctl help'.\n", cmd, dev);
+  return 1;
+}
+
 int netctl_main(int argc, char **argv) {
   // netctl with no args: display addr table (like 'ip a' on Linux)
   if (argc <= 1) {
@@ -452,259 +718,7 @@ int netctl_main(int argc, char **argv) {
   }
 
   const char *cmd = argv[2];
-
-  // netctl <dev> up / down
-  if (strcmp(cmd, "up") == 0 || strcmp(cmd, "down") == 0) {
-    char *sub_argv[] = {(char *)dev, (char *)cmd};
-    return cmd_link_set(2, sub_argv);
-  }
-
-  // netctl <dev> status (machine-readable for GUI)
-  if (strcmp(cmd, "status") == 0) {
-    return cmd_status_line(dev);
-  }
-
-  // netctl <dev> ip <ip> [mask] [gw]
-  if (strcmp(cmd, "ip") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s ip <ip_addr> [netmask] [gateway]\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open interface");
-      return 1;
-    }
-    eos_netif_ip_info_t ip_info;
-    memset(&ip_info, 0, sizeof(ip_info));
-    strncpy(ip_info.ip, argv[3], sizeof(ip_info.ip) - 1);
-    if (argc > 4) {
-      if (strchr(argv[4], '.')) {
-        strncpy(ip_info.netmask, argv[4], sizeof(ip_info.netmask) - 1);
-      } else {
-        eos_net_prefix_to_mask(atoi(argv[4]), ip_info.netmask, sizeof(ip_info.netmask));
-      }
-    } else {
-      strncpy(ip_info.netmask, "255.255.255.0", sizeof(ip_info.netmask) - 1);
-    }
-    if (argc > 5) {
-      strncpy(ip_info.gw, argv[5], sizeof(ip_info.gw) - 1);
-    } else {
-      eos_net_calc_default_gw(ip_info.ip, ip_info.gw, sizeof(ip_info.gw));
-    }
-    if (ioctl(fd, EOS_NETIF_IOCTL_SET_IP, &ip_info) == 0) {
-      printf("%s: IP set to %s (mask: %s, gw: %s)\n", dev, ip_info.ip, ip_info.netmask, ip_info.gw);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: set IP failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <dev> dhcp start|stop
-  if (strcmp(cmd, "dhcp") == 0 || strcmp(cmd, "dhcps") == 0 || strcmp(cmd, "dhcpc") == 0) {
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open interface");
-      return 1;
-    }
-    bool start = (argc > 3 && strcmp(argv[3], "stop") == 0) ? false : true;
-    int req;
-    if (strcmp(dev, "ap0") == 0 || strcmp(cmd, "dhcps") == 0) {
-      req = start ? EOS_NETIF_IOCTL_START_DHCPS : EOS_NETIF_IOCTL_STOP_DHCPS;
-    } else {
-      req = start ? EOS_NETIF_IOCTL_START_DHCPC : EOS_NETIF_IOCTL_STOP_DHCPC;
-    }
-    if (ioctl(fd, req) == 0) {
-      printf("%s: DHCP %s\n", dev, start ? "started" : "stopped");
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: DHCP command failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <dev> connect <ssid> [pass]
-  if (strcmp(cmd, "connect") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s connect <ssid> [password]\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open sta interface");
-      return 1;
-    }
-    eos_sta_connect_t conn;
-    memset(&conn, 0, sizeof(conn));
-    strncpy(conn.ssid, argv[3], sizeof(conn.ssid) - 1);
-    if (argc > 4) {
-      strncpy(conn.password, argv[4], sizeof(conn.password) - 1);
-    }
-    conn.timeout_ms = 10000;
-    printf("%s: connecting to \"%s\"...\n", dev, conn.ssid);
-    if (ioctl(fd, EOS_STA_IOCTL_CONNECT, &conn) == 0) {
-      printf("%s: connected to \"%s\"\n", dev, conn.ssid);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: connect failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <dev> disconnect
-  if (strcmp(cmd, "disconnect") == 0) {
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open interface");
-      return 1;
-    }
-    if (ioctl(fd, EOS_STA_IOCTL_DISCONNECT) == 0) {
-      printf("%s: disconnected\n", dev);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: disconnect failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <dev> ap <ssid> [pass] [ch]
-  if (strcmp(cmd, "ap") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s ap <ssid> [password] [channel]\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open ap interface");
-      return 1;
-    }
-    eos_ap_config_t ap_cfg;
-    memset(&ap_cfg, 0, sizeof(ap_cfg));
-    strncpy(ap_cfg.ssid, argv[3], sizeof(ap_cfg.ssid) - 1);
-    if (argc > 4 && strlen(argv[4]) > 0) {
-      strncpy(ap_cfg.password, argv[4], sizeof(ap_cfg.password) - 1);
-      ap_cfg.authmode = 3; // WPA2_PSK
-    } else {
-      ap_cfg.authmode = 0; // OPEN
-    }
-    ap_cfg.channel = (argc > 5) ? (uint8_t)atoi(argv[5]) : 1;
-    ap_cfg.max_connection = 4;
-    if (ioctl(fd, EOS_AP_IOCTL_SET_CONFIG, &ap_cfg) == 0) {
-      printf("%s: AP configured (SSID: \"%s\", ch %d)\n", dev, ap_cfg.ssid, ap_cfg.channel);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: configure AP failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <dev> clients
-  if (strcmp(cmd, "clients") == 0) {
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open interface");
-      return 1;
-    }
-    eos_ap_sta_list_t stas;
-    memset(&stas, 0, sizeof(stas));
-    if (ioctl(fd, EOS_AP_IOCTL_GET_STAS, &stas) == 0) {
-      printf("%s: %d connected client(s)\n", dev, stas.count);
-      for (int i = 0; i < stas.count && i < 8; i++) {
-        printf("  [%d] MAC %02x:%02x:%02x:%02x:%02x:%02x  RSSI %d dBm\n",
-               i + 1,
-               stas.stas[i].mac[0], stas.stas[i].mac[1], stas.stas[i].mac[2],
-               stas.stas[i].mac[3], stas.stas[i].mac[4], stas.stas[i].mac[5],
-               stas.stas[i].rssi);
-      }
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: get clients failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <br> add <port>
-  if (strcmp(cmd, "add") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s add <port_iface>\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open bridge interface");
-      return 1;
-    }
-    if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_ADD_IF, argv[3]) == 0) {
-      printf("%s: attached port \"%s\"\n", dev, argv[3]);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: add port failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <br> del <port>
-  if (strcmp(cmd, "del") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s del <port_iface>\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open bridge interface");
-      return 1;
-    }
-    if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_DEL_IF, argv[3]) == 0) {
-      printf("%s: removed port \"%s\"\n", dev, argv[3]);
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: del port failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  // netctl <br> napt on|off
-  if (strcmp(cmd, "napt") == 0) {
-    if (argc < 4) {
-      fprintf(stderr, "Usage: netctl %s napt on|off\n", dev);
-      return 1;
-    }
-    int fd = open_iface(dev);
-    if (fd < 0) {
-      perror("netctl: failed to open bridge interface");
-      return 1;
-    }
-    bool enable = (strcmp(argv[3], "on") == 0);
-    if (ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_SET_NAPT, (int)enable) == 0) {
-      printf("%s: NAPT %s\n", dev, enable ? "enabled" : "disabled");
-      close(fd);
-      return 0;
-    } else {
-      perror("netctl: set NAPT failed");
-      close(fd);
-      return 1;
-    }
-  }
-
-  fprintf(stderr, "Unknown command \"%s\" for interface \"%s\". Try 'netctl help'.\n", cmd, dev);
-  return 1;
+  return dispatch_dev_subcmd(argc, argv, dev, cmd);
 }
 
 EOS_BIN_ATTR const eos_bin_t netctl_bin = {

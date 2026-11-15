@@ -1,44 +1,14 @@
 #pragma once
 
 #include "ecore/lvgl.h"
+#include "emisc/linetext.h"
 #include "lvgl.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
 static inline uint32_t lvfont_decode_utf8(const char **p) {
-  if (!p || !*p || !**p) return 0;
-  const uint8_t *s = (const uint8_t *)*p;
-  uint32_t cp = 0;
-  if (s[0] < 0x80) {
-    cp = s[0];
-    *p += 1;
-  } else if ((s[0] & 0xE0) == 0xC0) {
-    if ((s[1] & 0xC0) == 0x80) {
-      cp = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
-      *p += 2;
-    } else {
-      *p += 1;
-    }
-  } else if ((s[0] & 0xF0) == 0xE0) {
-    if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
-      cp = ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
-      *p += 3;
-    } else {
-      *p += 1;
-    }
-  } else if ((s[0] & 0xF8) == 0xF0) {
-    if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
-      cp = ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) |
-           (s[3] & 0x3F);
-      *p += 4;
-    } else {
-      *p += 1;
-    }
-  } else {
-    *p += 1;
-  }
-  return cp;
+  return eos_utf8_decode_next(p);
 }
 
 static inline uint32_t lvfont_measure_text(const lv_font_t *font, const char *text) {
@@ -61,6 +31,50 @@ static inline uint32_t lvfont_measure_text(const lv_font_t *font, const char *te
     }
   }
   return w;
+}
+
+static inline void lvfont_blend_pixel(uint16_t *buf, uint32_t buf_w, uint32_t buf_h,
+                                      int32_t px, int32_t py, uint8_t alpha,
+                                      uint16_t fg_color, uint32_t r_fg, uint32_t g_fg, uint32_t b_fg) {
+  if (py < 0 || py >= (int32_t)buf_h || px < 0 || px >= (int32_t)buf_w || alpha == 0) return;
+  if (alpha == 15) {
+    buf[py * buf_w + px] = fg_color;
+    return;
+  }
+  uint16_t bg = buf[py * buf_w + px];
+  uint32_t r_bg = (bg >> 11) & 0x1F;
+  uint32_t g_bg = (bg >> 5) & 0x3F;
+  uint32_t b_bg = bg & 0x1F;
+
+  uint32_t inv = 15 - alpha;
+  uint32_t r_out = (r_fg * alpha + r_bg * inv + 7) / 15;
+  uint32_t g_out = (g_fg * alpha + g_bg * inv + 7) / 15;
+  uint32_t b_out = (b_fg * alpha + b_bg * inv + 7) / 15;
+  buf[py * buf_w + px] = (uint16_t)((r_out << 11) | (g_out << 5) | b_out);
+}
+
+static inline void lvfont_render_glyph(uint16_t *buf, uint32_t buf_w, uint32_t buf_h,
+                                       const uint8_t *raw, const lv_font_glyph_dsc_t *dsc,
+                                       int32_t gx, int32_t gy, uint16_t fg_color,
+                                       uint32_t r_fg, uint32_t g_fg, uint32_t b_fg) {
+  int32_t shift = 8;
+  uint8_t cur = 0;
+  for (int y = 0; y < dsc->box_h; y++) {
+    int32_t py = gy + y;
+    for (int x = 0; x < dsc->box_w; x++) {
+      int32_t px = gx + x;
+      uint8_t alpha;
+      if (shift == 8) {
+        cur = *raw++;
+        alpha = (cur >> 4) & 0x0F;
+        shift = 4;
+      } else {
+        alpha = cur & 0x0F;
+        shift = 8;
+      }
+      lvfont_blend_pixel(buf, buf_w, buf_h, px, py, alpha, fg_color, r_fg, g_fg, b_fg);
+    }
+  }
 }
 
 static inline void lvfont_render_text(uint16_t *buf, uint32_t buf_w, uint32_t buf_h,
@@ -95,42 +109,7 @@ static inline void lvfont_render_text(uint16_t *buf, uint32_t buf_w, uint32_t bu
     if (raw && dsc.box_w > 0 && dsc.box_h > 0) {
       int32_t gx = cur_x + dsc.ofs_x;
       int32_t gy = base_y - dsc.ofs_y - dsc.box_h;
-
-      int32_t shift = 8;
-      uint8_t cur = 0;
-      for (int y = 0; y < dsc.box_h; y++) {
-        int32_t py = gy + y;
-        for (int x = 0; x < dsc.box_w; x++) {
-          int32_t px = gx + x;
-          uint8_t alpha;
-          if (shift == 8) {
-            cur = *raw++;
-            alpha = (cur >> 4) & 0x0F;
-            shift = 4;
-          } else {
-            alpha = cur & 0x0F;
-            shift = 8;
-          }
-
-          if (py >= 0 && py < (int32_t)buf_h && px >= 0 && px < (int32_t)buf_w) {
-            if (alpha == 15) {
-              buf[py * buf_w + px] = fg_color;
-            } else if (alpha > 0) {
-              uint16_t bg = buf[py * buf_w + px];
-              uint32_t r_bg = (bg >> 11) & 0x1F;
-              uint32_t g_bg = (bg >> 5) & 0x3F;
-              uint32_t b_bg = bg & 0x1F;
-
-              uint32_t inv = 15 - alpha;
-              uint32_t r_out = (r_fg * alpha + r_bg * inv + 7) / 15;
-              uint32_t g_out = (g_fg * alpha + g_bg * inv + 7) / 15;
-              uint32_t b_out = (b_fg * alpha + b_bg * inv + 7) / 15;
-
-              buf[py * buf_w + px] = (uint16_t)((r_out << 11) | (g_out << 5) | b_out);
-            }
-          }
-        }
-      }
+      lvfont_render_glyph(buf, buf_w, buf_h, raw, &dsc, gx, gy, fg_color, r_fg, g_fg, b_fg);
     }
     cur_x += dsc.adv_w;
   }

@@ -13,6 +13,41 @@
 #define EOS_LINETEXT_FONT_W 8
 #define EOS_LINETEXT_FONT_H 12
 
+// Decodes next UTF-8 codepoint and advances the string pointer
+static inline uint32_t eos_utf8_decode_next(const char **p) {
+  if (!p || !*p || !**p) return 0;
+  const uint8_t *s = (const uint8_t *)*p;
+  uint32_t cp = 0;
+  if (s[0] < 0x80) {
+    cp = s[0];
+    *p += 1;
+  } else if ((s[0] & 0xE0) == 0xC0) {
+    if ((s[1] & 0xC0) == 0x80) {
+      cp = ((s[0] & 0x1F) << 6) | (s[1] & 0x3F);
+      *p += 2;
+    } else {
+      *p += 1;
+    }
+  } else if ((s[0] & 0xF0) == 0xE0) {
+    if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80) {
+      cp = ((s[0] & 0x0F) << 12) | ((s[1] & 0x3F) << 6) | (s[2] & 0x3F);
+      *p += 3;
+    } else {
+      *p += 1;
+    }
+  } else if ((s[0] & 0xF8) == 0xF0) {
+    if ((s[1] & 0xC0) == 0x80 && (s[2] & 0xC0) == 0x80 && (s[3] & 0xC0) == 0x80) {
+      cp = ((s[0] & 0x07) << 18) | ((s[1] & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
+      *p += 4;
+    } else {
+      *p += 1;
+    }
+  } else {
+    *p += 1;
+  }
+  return cp;
+}
+
 // Measures rendered pixel width of a UTF-8 string
 uint32_t eos_linetext_measure(const char *utf8_text);
 

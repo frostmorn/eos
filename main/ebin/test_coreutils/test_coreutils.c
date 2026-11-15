@@ -1,3 +1,4 @@
+#include "ebin/test_common.h"
 #include "ecore/bin.h"
 #include <errno.h>
 #include <stdbool.h>
@@ -18,20 +19,7 @@ extern int tree_main(int argc, char **argv);
 extern int ln_main(int argc, char **argv);
 extern int readlink_main(int argc, char **argv);
 
-typedef struct {
-  int passed;
-  int failed;
-} test_ctx_t;
 
-static void report_test(test_ctx_t *ctx, const char *name, bool ok) {
-  if (ok) {
-    printf("  [PASS] %s\n", name);
-    ctx->passed++;
-  } else {
-    printf("  [FAIL] %s\n", name);
-    ctx->failed++;
-  }
-}
 
 static bool helper_write_file(const char *path, const char *content) {
   FILE *f = fopen(path, "wb");
