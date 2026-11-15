@@ -1,6 +1,6 @@
 # EOS Executable Binaries (`ebin`) Reference Catalog
 
-This catalog is an everyday operational reference for all **57 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
+This catalog is an everyday operational reference for all **64 native executable binaries** implemented in **EOS (ESP Operating System)**. Every command includes its command-line syntax, options, functional description, hardware/subsystem capabilities, stack placement, and practical examples.
 
 All binaries reside in `main/ebin/` and are exposed as executable nodes under `/bin/` via `binfs`.
 
@@ -8,12 +8,12 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 
 ## Quick Navigation Index
 
-- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
-- [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`
+- [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `time`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
+- [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`, `statusbar`, `toolbar`
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
 - [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`
-- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_lvgl`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
+- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
 
 ---
 
@@ -207,6 +207,19 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
   sleep 1s 500ms
   ```
 
+### `time` — Time Command Execution
+* **Syntax:** `time [-p] COMMAND [ARGS...]`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Function:** Measures real elapsed wall-clock time, user CPU time, and system CPU time consumed by the specified command and its spawned child processes via `/proc/self/status` metrics.
+* **Options:**
+  * `-p`, `--portability`: Output in POSIX standard format (`real %f\nuser %f\nsys %f\n`).
+  * `-v`, `--verbose`: Detailed output with memory and wait time statistics.
+* **Examples:**
+  ```sh
+  time sleep 1s
+  time -p sha256sum /sdcard/large_file.bin
+  ```
+
 ### `touch` — Create Empty File or Update Timestamp
 * **Syntax:** `touch [file...]`
 * **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
@@ -353,6 +366,28 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
 * **Examples:**
   ```sh
   umount /dev/sd0
+  ```
+
+### `statusbar` — Native System Status Bar Daemon
+* **Syntax:** `statusbar`
+* **Flags:** `EOS_BIN_FLAG_GUI | EOS_BIN_FLAG_STACK_PSRAM | EOS_BIN_FLAG_ROLE_STATUS` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
+* **Function:** Persistent desktop status bar running in a dedicated compositor window (`/dev/vfb_status`, role `status`). Periodically renders current system time, battery voltage and charge percentage, and active Wi-Fi SSID/IP. Renders custom 2-line textual notifications written to `/tmp/sbar`.
+* **Capabilities:** Virtual display framebuffers (`/dev/vfb*`), `/proc` metrics, file polling (`/tmp/sbar`).
+* **Examples:**
+  ```sh
+  statusbar &
+  echo "Wi-Fi: Connected\nIP: 192.168.1.100" > /tmp/sbar
+  ```
+
+### `toolbar` — Native Bottom Context Toolbar Daemon
+* **Syntax:** `toolbar`
+* **Flags:** `EOS_BIN_FLAG_GUI | EOS_BIN_FLAG_STACK_PSRAM | EOS_BIN_FLAG_ROLE_TOOLBAR` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
+* **Function:** Persistent bottom navigation toolbar running in a dedicated compositor window (`/dev/vfb_toolbar`, role `toolbar`). Displays quick navigation actions, contextual buttons, and renders custom 2-line textual strings written to `/tmp/tbar`.
+* **Capabilities:** Virtual display framebuffers (`/dev/vfb*`), file polling (`/tmp/tbar`).
+* **Examples:**
+  ```sh
+  toolbar &
+  echo "OK\nBack" > /tmp/tbar
   ```
 
 ---
@@ -561,10 +596,20 @@ All GUI binaries automatically declare `EOS_BIN_FLAG_GUI` and execute on dedicat
 * **Flags:** `0` | **Stack:** Default (8 KB SRAM)
 * **Function:** Listens to `/dev/keyboard0` (or specified input device) and prints formatted key event codes, button names, and press/release transitions.
 
+### `test_leaks` — Process Exit Hooks & Resource Leak Test Suite
+* **Syntax:** `test_leaks`
+* **Flags:** `EOS_BIN_FLAG_STACK_PSRAM` | **Stack:** `8192U` (8 KB PSRAM)
+* **Function:** Automated test suite verifying Foundation F03 process cleanup hooks (`eos_proc_on_exit`), LIFO execution ordering, child process reaping, and detection/prevention of orphaned sockets and timers on process termination.
+
 ### `test_lvgl` — LVGL Widget & Driver Demo
 * **Syntax:** `test_lvgl`
 * **Flags:** `EOS_BIN_FLAG_GUI` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
 * **Function:** Demonstrates LVGL widget capabilities: interactive sliders, button counters, animated progress bars, and keypad navigation.
+
+### `test_proc` — Process Table & Lifecycle Test Suite
+* **Syntax:** `test_proc`
+* **Flags:** `EOS_BIN_FLAG_STACK_PSRAM` | **Stack:** `16384U` (16 KB PSRAM)
+* **Function:** Comprehensive test suite for the unified process table, verifying 49 core assertions: POSIX getters/setters (`getpid`, `getppid`, `getpgid`, `getsid`), process hierarchy and state transitions, zombie reaping (`waitpid`), orphan reparenting to init, file descriptor inheritance and redirection across `execve`, signal dispatch, and 1,000-cycle rapid execution stress testing.
 
 ### `test_sdl` — SDL 1.2 Compatibility Layer Test
 * **Syntax:** `test_sdl`

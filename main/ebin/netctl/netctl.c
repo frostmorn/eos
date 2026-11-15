@@ -504,14 +504,19 @@ int netctl_main(int argc, char **argv) {
   }
 
   // netctl <dev> dhcp start|stop
-  if (strcmp(cmd, "dhcp") == 0) {
+  if (strcmp(cmd, "dhcp") == 0 || strcmp(cmd, "dhcps") == 0 || strcmp(cmd, "dhcpc") == 0) {
     int fd = open_iface(dev);
     if (fd < 0) {
       perror("netctl: failed to open interface");
       return 1;
     }
     bool start = (argc > 3 && strcmp(argv[3], "stop") == 0) ? false : true;
-    int req = start ? EOS_NETIF_IOCTL_START_DHCPC : EOS_NETIF_IOCTL_STOP_DHCPC;
+    int req;
+    if (strcmp(dev, "ap0") == 0 || strcmp(cmd, "dhcps") == 0) {
+      req = start ? EOS_NETIF_IOCTL_START_DHCPS : EOS_NETIF_IOCTL_STOP_DHCPS;
+    } else {
+      req = start ? EOS_NETIF_IOCTL_START_DHCPC : EOS_NETIF_IOCTL_STOP_DHCPC;
+    }
     if (ioctl(fd, req) == 0) {
       printf("%s: DHCP %s\n", dev, start ? "started" : "stopped");
       close(fd);

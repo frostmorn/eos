@@ -39,20 +39,20 @@ typedef struct {
 
   int last_exit_code;
   char last_launched[EOS_SMALL_STR_LEN];
+  char custom_cmd[EOS_MID_STR_LEN];
   bool has_launched;
   bool should_exit;
   bool trigger_launch;
 
   // LVGL widgets
   lv_obj_t *hdr_title;
-  lv_obj_t *hdr_mode;
   lv_obj_t *grp_bar;
   lv_obj_t *grp_label;
   lv_obj_t *list_cont;
   lv_obj_t *item_btns[LAUNCHER_MAX_BINS];
   lv_obj_t *info_title;
   lv_obj_t *info_desc;
-  lv_obj_t *status_bar;
+  lv_obj_t *desc_dialog;
 } launcher_state_t;
 
 static const char *bin_effective_group(const eos_bin_t *bin) {
@@ -201,11 +201,8 @@ static void launcher_print_grouped_list(const launcher_state_t *st) {
 static void launcher_populate_list(launcher_state_t *st);
 
 static void launcher_update_details(launcher_state_t *st) {
-  if (!st->hdr_mode)
+  if (!st)
     return;
-
-  lv_label_set_text(st->hdr_mode,
-                    eos_lvgl_is_full_fallback() ? "FULL" : "PARTIAL");
 
   if (st->grp_label && st->group_count > 0) {
     const launcher_group_t *grp = &st->groups[st->selected_group];
@@ -234,36 +231,81 @@ static void launcher_update_details(launcher_state_t *st) {
   if (st->filtered_count > 0 && st->selected_item >= 0 &&
       st->selected_item < st->filtered_count) {
     const eos_bin_t *b = st->filtered[st->selected_item];
-    char tbuf[96];
-    snprintf(tbuf, sizeof(tbuf), "%s (/bin/%s) [%s]", bin_effective_name(b),
-             b->filename, bin_effective_group(b));
-    lv_label_set_text(st->info_title, tbuf);
-    lv_label_set_text(st->info_desc, bin_effective_desc(b));
+    if (st->info_title && st->info_desc) {
+      char tbuf[96];
+      snprintf(tbuf, sizeof(tbuf), "%s (/bin/%s) [%s]", bin_effective_name(b),
+               b->filename, bin_effective_group(b));
+      lv_label_set_text(st->info_title, tbuf);
+      lv_label_set_text(st->info_desc, bin_effective_desc(b));
+    }
+
+    eos_toolbar_set(bin_effective_name(b),
+                    (eos_lvgl_get_height() <= 200) ? "[▲▼]Nav  [◄►]Tab  [A]Run  [D]Info"
+                                                   : "[▲▼]Nav  [◄►]Tab  [A]Run");
   } else {
-    lv_label_set_text(st->info_title, "No applications in group");
-    lv_label_set_text(st->info_desc, "Use LEFT/RIGHT to switch group");
+    if (st->info_title && st->info_desc) {
+      lv_label_set_text(st->info_title, "No applications in group");
+      lv_label_set_text(st->info_desc, "Use LEFT/RIGHT to switch group");
+    }
+
+    eos_toolbar_set("Launcher", "[▲▼]Nav  [◄►]Tab  [A]Run");
+  }
+}
+
+static void launcher_toggle_desc(launcher_state_t *st) {
+  if (st->desc_dialog) {
+    lv_obj_delete(st->desc_dialog);
+    st->desc_dialog = NULL;
+    return;
   }
 
-  if (st->status_bar) {
-    char sbuf[96];
-    bool has_kbd = (eos_lvgl_get_indev() != NULL);
-    if (st->has_launched) {
-      if (has_kbd) {
-        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | A:Run",
-                 st->last_launched, st->last_exit_code);
-      } else {
-        snprintf(sbuf, sizeof(sbuf), "Last: %s (exit %d) | Tap app to run",
-                 st->last_launched, st->last_exit_code);
-      }
-    } else {
-      if (has_kbd) {
-        snprintf(sbuf, sizeof(sbuf), "U/D:App L/R:Grp A/ENT:Run C:Mode");
-      } else {
-        snprintf(sbuf, sizeof(sbuf), "Tap app to run | Tap grp bar to switch");
-      }
-    }
-    lv_label_set_text(st->status_bar, sbuf);
+  if (st->filtered_count <= 0 || st->selected_item < 0 ||
+      st->selected_item >= st->filtered_count) {
+    return;
   }
+
+  const eos_bin_t *b = st->filtered[st->selected_item];
+  if (!b) return;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+  lv_obj_t *scr = lv_screen_active();
+
+  st->desc_dialog = lv_obj_create(scr);
+  lv_obj_set_size(st->desc_dialog, (int32_t)w - 16, (int32_t)h - 16);
+  lv_obj_center(st->desc_dialog);
+  lv_obj_set_style_bg_color(st->desc_dialog, lv_color_hex(0x0F172A), 0);
+  lv_obj_set_style_border_color(st->desc_dialog, lv_color_hex(0x38BDF8), 0);
+  lv_obj_set_style_border_width(st->desc_dialog, 2, 0);
+  lv_obj_set_style_radius(st->desc_dialog, 6, 0);
+  lv_obj_set_style_pad_all(st->desc_dialog, 8, 0);
+  lv_obj_clear_flag(st->desc_dialog, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t *t = lv_label_create(st->desc_dialog);
+  char tbuf[96];
+  snprintf(tbuf, sizeof(tbuf), "%s", bin_effective_name(b));
+  lv_label_set_text(t, tbuf);
+  lv_obj_set_style_text_color(t, lv_color_hex(0x38BDF8), 0);
+  lv_obj_align(t, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  lv_obj_t *fn = lv_label_create(st->desc_dialog);
+  char fnbuf[64];
+  snprintf(fnbuf, sizeof(fnbuf), "/bin/%s  [%s]", b->filename, bin_effective_group(b));
+  lv_label_set_text(fn, fnbuf);
+  lv_obj_set_style_text_color(fn, lv_color_hex(0x94A3B8), 0);
+  lv_obj_align(fn, LV_ALIGN_TOP_LEFT, 0, 18);
+
+  lv_obj_t *d = lv_label_create(st->desc_dialog);
+  lv_label_set_text(d, bin_effective_desc(b));
+  lv_label_set_long_mode(d, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(d, (int32_t)w - 36);
+  lv_obj_set_style_text_color(d, lv_color_hex(0xE2E8F0), 0);
+  lv_obj_align(d, LV_ALIGN_TOP_LEFT, 0, 38);
+
+  lv_obj_t *hint = lv_label_create(st->desc_dialog);
+  lv_label_set_text(hint, "[D or B to Close]");
+  lv_obj_set_style_text_color(hint, lv_color_hex(0xFDE047), 0);
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
 
 static void launcher_item_event_cb(lv_event_t *e) {
@@ -290,11 +332,26 @@ static void launcher_grp_event_cb(lv_event_t *e) {
   }
 }
 
-static void launcher_mode_event_cb(lv_event_t *e) {
+static void launcher_gesture_cb(lv_event_t *e) {
   launcher_state_t *st = (launcher_state_t *)lv_event_get_user_data(e);
   if (!st) return;
-  eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
-  launcher_update_details(st);
+  lv_indev_t *indev = lv_indev_active();
+  if (!indev) return;
+  lv_dir_t dir = lv_indev_get_gesture_dir(indev);
+  if (dir == LV_DIR_LEFT) {
+    if (st->group_count > 1) {
+      st->selected_group = (st->selected_group + 1) % st->group_count;
+      st->selected_item = 0;
+      launcher_populate_list(st);
+    }
+  } else if (dir == LV_DIR_RIGHT) {
+    if (st->group_count > 1) {
+      st->selected_group =
+          (st->selected_group - 1 + st->group_count) % st->group_count;
+      st->selected_item = 0;
+      launcher_populate_list(st);
+    }
+  }
 }
 
 static void launcher_populate_list(launcher_state_t *st) {
@@ -344,6 +401,7 @@ static void launcher_populate_list(launcher_state_t *st) {
     lv_obj_set_style_pad_hor(row, 6, 0);
     lv_obj_set_style_pad_ver(row, 2, 0);
     lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
     lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(row, launcher_item_event_cb, LV_EVENT_CLICKED, st);
 
@@ -388,33 +446,33 @@ static void launcher_build_ui(launcher_state_t *st) {
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  // 1. Header bar (height 24)
-  lv_obj_t *hdr = lv_obj_create(scr);
-  lv_obj_set_size(hdr, (int32_t)w, 24);
-  lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(hdr, lv_color_hex(0x1E3A8A), 0);
-  lv_obj_set_style_border_width(hdr, 0, 0);
-  lv_obj_set_style_radius(hdr, 0, 0);
-  lv_obj_set_style_pad_hor(hdr, 6, 0);
-  lv_obj_set_style_pad_ver(hdr, 2, 0);
-  lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
+  bool compact_mode = (h <= 200);
 
-  st->hdr_title = lv_label_create(hdr);
-  lv_label_set_text(st->hdr_title, "EOS Launcher");
-  lv_obj_set_style_text_color(st->hdr_title, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(st->hdr_title, LV_ALIGN_LEFT_MID, 0, 0);
+  // Top navigation / group selector bar
+  int32_t top_y = 0;
+  if (!compact_mode) {
+    // 1. Header bar for large displays
+    lv_obj_t *hdr = lv_obj_create(scr);
+    lv_obj_set_size(hdr, (int32_t)w, 24);
+    lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(hdr, lv_color_hex(0x1E3A8A), 0);
+    lv_obj_set_style_border_width(hdr, 0, 0);
+    lv_obj_set_style_radius(hdr, 0, 0);
+    lv_obj_set_style_pad_hor(hdr, 6, 0);
+    lv_obj_set_style_pad_ver(hdr, 2, 0);
+    lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
-  st->hdr_mode = lv_label_create(hdr);
-  lv_label_set_text(st->hdr_mode, "PARTIAL");
-  lv_obj_set_style_text_color(st->hdr_mode, lv_color_hex(0x34D399), 0);
-  lv_obj_align(st->hdr_mode, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_add_flag(st->hdr_mode, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(st->hdr_mode, launcher_mode_event_cb, LV_EVENT_CLICKED, st);
+    st->hdr_title = lv_label_create(hdr);
+    lv_label_set_text(st->hdr_title, "EOS Launcher");
+    lv_obj_set_style_text_color(st->hdr_title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(st->hdr_title, LV_ALIGN_LEFT_MID, 0, 0);
+    top_y = 24;
+  }
 
-  // 2. Group selector bar (height 24, y=24)
+  // 2. Group selector bar (height 22)
   st->grp_bar = lv_obj_create(scr);
-  lv_obj_set_size(st->grp_bar, (int32_t)w, 24);
-  lv_obj_align(st->grp_bar, LV_ALIGN_TOP_MID, 0, 24);
+  lv_obj_set_size(st->grp_bar, (int32_t)w, 22);
+  lv_obj_align(st->grp_bar, LV_ALIGN_TOP_MID, 0, top_y);
   lv_obj_set_style_bg_color(st->grp_bar, lv_color_hex(0x172554), 0);
   lv_obj_set_style_border_width(st->grp_bar, 0, 0);
   lv_obj_set_style_radius(st->grp_bar, 0, 0);
@@ -428,50 +486,60 @@ static void launcher_build_ui(launcher_state_t *st) {
   lv_obj_center(st->grp_label);
   lv_obj_clear_flag(st->grp_label, LV_OBJ_FLAG_CLICKABLE);
 
-  // 3. App list container (y=50, height = h - 50 - 64)
-  int32_t list_h = (int32_t)h - 114;
+  if (compact_mode) {
+    st->hdr_title = NULL;
+  }
+
+  // 3. App list container
+  int32_t list_y = top_y + 24;
+  int32_t footer_h = compact_mode ? 0 : 38;
+  int32_t list_h = (int32_t)h - list_y - footer_h - (compact_mode ? 2 : 4);
   if (list_h < 60)
     list_h = 60;
 
   st->list_cont = lv_obj_create(scr);
   lv_obj_set_size(st->list_cont, (int32_t)w - 6, list_h);
-  lv_obj_align(st->list_cont, LV_ALIGN_TOP_MID, 0, 50);
+  lv_obj_align(st->list_cont, LV_ALIGN_TOP_MID, 0, list_y);
   lv_obj_set_style_bg_color(st->list_cont, lv_color_hex(0x0F172A), 0);
   lv_obj_set_style_border_color(st->list_cont, lv_color_hex(0x334155), 0);
   lv_obj_set_style_border_width(st->list_cont, 1, 0);
   lv_obj_set_style_radius(st->list_cont, 4, 0);
-  lv_obj_set_style_pad_all(st->list_cont, 4, 0);
-  lv_obj_set_style_pad_row(st->list_cont, 3, 0);
+  lv_obj_set_style_pad_all(st->list_cont, 3, 0);
+  lv_obj_set_style_pad_row(st->list_cont, 2, 0);
   lv_obj_set_flex_flow(st->list_cont, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(st->list_cont, LV_OBJ_FLAG_SCROLL_ELASTIC);
+  lv_obj_add_flag(st->list_cont, LV_OBJ_FLAG_SCROLL_MOMENTUM);
+  lv_obj_add_flag(st->list_cont, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_event_cb(scr, launcher_gesture_cb, LV_EVENT_GESTURE, st);
+  lv_obj_add_event_cb(st->list_cont, launcher_gesture_cb, LV_EVENT_GESTURE, st);
 
-  // 4. Info & status footer (bottom 62px)
-  lv_obj_t *footer = lv_obj_create(scr);
-  lv_obj_set_size(footer, (int32_t)w - 6, 60);
-  lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
-  lv_obj_set_style_bg_color(footer, lv_color_hex(0x1E293B), 0);
-  lv_obj_set_style_border_color(footer, lv_color_hex(0x475569), 0);
-  lv_obj_set_style_border_width(footer, 1, 0);
-  lv_obj_set_style_radius(footer, 4, 0);
-  lv_obj_set_style_pad_all(footer, 4, 0);
-  lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
+  if (!compact_mode) {
+    // 4. Info card footer on large displays
+    lv_obj_t *footer = lv_obj_create(scr);
+    lv_obj_set_size(footer, (int32_t)w - 6, footer_h);
+    lv_obj_align(footer, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_style_bg_color(footer, lv_color_hex(0x1E293B), 0);
+    lv_obj_set_style_border_color(footer, lv_color_hex(0x475569), 0);
+    lv_obj_set_style_border_width(footer, 1, 0);
+    lv_obj_set_style_radius(footer, 4, 0);
+    lv_obj_set_style_pad_all(footer, 2, 0);
+    lv_obj_clear_flag(footer, LV_OBJ_FLAG_SCROLLABLE);
 
-  st->info_title = lv_label_create(footer);
-  lv_obj_set_width(st->info_title, (int32_t)w - 18);
-  lv_label_set_long_mode(st->info_title, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->info_title, lv_color_hex(0x38BDF8), 0);
-  lv_obj_align(st->info_title, LV_ALIGN_TOP_LEFT, 0, 0);
+    st->info_title = lv_label_create(footer);
+    lv_obj_set_width(st->info_title, (int32_t)w - 16);
+    lv_label_set_long_mode(st->info_title, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_color(st->info_title, lv_color_hex(0x38BDF8), 0);
+    lv_obj_align(st->info_title, LV_ALIGN_TOP_LEFT, 2, 0);
 
-  st->info_desc = lv_label_create(footer);
-  lv_obj_set_width(st->info_desc, (int32_t)w - 18);
-  lv_label_set_long_mode(st->info_desc, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->info_desc, lv_color_hex(0xE2E8F0), 0);
-  lv_obj_align(st->info_desc, LV_ALIGN_LEFT_MID, 0, 1);
-
-  st->status_bar = lv_label_create(footer);
-  lv_obj_set_width(st->status_bar, (int32_t)w - 18);
-  lv_label_set_long_mode(st->status_bar, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->status_bar, lv_color_hex(0x94A3B8), 0);
-  lv_obj_align(st->status_bar, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    st->info_desc = lv_label_create(footer);
+    lv_obj_set_width(st->info_desc, (int32_t)w - 16);
+    lv_label_set_long_mode(st->info_desc, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_color(st->info_desc, lv_color_hex(0xE2E8F0), 0);
+    lv_obj_align(st->info_desc, LV_ALIGN_BOTTOM_LEFT, 2, 0);
+  } else {
+    st->info_title = NULL;
+    st->info_desc = NULL;
+  }
 
   launcher_populate_list(st);
 }
@@ -503,7 +571,6 @@ static void launcher_handle_key(launcher_state_t *st, uint16_t key) {
     break;
 
   case KEY_RIGHT:
-  case KEY_D:
     if (st->group_count > 1) {
       st->selected_group = (st->selected_group + 1) % st->group_count;
       st->selected_item = 0;
@@ -511,14 +578,17 @@ static void launcher_handle_key(launcher_state_t *st, uint16_t key) {
     }
     break;
 
-  case KEY_C:
-    eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
-    launcher_update_details(st);
+  case KEY_D:
+    launcher_toggle_desc(st);
     break;
 
   case KEY_ENTER:
   case KEY_A:
   case KEY_SPACE:
+    if (st->desc_dialog) {
+      launcher_toggle_desc(st);
+      break;
+    }
     if (st->filtered_count > 0 && st->selected_item >= 0 &&
         st->selected_item < st->filtered_count) {
       st->trigger_launch = true;
@@ -527,7 +597,10 @@ static void launcher_handle_key(launcher_state_t *st, uint16_t key) {
 
   case KEY_ESC:
   case KEY_B:
-    // Dedicated kiosk launcher does not exit on ESC/B
+  case KEY_BACKSPACE:
+    if (st->desc_dialog) {
+      launcher_toggle_desc(st);
+    }
     break;
 
   default:
@@ -548,18 +621,11 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 
   bool is_direct = bin_is_direct_display_or_shell(target);
 
-  if (st->status_bar) {
-    char msg[64];
-    if (is_direct) {
-      snprintf(msg, sizeof(msg), "Launching %s...", target->filename);
-    } else {
-      snprintf(msg, sizeof(msg), "Running %s -> %s...", target->filename,
-               LAUNCHER_TERM_OUT_FILE);
-    }
-    lv_label_set_text(st->status_bar, msg);
-    if (eos_lvgl_get_display()) {
-      lv_refr_now(eos_lvgl_get_display());
-    }
+  eos_toolbar_printf(NULL, "Launching %s...", target->filename);
+
+  if (st->desc_dialog) {
+    lv_obj_delete(st->desc_dialog);
+    st->desc_dialog = NULL;
   }
 
   // Release framebuffer, keyboard, and LVGL buffers before spawning child binary
@@ -576,7 +642,12 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 
   int rc = 0;
   if (is_direct) {
-    rc = system(target->filename);
+    if (st->custom_cmd[0] != '\0') {
+      rc = system(st->custom_cmd);
+      st->custom_cmd[0] = '\0';
+    } else {
+      rc = system(target->filename);
+    }
     if (rc < 0 && target->entry_point) {
       char arg0[EOS_SMALL_STR_LEN];
       snprintf(arg0, sizeof(arg0), "%s", target->filename);
@@ -637,15 +708,7 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
   st->has_launched = true;
 
   // Re-initialize LVGL and rebuild launcher screen
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     EOS_LOGE("Failed to reinitialize LVGL after running '%s'",
              target->filename);
     return -1;
@@ -653,6 +716,8 @@ static int launcher_run_selected(launcher_state_t *st, const char *fb_path,
 
   eos_lvgl_clear_keys();
   launcher_build_ui(st);
+
+  eos_toolbar_set("EOS Launcher", "[▲▼]Select  [◄►]Tab  [A]Launch");
 
   EOS_LOGI("launcher: stack watermark=%u bytes free (allocated %u, used ~%u bytes)",
            (unsigned)eos_thread_stack_high_water_mark(),
@@ -684,12 +749,32 @@ int launcher_main(int argc, char **argv) {
     }
   }
 
-  bool launcher_is_active = (access(LAUNCHER_ACTIVE_FILE, F_OK) == 0);
+  bool launcher_is_active = false;
+  FILE *act_check = fopen(LAUNCHER_ACTIVE_FILE, "r");
+  if (act_check) {
+    long act_pid = 0;
+    if (fscanf(act_check, "%ld", &act_pid) == 1 && act_pid > 0) {
+      char ppath[32];
+      snprintf(ppath, sizeof(ppath), "/proc/%ld", act_pid);
+      if (access(ppath, F_OK) == 0) {
+        launcher_is_active = true;
+      }
+    }
+    fclose(act_check);
+    if (!launcher_is_active) {
+      unlink(LAUNCHER_ACTIVE_FILE);
+    }
+  }
+
   if (!list_only && launcher_is_active) {
     if (app_to_launch) {
       FILE *fp = fopen(LAUNCHER_CMD_FILE, "w");
       if (fp) {
-        fprintf(fp, "%s\n", app_to_launch);
+        for (int i = 1; i < argc; i++) {
+          if (i > 1) fputc(' ', fp);
+          fputs(argv[i], fp);
+        }
+        fputc('\n', fp);
         fclose(fp);
       }
       printf("launcher: requesting launch of '%s'...\n", app_to_launch);
@@ -714,18 +799,12 @@ int launcher_main(int argc, char **argv) {
   }
 
   FILE *act = fopen(LAUNCHER_ACTIVE_FILE, "w");
-  if (act) fclose(act);
+  if (act) {
+    fprintf(act, "%ld\n", (long)getpid());
+    fclose(act);
+  }
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("launcher: LVGL init failed, printing ebin list instead:\n");
     launcher_print_grouped_list(st);
     free(st);
@@ -734,11 +813,13 @@ int launcher_main(int argc, char **argv) {
   }
 
   printf("launcher: started on %s (%ux%u, %s)\n",
-         fb_path ? fb_path : "/dev/fb0",
+         eos_lvgl_get_fb_path(),
          (unsigned)eos_lvgl_get_width(), (unsigned)eos_lvgl_get_height(),
          eos_lvgl_get_indev() ? "keyboard active" : "touch/display mode (no keyboard)");
 
   launcher_build_ui(st);
+
+  eos_toolbar_set("EOS Launcher", "[▲▼]Select  [◄►]Tab  [A]Launch");
 
   EOS_LOGI("launcher: stack watermark=%u bytes free (allocated %u, used ~%u bytes)",
            (unsigned)eos_thread_stack_high_water_mark(),
@@ -772,8 +853,14 @@ int launcher_main(int argc, char **argv) {
       unlink(LAUNCHER_CMD_FILE);
 
       if (target_name[0] != '\0') {
+        char bin_name[EOS_SMALL_STR_LEN];
+        strlcpy(bin_name, target_name, sizeof(bin_name));
+        char *sp = strchr(bin_name, ' ');
+        if (sp) *sp = '\0';
+        strlcpy(st->custom_cmd, target_name, sizeof(st->custom_cmd));
+
         for (int i = 0; i < st->bin_count; i++) {
-          if (strcmp(st->bins[i]->filename, target_name) == 0) {
+          if (strcmp(st->bins[i]->filename, bin_name) == 0) {
             const char *grp = bin_effective_group(st->bins[i]);
             for (int g = 0; g < st->group_count; g++) {
               if (strcmp(st->groups[g].name, grp) == 0) {
@@ -783,7 +870,7 @@ int launcher_main(int argc, char **argv) {
               }
             }
             for (int j = 0; j < st->filtered_count; j++) {
-              if (strcmp(st->filtered[j]->filename, target_name) == 0) {
+              if (strcmp(st->filtered[j]->filename, bin_name) == 0) {
                 st->selected_item = j;
                 launcher_update_details(st);
                 st->trigger_launch = true;

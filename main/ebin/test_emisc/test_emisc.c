@@ -4,6 +4,7 @@
 #include "emisc/fnv-1a-32.h"
 #include "emisc/kvec.h"
 #include "emisc/netmisc.h"
+#include "emisc/rect.h"
 #include "emisc/strlimits.h"
 #include "emisc/types.h"
 
@@ -542,6 +543,55 @@ static void test_fancymacro(test_ctx_t *ctx) {
   report_test(ctx, "fancymacro: EOS_STR stringification", strcmp(str_42, "42") == 0);
 }
 
+// ── 7. rect.h 2D Integer Rectangle Tests ──────────────────────
+
+static void test_rect(test_ctx_t *ctx) {
+  printf("--- rect 2D Rectangle Math & Clipping Tests ---\n");
+
+  eos_rect_t a = {10, 10, 100, 100};
+  eos_rect_t b = {50, 50, 100, 100};
+  eos_rect_t inter;
+  bool ok = eos_rect_intersect(&a, &b, &inter);
+  report_test(ctx, "rect: intersect computes overlapping box",
+              ok && inter.x == 50 && inter.y == 50 && inter.w == 60 && inter.h == 60);
+
+  eos_rect_t c = {200, 200, 50, 50};
+  ok = eos_rect_intersect(&a, &c, &inter);
+  report_test(ctx, "rect: intersect returns false for disjoint boxes", !ok);
+
+  eos_rect_t inner = {20, 20, 30, 30};
+  report_test(ctx, "rect: contains verifies inner box within outer", eos_rect_contains(&a, &inner));
+  report_test(ctx, "rect: contains rejects partially outside box", !eos_rect_contains(&inner, &a));
+
+  // Subtraction: center cutout yields 4 pieces
+  eos_rect_t sub = {0, 0, 100, 100};
+  eos_rect_t occ = {30, 30, 40, 40};
+  eos_rect_t pieces[4];
+  size_t count = eos_rect_subtract(&sub, &occ, pieces);
+  report_test(ctx, "rect: subtract center cutout produces 4 pieces", count == 4);
+  uint32_t area_sum = 0;
+  for (size_t i = 0; i < count; i++) {
+    area_sum += pieces[i].w * pieces[i].h;
+  }
+  report_test(ctx, "rect: subtract area conservation (10000 - 1600 = 8400)", area_sum == 8400);
+
+  // Subtraction: total cover yields 0 pieces
+  count = eos_rect_subtract(&sub, &sub, pieces);
+  report_test(ctx, "rect: subtract full occluder produces 0 pieces", count == 0);
+
+  // Multi-subtraction: subtract left half, then top-right quarter -> bottom-right quarter remains
+  eos_rect_t occs[2] = {
+    {0, 0, 50, 100},
+    {50, 0, 50, 50}
+  };
+  eos_rect_t multi_out[8];
+  size_t multi_cnt = eos_rect_multi_subtract(&sub, occs, 2, multi_out, 8);
+  report_test(ctx, "rect: multi_subtract leaves remaining corner", multi_cnt == 1);
+  report_test(ctx, "rect: multi_subtract remaining corner matches (50,50,50,50)",
+              multi_cnt == 1 && multi_out[0].x == 50 && multi_out[0].y == 50 &&
+              multi_out[0].w == 50 && multi_out[0].h == 50);
+}
+
 // ── Main Entry Point ──────────────────────────────────────────
 
 int test_emisc_main(int argc, char **argv) {
@@ -563,6 +613,8 @@ int test_emisc_main(int argc, char **argv) {
   test_types(&ctx);
   printf("\n");
   test_fancymacro(&ctx);
+  printf("\n");
+  test_rect(&ctx);
 
   printf("\n==============================================\n");
   printf("emisc Tests: %d passed, %d failed.\n\n", ctx.passed, ctx.failed);

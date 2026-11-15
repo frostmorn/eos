@@ -1213,6 +1213,9 @@ static int eval_command_node(eos_ast_node_t *node) {
       exec_stages[0].ppid = parent_pid;
       exec_stages[0].pgid = spid;
       exec_stages[0].sid = parent_sid;
+      if (spid > 0 && !exec_stages[0].is_builtin) {
+        eos_proc_resolve_display_env(spid, exec_stages[0].manifest.flags);
+      }
 
       pthread_t thread;
       int rc = eos_proc_spawn_thread(spid, pipeline_stage_thread, &exec_stages[0],
@@ -1244,11 +1247,29 @@ static int eval_command_node(eos_ast_node_t *node) {
 
       fflush(stdout);
 
+      char *saved_fb = NULL;
+      if (proc) {
+        const char *cur_fb = eos_proc_getenv_pid(proc->pid, "EOS_FB");
+        if (cur_fb) saved_fb = strdup(cur_fb);
+        if (!exec_stages[0].is_builtin) {
+          eos_proc_resolve_display_env(proc->pid, exec_stages[0].manifest.flags);
+        }
+      }
+
       bool redir = has_stage_redirections(&exec_stages[0]);
       int opened_fds[2] = {-1, -1};
       if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
         ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
                                                   exec_stages[0].argv);
+      }
+
+      if (proc) {
+        if (saved_fb) {
+          eos_proc_setenv_pid(proc->pid, "EOS_FB", saved_fb, 1);
+          free(saved_fb);
+        } else {
+          eos_proc_unsetenv_pid(proc->pid, "EOS_FB");
+        }
       }
 
       fflush(stdout);
@@ -1285,6 +1306,9 @@ static int eval_command_node(eos_ast_node_t *node) {
       exec_stages[i].ppid = parent_pid;
       exec_stages[i].pgid = pipeline_pgid;
       exec_stages[i].sid = parent_sid;
+      if (spid > 0 && !exec_stages[i].is_builtin) {
+        eos_proc_resolve_display_env(spid, exec_stages[i].manifest.flags);
+      }
     }
 
     for (size_t i = 0; i < stage_count - 1; i++) {
@@ -1402,7 +1426,7 @@ static int eval_ast(eos_ast_node_t *node) {
     case EOS_NODE_BG: {
       if (node->left &&
           (node->left->type != EOS_NODE_COMMAND || kv_size(node->left->stages) > 0)) {
-        uint32_t bg_stack = ast_required_stack_size(node->left);
+        uint32_t bg_stack = ast_required_stack_size(node->left) + 4096;
         bool bg_psram = ast_prefers_psram_stack(node->left);
 
         const char *pname = "bg_proc";
@@ -1417,6 +1441,10 @@ static int eval_ast(eos_ast_node_t *node) {
         pid_t parent_pid = (cur && cur->pid > 0) ? cur->pid : 1;
         pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
         if (spid > 0) {
+          eos_bin_t bin_m;
+          if (load_bin_manifest(pname, &bin_m) == 0) {
+            eos_proc_resolve_display_env(spid, bin_m.flags);
+          }
           bool prev_h = eos_proc_heap_tracking_disable();
           bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
           if (bg) {

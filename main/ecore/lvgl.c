@@ -1,4 +1,5 @@
 #include "ecore/lvgl.h"
+#include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
@@ -41,6 +42,11 @@ typedef struct {
   uint32_t touch_total_travel;
   bool touch_moved;
   bool touch_gestures_enabled;
+  char active_fb_path[64];
+  pid_t owner_pid;
+  uint32_t fb_offset_x;
+  uint32_t fb_offset_y;
+  lv_obj_t *active_keyboard;
   eos_lvgl_touch_cb_t touch_cb;
   void *touch_cb_user_data;
 } eos_lvgl_internal_t;
@@ -87,6 +93,58 @@ static void key_queue_push(uint16_t eos_key) {
   s_lvgl.key_head = next;
 }
 
+lv_obj_t *eos_lvgl_get_active_keyboard(void) {
+  return s_lvgl.active_keyboard;
+}
+
+bool eos_lvgl_keyboard_handle_key(uint16_t key) {
+  lv_obj_t *kb = s_lvgl.active_keyboard;
+  if (!kb)
+    return false;
+
+  switch (key) {
+  case KEY_UP:
+  case KEY_DOWN:
+  case KEY_LEFT:
+  case KEY_RIGHT: {
+    if (lv_buttonmatrix_get_selected_button(kb) ==
+        LV_BUTTONMATRIX_BUTTON_NONE) {
+      lv_buttonmatrix_set_selected_button(kb, 0);
+    }
+    uint32_t lv_k = (key == KEY_RIGHT) ? LV_KEY_RIGHT :
+                    (key == KEY_LEFT)  ? LV_KEY_LEFT :
+                    (key == KEY_DOWN)  ? LV_KEY_DOWN : LV_KEY_UP;
+    lv_obj_send_event(kb, LV_EVENT_KEY, &lv_k);
+    return true;
+  }
+  case KEY_ENTER:
+  case KEY_A: {
+    uint32_t sel = lv_buttonmatrix_get_selected_button(kb);
+    if (sel == LV_BUTTONMATRIX_BUTTON_NONE) {
+      sel = 0;
+      lv_buttonmatrix_set_selected_button(kb, 0);
+    }
+    lv_obj_send_event(kb, LV_EVENT_VALUE_CHANGED, &sel);
+    return true;
+  }
+  case KEY_BACKSPACE:
+  case KEY_B:
+  case KEY_C: {
+    lv_obj_t *ta = lv_keyboard_get_textarea(kb);
+    if (ta) {
+      lv_textarea_delete_char(ta);
+    }
+    return true;
+  }
+  case KEY_ESC: {
+    lv_obj_send_event(kb, LV_EVENT_CANCEL, NULL);
+    return true;
+  }
+  default:
+    return false;
+  }
+}
+
 static void poll_hardware_keyboard(void) {
   if (s_lvgl.pub.kbd_fd < 0)
     return;
@@ -97,6 +155,11 @@ static void poll_hardware_keyboard(void) {
     int ret = ioctl(s_lvgl.pub.kbd_fd, EOS_KEYBOARD_IOCTL_POLL, &ev);
     if (ret > 0 && ev.type == EOS_INPUT_EVENT_KEYBOARD &&
         ev.code != KEY_RESERVED) {
+      if (s_lvgl.active_keyboard) {
+        if (eos_lvgl_keyboard_handle_key(ev.code)) {
+          continue;
+        }
+      }
       key_queue_push(ev.code);
       uint32_t lv_key = eos_lvgl_map_key(ev.code, s_lvgl.pub.dpad_group_nav);
       if (s_lvgl.pub.key_cb) {
@@ -122,16 +185,19 @@ uint32_t eos_lvgl_map_key(uint16_t eos_key, bool dpad_group_nav) {
   case KEY_A:
     return LV_KEY_ENTER;
   case KEY_ESC:
-  case KEY_B:
     return LV_KEY_ESC;
+  case KEY_BACKSPACE:
+  case KEY_B:
+    return LV_KEY_BACKSPACE;
   case KEY_C:
+    if (s_lvgl.pub.group && lv_group_get_editing(s_lvgl.pub.group)) {
+      return LV_KEY_BACKSPACE;
+    }
     return LV_KEY_PREV;
   case KEY_D:
     return LV_KEY_NEXT;
   case KEY_SPACE:
     return ' ';
-  case KEY_BACKSPACE:
-    return LV_KEY_BACKSPACE;
   case KEY_TAB:
     return LV_KEY_NEXT;
   case KEY_HOME:
@@ -191,26 +257,19 @@ static void eos_lvgl_indev_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
     return;
   }
 
-  if (s_lvgl.pub.kbd_fd < 0) {
-    data->state = LV_INDEV_STATE_RELEASED;
-    return;
-  }
+  // Poll hardware events into queue
+  poll_hardware_keyboard();
 
-  eos_input_event_t ev;
-  memset(&ev, 0, sizeof(ev));
-  int ret = ioctl(s_lvgl.pub.kbd_fd, EOS_KEYBOARD_IOCTL_POLL, &ev);
-  if (ret > 0 && ev.type == EOS_INPUT_EVENT_KEYBOARD &&
-      ev.code != KEY_RESERVED) {
-    key_queue_push(ev.code);
+  if (s_lvgl.key_head != s_lvgl.key_tail) {
+    uint16_t code = s_lvgl.key_queue[s_lvgl.key_tail];
+    s_lvgl.key_tail = (uint8_t)((s_lvgl.key_tail + 1U) % EOS_LVGL_KEY_QUEUE_SIZE);
+
     bool group_nav = s_lvgl.pub.dpad_group_nav;
     if (group_nav && s_lvgl.pub.group &&
         lv_group_get_editing(s_lvgl.pub.group)) {
       group_nav = false;
     }
-    uint32_t lv_key = eos_lvgl_map_key(ev.code, group_nav);
-    if (s_lvgl.pub.key_cb) {
-      s_lvgl.pub.key_cb(ev.code, lv_key, s_lvgl.pub.key_cb_user_data);
-    }
+    uint32_t lv_key = eos_lvgl_map_key(code, group_nav);
     if (lv_key != 0) {
       s_lvgl.pending_lv_key = lv_key;
       s_lvgl.send_release = true;
@@ -234,13 +293,6 @@ static void touch_queue_push(const eos_lvgl_touch_event_t *ev) {
   s_lvgl.touch_head = next;
 }
 
-#define EOS_TOUCH_NOISE_PRESSURE_THRESHOLD 5   // Ignore sensor noise / hover below this pressure
-#define EOS_TOUCH_CLICK_MIN_PRESSURE      20  // Intentional click requires >= 20 peak pressure (if supported)
-#define EOS_TOUCH_CLICK_MAX_TRAVEL_PX     30  // Max cumulative movement allowed for click/tap
-#define EOS_TOUCH_CLICK_MIN_DUR_MS        30  // Min contact duration for click/tap (reject noise glitches)
-#define EOS_TOUCH_CLICK_MAX_DUR_MS        550 // Max contact duration for click/tap (longer is a hold)
-#define EOS_TOUCH_DRAG_DISPLACEMENT_PX    20  // Displacement from origin to flag dragging
-
 static void poll_hardware_touch(void) {
   if (s_lvgl.pub.touch_fd < 0)
     return;
@@ -249,109 +301,29 @@ static void poll_hardware_touch(void) {
   memset(&ev, 0, sizeof(ev));
   int ret = ioctl(s_lvgl.pub.touch_fd, EOS_TOUCH_IOCTL_POLL, &ev);
   if (ret > 0 && ev.type == EOS_INPUT_EVENT_TOUCH) {
-    bool was_pressed = s_lvgl.touch_pressed;
-    uint32_t now = eos_lvgl_tick_cb();
-
-    // Reject sensor noise blips when touch reports negligible pressure
-    if (ev.state != 0 && ev.pressure > 0 &&
-        ev.pressure < EOS_TOUCH_NOISE_PRESSURE_THRESHOLD) {
-      return;
+    int32_t mx = (int32_t)ev.x - (int32_t)s_lvgl.fb_offset_x;
+    int32_t my = (int32_t)ev.y - (int32_t)s_lvgl.fb_offset_y;
+    if (mx < 0) mx = 0;
+    if (my < 0) my = 0;
+    if (s_lvgl.pub.width > 0 && mx >= (int32_t)s_lvgl.pub.width) {
+      mx = (int32_t)s_lvgl.pub.width - 1;
+    }
+    if (s_lvgl.pub.height > 0 && my >= (int32_t)s_lvgl.pub.height) {
+      my = (int32_t)s_lvgl.pub.height - 1;
     }
 
-    uint16_t prev_x = s_lvgl.last_touch_x;
-    uint16_t prev_y = s_lvgl.last_touch_y;
-
-    s_lvgl.last_touch_x = ev.x;
-    s_lvgl.last_touch_y = ev.y;
+    s_lvgl.last_touch_x = (uint16_t)mx;
+    s_lvgl.last_touch_y = (uint16_t)my;
     s_lvgl.last_touch_pressure = (ev.state != 0) ? ev.pressure : 0;
     s_lvgl.touch_pressed = (ev.state != 0);
 
     eos_lvgl_touch_event_t tev = {
-        .x = ev.x,
-        .y = ev.y,
+        .x = (uint16_t)mx,
+        .y = (uint16_t)my,
         .pressed = s_lvgl.touch_pressed,
         .pressure = s_lvgl.last_touch_pressure,
         .gesture = EOS_LVGL_GESTURE_NONE,
     };
-
-    if (s_lvgl.touch_pressed && !was_pressed) {
-      // Touch began
-      s_lvgl.touch_down_x = ev.x;
-      s_lvgl.touch_down_y = ev.y;
-      s_lvgl.touch_down_ms = now;
-      s_lvgl.touch_max_pressure = ev.pressure;
-      s_lvgl.touch_total_travel = 0;
-      s_lvgl.touch_moved = false;
-    } else if (s_lvgl.touch_pressed && was_pressed) {
-      // Touch dragging / continuing contact
-      int step_dx = (int)ev.x - (int)prev_x;
-      int step_dy = (int)ev.y - (int)prev_y;
-      s_lvgl.touch_total_travel += (uint32_t)(abs(step_dx) + abs(step_dy));
-
-      if (ev.pressure > s_lvgl.touch_max_pressure) {
-        s_lvgl.touch_max_pressure = ev.pressure;
-      }
-
-      int dx = (int)ev.x - (int)s_lvgl.touch_down_x;
-      int dy = (int)ev.y - (int)s_lvgl.touch_down_y;
-      if (abs(dx) > EOS_TOUCH_DRAG_DISPLACEMENT_PX ||
-          abs(dy) > EOS_TOUCH_DRAG_DISPLACEMENT_PX ||
-          s_lvgl.touch_total_travel > EOS_TOUCH_CLICK_MAX_TRAVEL_PX) {
-        s_lvgl.touch_moved = true;
-      }
-    } else if (!s_lvgl.touch_pressed && was_pressed) {
-      // Touch released -> distinguish deliberate click/tap from drag/swipe
-      int dx = (int)s_lvgl.last_touch_x - (int)s_lvgl.touch_down_x;
-      int dy = (int)s_lvgl.last_touch_y - (int)s_lvgl.touch_down_y;
-      uint32_t dur = now - s_lvgl.touch_down_ms;
-
-      if (s_lvgl.touch_moved) {
-        // Definite drag / swipe gesture
-        if (abs(dx) >= abs(dy)) {
-          tev.gesture = (dx > 0) ? EOS_LVGL_GESTURE_SWIPE_RIGHT
-                                 : EOS_LVGL_GESTURE_SWIPE_LEFT;
-        } else {
-          tev.gesture = (dy > 0) ? EOS_LVGL_GESTURE_SWIPE_DOWN
-                                 : EOS_LVGL_GESTURE_SWIPE_UP;
-        }
-      } else {
-        // Evaluate click / tap using spatial travel, duration, and pressure profile
-        bool valid_dur = (dur >= EOS_TOUCH_CLICK_MIN_DUR_MS &&
-                          dur <= EOS_TOUCH_CLICK_MAX_DUR_MS);
-        // If controller reports pressure (>0), require peak pressure to exceed click threshold
-        // (filters out feather brushes, glance touches, and lift-off noise)
-        bool valid_pressure = (s_lvgl.touch_max_pressure == 0 ||
-                               s_lvgl.touch_max_pressure >= EOS_TOUCH_CLICK_MIN_PRESSURE);
-        bool valid_travel = (s_lvgl.touch_total_travel <= EOS_TOUCH_CLICK_MAX_TRAVEL_PX);
-
-        if (valid_dur && valid_pressure && valid_travel) {
-          tev.gesture = EOS_LVGL_GESTURE_TAP;
-        }
-      }
-
-      if (s_lvgl.touch_gestures_enabled) {
-        switch (tev.gesture) {
-        case EOS_LVGL_GESTURE_SWIPE_UP:
-          key_queue_push(KEY_UP);
-          break;
-        case EOS_LVGL_GESTURE_SWIPE_DOWN:
-          key_queue_push(KEY_DOWN);
-          break;
-        case EOS_LVGL_GESTURE_SWIPE_LEFT:
-          key_queue_push(KEY_LEFT);
-          break;
-        case EOS_LVGL_GESTURE_SWIPE_RIGHT:
-          key_queue_push(KEY_RIGHT);
-          break;
-        case EOS_LVGL_GESTURE_TAP:
-          key_queue_push(KEY_ENTER);
-          break;
-        default:
-          break;
-        }
-      }
-    }
-
     touch_queue_push(&tev);
 
     if (s_lvgl.touch_cb) {
@@ -366,12 +338,8 @@ static void eos_lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
 
   data->point.x = s_lvgl.last_touch_x;
   data->point.y = s_lvgl.last_touch_y;
-  data->state =
-      (s_lvgl.touch_pressed &&
-       (s_lvgl.last_touch_pressure == 0 ||
-        s_lvgl.last_touch_pressure >= EOS_TOUCH_NOISE_PRESSURE_THRESHOLD))
-          ? LV_INDEV_STATE_PRESSED
-          : LV_INDEV_STATE_RELEASED;
+  data->state = s_lvgl.touch_pressed ? LV_INDEV_STATE_PRESSED
+                                     : LV_INDEV_STATE_RELEASED;
 }
 
 // ── Framebuffer Partial & Full-Frame Flushing ──────────────────
@@ -561,13 +529,28 @@ static void eos_lvgl_flush_cb(lv_display_t *display, const lv_area_t *area,
 
 // ── Public Lifecycle & Helper Functions ────────────────────────
 
-int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
+static void lvgl_proc_cleanup_hook(void *arg) {
+  (void)arg;
   if (s_lvgl.pub.initialized) {
-    EOS_LOGW("eos_lvgl_init: LVGL is already initialized by another task");
-    return -EBUSY;
+    eos_lvgl_deinit();
+  }
+}
+
+int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
+  pid_t cur_pid = eos_getpid();
+  if (s_lvgl.pub.initialized) {
+    if (s_lvgl.owner_pid > 0 && (!eos_proc_find(s_lvgl.owner_pid) || s_lvgl.owner_pid == cur_pid)) {
+      EOS_LOGW("eos_lvgl_init: reclaiming LVGL from PID %d", s_lvgl.owner_pid);
+      eos_lvgl_deinit();
+    } else {
+      EOS_LOGW("eos_lvgl_init: LVGL is already initialized by active process %d", s_lvgl.owner_pid);
+      return -EBUSY;
+    }
   }
 
   memset(&s_lvgl, 0, sizeof(s_lvgl));
+  s_lvgl.owner_pid = cur_pid;
+  eos_proc_on_exit(lvgl_proc_cleanup_hook, NULL, "lvgl_deinit");
   s_lvgl.pub.fb_fd = -1;
   s_lvgl.pub.kbd_fd = -1;
   s_lvgl.pub.touch_fd = -1;
@@ -575,8 +558,9 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
 
   const char *fb_path = (cfg && cfg->fb_path) ? cfg->fb_path : getenv("EOS_FB");
   if (!fb_path || !fb_path[0]) {
-    fb_path = EOS_LVGL_DEFAULT_FB_PATH;
+    fb_path = (access("/dev/vfb0", F_OK) == 0) ? "/dev/vfb0" : EOS_LVGL_DEFAULT_FB_PATH;
   }
+  strlcpy(s_lvgl.active_fb_path, fb_path, sizeof(s_lvgl.active_fb_path));
 
   const char *kbd_path =
       (cfg && cfg->kbd_path) ? cfg->kbd_path : getenv("EOS_KEYBOARD");
@@ -613,6 +597,14 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   s_lvgl.pub.fb_fd = fb_fd;
   s_lvgl.pub.width = width;
   s_lvgl.pub.height = height;
+
+  uint32_t off_x = 0, off_y = 0;
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_X, &off_x) == 0) {
+    s_lvgl.fb_offset_x = off_x;
+  }
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_Y, &off_y) == 0) {
+    s_lvgl.fb_offset_y = off_y;
+  }
 
   // Compute partial strip height modeled after st7789.c (16 KB DMA strip)
   size_t row_bytes = (size_t)width * sizeof(uint16_t);
@@ -774,10 +766,14 @@ int eos_lvgl_init_paths(const char *fb_path, const char *kbd_path) {
       .kbd_path = kbd_path,
       .partial_lines = 0,
       .force_full_frame = false,
-      .dpad_group_nav = true,
+      .dpad_group_nav = false,
       .enable_keyboard = true,
   };
   return eos_lvgl_init(&cfg);
+}
+
+const char *eos_lvgl_get_fb_path(void) {
+  return s_lvgl.active_fb_path[0] ? s_lvgl.active_fb_path : EOS_LVGL_DEFAULT_FB_PATH;
 }
 
 void eos_lvgl_deinit(void) {
@@ -834,6 +830,11 @@ void eos_lvgl_deinit(void) {
   if (s_lvgl.pub.touch_fd >= 0) {
     close(s_lvgl.pub.touch_fd);
     s_lvgl.pub.touch_fd = -1;
+  }
+
+  if (s_lvgl.owner_pid > 0) {
+    eos_proc_cancel_exit_match(s_lvgl.owner_pid, lvgl_proc_cleanup_hook, NULL);
+    s_lvgl.owner_pid = 0;
   }
 
   s_lvgl.pub.initialized = false;
@@ -1014,7 +1015,7 @@ bool eos_lvgl_get_touch_gestures(void) {
 
 static void eos_lvgl_default_back_btn_cb(lv_event_t *e) {
   (void)e;
-  key_queue_push(KEY_B);
+  key_queue_push(KEY_ESC);
 }
 
 lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
@@ -1026,10 +1027,16 @@ lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
     return NULL;
 
   lv_obj_t *btn = lv_button_create(parent);
-  lv_obj_set_size(btn, 36, 26);
-  lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -4, 4);
+  int32_t ph = lv_obj_get_height(parent);
+  if (ph > 0 && ph <= 26) {
+    lv_obj_set_size(btn, 24, ph > 4 ? ph - 4 : 16);
+    lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -2, 0);
+  } else {
+    lv_obj_set_size(btn, 26, 18);
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -3, 2);
+  }
   lv_obj_set_style_bg_color(btn, lv_color_hex(0xEF4444), 0);
-  lv_obj_set_style_radius(btn, 4, 0);
+  lv_obj_set_style_radius(btn, 3, 0);
   lv_obj_set_style_pad_all(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1118,6 +1125,86 @@ lv_obj_t *eos_lvgl_create_toast(lv_obj_t *parent, const char *message, bool is_e
   return toast;
 }
 
+// ── Shared On-Screen Keyboard ───────────────────────────────────
+
+static void eos_keyboard_delete_cb(lv_event_t *e) {
+  if (s_lvgl.active_keyboard == lv_event_get_target(e)) {
+    s_lvgl.active_keyboard = NULL;
+  }
+}
+
+lv_obj_t *eos_lvgl_create_keyboard(lv_obj_t *parent, lv_obj_t *target_ta) {
+  if (!parent) {
+    parent = lv_screen_active();
+  }
+  if (!parent)
+    return NULL;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *kb = lv_keyboard_create(parent);
+  if (!kb)
+    return NULL;
+
+  if (target_ta) {
+    lv_keyboard_set_textarea(kb, target_ta);
+  }
+
+  int32_t parent_w = lv_obj_get_width(parent);
+  if (parent_w <= 0) parent_w = (int32_t)w;
+  int32_t parent_h = lv_obj_get_height(parent);
+  if (parent_h <= 0) parent_h = (int32_t)h;
+
+  int32_t kb_w = parent_w - 6;
+  if (kb_w > 480) kb_w = 480;
+  int32_t kb_h = parent_h * 50 / 100;
+  if (kb_h < 75) kb_h = 75;
+  if (kb_h > 240) kb_h = 240;
+
+  lv_obj_set_size(kb, kb_w, kb_h);
+  lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -2);
+  lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+  lv_obj_set_style_border_color(kb, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(kb, 1, 0);
+  lv_obj_set_style_radius(kb, 4, 0);
+  lv_obj_set_style_pad_all(kb, 2, 0);
+  lv_obj_set_style_pad_gap(kb, 2, 0);
+
+  // Normal keyboard keys
+  lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_CARD), LV_PART_ITEMS);
+  lv_obj_set_style_text_color(kb, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(kb, lv_color_hex(EOS_COLOR_BORDER), LV_PART_ITEMS);
+  lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
+  lv_obj_set_style_radius(kb, 3, LV_PART_ITEMS);
+
+  // High-visibility focus indicator for D-pad / arrow key navigation
+  lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_ACCENT_BLUE),
+                             LV_PART_ITEMS | LV_STATE_FOCUSED);
+  lv_obj_set_style_border_color(kb, lv_color_hex(EOS_COLOR_ACCENT_YELLOW),
+                                LV_PART_ITEMS | LV_STATE_FOCUSED);
+  lv_obj_set_style_border_width(kb, 2,
+                                LV_PART_ITEMS | LV_STATE_FOCUSED);
+
+  // Initial button selection for immediate visibility
+  lv_buttonmatrix_set_selected_button(kb, 0);
+  lv_obj_add_state(kb, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
+
+  // Set active keyboard pointer & cleanup callback
+  s_lvgl.active_keyboard = kb;
+  lv_obj_add_event_cb(kb, eos_keyboard_delete_cb, LV_EVENT_DELETE, NULL);
+
+  // Group integration: enable editing mode so arrow keys traverse keys directly
+  lv_group_t *grp = eos_lvgl_get_group();
+  if (grp) {
+    lv_group_add_obj(grp, kb);
+    lv_group_focus_obj(kb);
+    lv_group_set_editing(grp, true);
+  }
+
+  return kb;
+}
+
 typedef struct {
   eos_lvgl_input_dialog_cfg_t cfg;
   lv_obj_t *overlay;
@@ -1184,73 +1271,48 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ov, input_dialog_delete_cb, LV_EVENT_DELETE, data);
 
-  // Dialog card box
-  int32_t dlg_w = (int32_t)w - 20;
-  if (dlg_w > 400) dlg_w = 400;
-  int32_t dlg_h = (int32_t)h - 20;
-  if (dlg_h > 280) dlg_h = 280;
+  // Dialog card box: on small displays (such as Lilka / QEMU 280x224),
+  // card takes full available dimensions so keyboard keys are maximally enlarged.
+  int32_t dlg_w = (int32_t)w;
+  int32_t dlg_h = (int32_t)h;
+  if (dlg_w > 440) dlg_w = 440;
+  if (dlg_h > 360) dlg_h = 360;
 
   lv_obj_t *card = lv_obj_create(ov);
   lv_obj_set_size(card, dlg_w, dlg_h);
   lv_obj_center(card);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
-  lv_obj_set_style_border_width(card, 2, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, 6, 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 4, 0);
+  lv_obj_set_style_pad_all(card, 4, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-  // Title
+  // Top header: Title on left, Action buttons on right
   lv_obj_t *tlbl = lv_label_create(card);
   lv_label_set_text(tlbl, cfg->title ? cfg->title : "Input");
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
-  lv_obj_align(tlbl, LV_ALIGN_TOP_MID, 0, 2);
+  lv_obj_align(tlbl, LV_ALIGN_TOP_LEFT, 4, 4);
 
-  // Prompt
-  if (cfg->prompt) {
-    lv_obj_t *plbl = lv_label_create(card);
-    lv_label_set_text(plbl, cfg->prompt);
-    lv_obj_set_style_text_color(plbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
-    lv_obj_align(plbl, LV_ALIGN_TOP_LEFT, 4, 22);
-  }
-
-  // Text Area
-  lv_obj_t *ta = lv_textarea_create(card);
-  data->textarea = ta;
-  lv_obj_set_size(ta, dlg_w - 24, 32);
-  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 44);
-  if (cfg->is_password) {
-    lv_textarea_set_password_mode(ta, true);
-  }
-  lv_textarea_set_one_line(ta, true);
-  if (cfg->initial_text) {
-    lv_textarea_set_text(ta, cfg->initial_text);
-  }
-  lv_obj_set_style_bg_color(ta, lv_color_hex(EOS_COLOR_BG_DARK), 0);
-  lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
-  lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
-
-  // Action Buttons Bar
-  int32_t btn_y = 80;
   lv_obj_t *btn_cancel = lv_button_create(card);
-  lv_obj_set_size(btn_cancel, 80, 28);
-  lv_obj_align(btn_cancel, LV_ALIGN_TOP_LEFT, 10, btn_y);
+  lv_obj_set_size(btn_cancel, 56, 22);
+  lv_obj_align(btn_cancel, LV_ALIGN_TOP_RIGHT, -64, 0);
   lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
   lv_obj_set_style_border_color(btn_cancel, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(btn_cancel, 1, 0);
-  lv_obj_set_style_radius(btn_cancel, 4, 0);
+  lv_obj_set_style_radius(btn_cancel, 3, 0);
   lv_obj_add_event_cb(btn_cancel, input_dialog_cancel_click, LV_EVENT_CLICKED, data);
 
   lv_obj_t *clbl = lv_label_create(btn_cancel);
-  lv_label_set_text(clbl, "Cancel");
+  lv_label_set_text(clbl, cfg->cancel_label ? cfg->cancel_label : "Cancel");
   lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
   lv_obj_center(clbl);
 
   lv_obj_t *btn_ok = lv_button_create(card);
-  lv_obj_set_size(btn_ok, 80, 28);
-  lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -10, btn_y);
+  lv_obj_set_size(btn_ok, 56, 22);
+  lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -2, 0);
   lv_obj_set_style_bg_color(btn_ok, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
-  lv_obj_set_style_radius(btn_ok, 4, 0);
+  lv_obj_set_style_radius(btn_ok, 3, 0);
   lv_obj_add_event_cb(btn_ok, input_dialog_ok_click, LV_EVENT_CLICKED, data);
 
   lv_obj_t *oklbl = lv_label_create(btn_ok);
@@ -1258,30 +1320,505 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
   lv_obj_center(oklbl);
 
-  // On-screen touch keyboard (if touch device is present)
-  if (eos_lvgl_has_touch()) {
-    lv_obj_t *kb = lv_keyboard_create(card);
-    lv_keyboard_set_textarea(kb, ta);
-    lv_obj_set_size(kb, dlg_w - 12, dlg_h - btn_y - 36);
-    lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -2);
-    lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
-    lv_obj_set_style_text_color(kb, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  // Text Area right under header
+  lv_obj_t *ta = lv_textarea_create(card);
+  data->textarea = ta;
+  lv_obj_set_size(ta, dlg_w - 12, 28);
+  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 26);
+  if (cfg->is_password) {
+    lv_textarea_set_password_mode(ta, true);
+  }
+  lv_textarea_set_one_line(ta, true);
+  if (cfg->initial_text) {
+    lv_textarea_set_text(ta, cfg->initial_text);
+  } else if (cfg->prompt) {
+    lv_textarea_set_placeholder_text(ta, cfg->prompt);
+  }
+  lv_obj_set_style_bg_color(ta, lv_color_hex(EOS_COLOR_BG_DARK), 0);
+  lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_pad_all(ta, 4, 0);
+
+  // On-screen keyboard: ALWAYS created and maximized in remaining height
+  int32_t kb_y = 58;
+  int32_t kb_h = dlg_h - kb_y - 4;
+  if (kb_h < 60) kb_h = 60;
+
+  lv_obj_t *kb = eos_lvgl_create_keyboard(card, ta);
+  if (kb) {
+    lv_obj_set_size(kb, dlg_w - 6, kb_h);
+    lv_obj_align(kb, LV_ALIGN_TOP_MID, 0, kb_y);
     lv_obj_add_event_cb(kb, input_dialog_kb_event, LV_EVENT_ALL, data);
   }
 
-  // Register with group for hardware keys / D-pad
+  // Register with group for hardware keys / D-pad navigation
   lv_group_t *grp = eos_lvgl_get_group();
   if (grp) {
     lv_group_add_obj(grp, ta);
+    if (kb) lv_group_add_obj(grp, kb);
     lv_group_add_obj(grp, btn_ok);
     lv_group_add_obj(grp, btn_cancel);
-    lv_group_focus_obj(ta);
+    if (kb) {
+      lv_group_focus_obj(kb);
+      lv_group_set_editing(grp, true);
+    }
   }
 
   return ov;
 }
 
 void eos_lvgl_close_input_dialog(lv_obj_t *dialog) {
+  if (dialog) {
+    lv_obj_delete(dialog);
+  }
+}
+
+// ── Statusbar & Toolbar APIs ───────────────────────────────────
+
+int eos_toolbar_set(const char *title, const char *shortcuts) {
+  int fd = open("/tmp/tbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) return -1;
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf), "@%ld %s\n%s\n", (long)getpid(),
+                     title ? title : "",
+                     shortcuts ? shortcuts : "");
+  if (len > 0) {
+    write(fd, buf, (size_t)len);
+  }
+  close(fd);
+  return rename("/tmp/tbar.tmp", "/tmp/tbar");
+}
+
+int eos_toolbar_printf(const char *shortcuts, const char *fmt, ...) {
+  char title[128] = {0};
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(title, sizeof(title), fmt, args);
+  va_end(args);
+  return eos_toolbar_set(title, shortcuts);
+}
+
+int eos_toolbar_clear(void) {
+  unlink("/tmp/tbar.tmp");
+  return unlink("/tmp/tbar");
+}
+
+int eos_statusbar_set(const char *line1, const char *line2) {
+  int fd = open("/tmp/sbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0) return -1;
+  char buf[256];
+  int len = snprintf(buf, sizeof(buf), "@%ld %s\n%s\n", (long)getpid(),
+                     line1 ? line1 : "",
+                     line2 ? line2 : "");
+  if (len > 0) {
+    write(fd, buf, (size_t)len);
+  }
+  close(fd);
+  return rename("/tmp/sbar.tmp", "/tmp/sbar");
+}
+
+int eos_statusbar_printf(const char *line2, const char *fmt, ...) {
+  char line1[128] = {0};
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(line1, sizeof(line1), fmt, args);
+  va_end(args);
+  return eos_statusbar_set(line1, line2);
+}
+
+int eos_statusbar_clear(void) {
+  unlink("/tmp/sbar.tmp");
+  return unlink("/tmp/sbar");
+}
+
+// ── Shared Confirmation Dialog ─────────────────────────────────
+
+typedef struct {
+  eos_lvgl_confirm_dialog_cfg_t cfg;
+  lv_obj_t *overlay;
+} eos_confirm_dialog_data_t;
+
+static void confirm_dialog_delete_cb(lv_event_t *e) {
+  eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)lv_event_get_user_data(e);
+  if (data) free(data);
+}
+
+static void confirm_dialog_confirm_click(lv_event_t *e) {
+  eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_confirm_cb_t cb = data->cfg.cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(true, ud);
+}
+
+static void confirm_dialog_cancel_click(lv_event_t *e) {
+  eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_confirm_cb_t cb = data->cfg.cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(false, ud);
+}
+
+lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_confirm_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_confirm_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, confirm_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  int32_t dlg_w = (int32_t)w - 20;
+  if (dlg_w > 340) dlg_w = 340;
+  if (dlg_w < 200) dlg_w = 200;
+
+  lv_obj_t *card = lv_obj_create(ov);
+  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Title
+  lv_obj_t *tlbl = lv_label_create(card);
+  lv_label_set_text(tlbl, cfg->title ? cfg->title : "Confirm");
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+
+  // Message body
+  if (cfg->message) {
+    lv_obj_t *mlbl = lv_label_create(card);
+    lv_label_set_text(mlbl, cfg->message);
+    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  }
+
+  // Button row
+  lv_obj_t *btn_row = lv_obj_create(card);
+  lv_obj_set_size(btn_row, lv_pct(100), 28);
+  lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+  lv_obj_set_style_border_width(btn_row, 0, 0);
+  lv_obj_set_style_pad_all(btn_row, 0, 0);
+  lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Cancel button
+  lv_obj_t *btn_c = lv_button_create(btn_row);
+  lv_obj_set_size(btn_c, (dlg_w - 30) / 2, 26);
+  lv_obj_align(btn_c, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_set_style_bg_color(btn_c, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+  lv_obj_set_style_border_color(btn_c, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(btn_c, 1, 0);
+  lv_obj_set_style_radius(btn_c, 3, 0);
+  lv_obj_add_event_cb(btn_c, confirm_dialog_cancel_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *clbl = lv_label_create(btn_c);
+  lv_label_set_text(clbl, cfg->cancel_label ? cfg->cancel_label : "Cancel");
+  lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
+  lv_obj_center(clbl);
+
+  // Confirm button
+  lv_obj_t *btn_ok = lv_button_create(btn_row);
+  lv_obj_set_size(btn_ok, (dlg_w - 30) / 2, 26);
+  lv_obj_align(btn_ok, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(cfg->dangerous ? EOS_COLOR_STATUS_RED : EOS_COLOR_ACCENT_BLUE), 0);
+  lv_obj_set_style_radius(btn_ok, 3, 0);
+  lv_obj_add_event_cb(btn_ok, confirm_dialog_confirm_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *oklbl = lv_label_create(btn_ok);
+  lv_label_set_text(oklbl, cfg->confirm_label ? cfg->confirm_label : "Confirm");
+  lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(oklbl);
+
+  lv_group_t *grp = eos_lvgl_get_group();
+  if (grp) {
+    lv_group_add_obj(grp, btn_c);
+    lv_group_add_obj(grp, btn_ok);
+    lv_group_focus_obj(btn_ok);
+  }
+
+  return ov;
+}
+
+// ── Shared Information Dialog ──────────────────────────────────
+
+typedef struct {
+  eos_lvgl_info_dialog_cfg_t cfg;
+  lv_obj_t *overlay;
+} eos_info_dialog_data_t;
+
+static void info_dialog_delete_cb(lv_event_t *e) {
+  eos_info_dialog_data_t *data = (eos_info_dialog_data_t *)lv_event_get_user_data(e);
+  if (data) free(data);
+}
+
+static void info_dialog_ok_click(lv_event_t *e) {
+  eos_info_dialog_data_t *data = (eos_info_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_info_cb_t cb = data->cfg.cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(ud);
+}
+
+lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_info_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_info_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, info_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  int32_t dlg_w = (int32_t)w - 20;
+  if (dlg_w > 340) dlg_w = 340;
+  if (dlg_w < 200) dlg_w = 200;
+
+  lv_obj_t *card = lv_obj_create(ov);
+  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Title
+  lv_obj_t *tlbl = lv_label_create(card);
+  char thdr[64];
+  snprintf(thdr, sizeof(thdr), "i  %s", cfg->title ? cfg->title : "Information");
+  lv_label_set_text(tlbl, thdr);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+
+  // Message body
+  if (cfg->message) {
+    lv_obj_t *mlbl = lv_label_create(card);
+    lv_label_set_text(mlbl, cfg->message);
+    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  }
+
+  // Dismiss Button
+  lv_obj_t *btn = lv_button_create(card);
+  lv_obj_set_size(btn, 80, 26);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
+  lv_obj_set_style_radius(btn, 3, 0);
+  lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_add_event_cb(btn, info_dialog_ok_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *blbl = lv_label_create(btn);
+  lv_label_set_text(blbl, cfg->button_label ? cfg->button_label : "OK");
+  lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(blbl);
+
+  lv_group_t *grp = eos_lvgl_get_group();
+  if (grp) {
+    lv_group_add_obj(grp, btn);
+    lv_group_focus_obj(btn);
+  }
+
+  return ov;
+}
+
+// ── Shared Alert Dialog ────────────────────────────────────────
+
+typedef struct {
+  eos_lvgl_alert_dialog_cfg_t cfg;
+  lv_obj_t *overlay;
+} eos_alert_dialog_data_t;
+
+static void alert_dialog_delete_cb(lv_event_t *e) {
+  eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)lv_event_get_user_data(e);
+  if (data) free(data);
+}
+
+static void alert_dialog_ok_click(lv_event_t *e) {
+  eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_alert_cb_t cb = data->cfg.cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(true, ud);
+}
+
+static void alert_dialog_cancel_click(lv_event_t *e) {
+  eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)lv_event_get_user_data(e);
+  if (!data) return;
+  eos_lvgl_alert_cb_t cb = data->cfg.cb;
+  void *ud = data->cfg.user_data;
+  lv_obj_t *ov = data->overlay;
+  lv_obj_delete(ov);
+  if (cb) cb(false, ud);
+}
+
+lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_alert_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_alert_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, alert_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  int32_t dlg_w = (int32_t)w - 20;
+  if (dlg_w > 340) dlg_w = 340;
+  if (dlg_w < 200) dlg_w = 200;
+
+  uint32_t accent = EOS_COLOR_ACCENT_CYAN;
+  const char *icon = "i";
+  if (cfg->level == EOS_LVGL_ALERT_WARNING) {
+    accent = EOS_COLOR_STATUS_ORANGE;
+    icon = "!";
+  } else if (cfg->level == EOS_LVGL_ALERT_ERROR) {
+    accent = EOS_COLOR_STATUS_RED;
+    icon = "X";
+  }
+
+  lv_obj_t *card = lv_obj_create(ov);
+  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(accent), 0);
+  lv_obj_set_style_border_width(card, 2, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Header
+  lv_obj_t *tlbl = lv_label_create(card);
+  char thdr[64];
+  snprintf(thdr, sizeof(thdr), "%s  %s", icon, cfg->title ? cfg->title : "Alert");
+  lv_label_set_text(tlbl, thdr);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(accent), 0);
+
+  // Message body
+  if (cfg->message) {
+    lv_obj_t *mlbl = lv_label_create(card);
+    lv_label_set_text(mlbl, cfg->message);
+    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  }
+
+  lv_group_t *grp = eos_lvgl_get_group();
+
+  if (cfg->cancel_label) {
+    lv_obj_t *btn_row = lv_obj_create(card);
+    lv_obj_set_size(btn_row, lv_pct(100), 28);
+    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btn_row, 0, 0);
+    lv_obj_set_style_pad_all(btn_row, 0, 0);
+    lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t *btn_c = lv_button_create(btn_row);
+    lv_obj_set_size(btn_c, (dlg_w - 30) / 2, 26);
+    lv_obj_align(btn_c, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_color(btn_c, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+    lv_obj_set_style_border_color(btn_c, lv_color_hex(EOS_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(btn_c, 1, 0);
+    lv_obj_set_style_radius(btn_c, 3, 0);
+    lv_obj_add_event_cb(btn_c, alert_dialog_cancel_click, LV_EVENT_CLICKED, data);
+
+    lv_obj_t *clbl = lv_label_create(btn_c);
+    lv_label_set_text(clbl, cfg->cancel_label);
+    lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
+    lv_obj_center(clbl);
+
+    lv_obj_t *btn_ok = lv_button_create(btn_row);
+    lv_obj_set_size(btn_ok, (dlg_w - 30) / 2, 26);
+    lv_obj_align(btn_ok, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(btn_ok, lv_color_hex(accent), 0);
+    lv_obj_set_style_radius(btn_ok, 3, 0);
+    lv_obj_add_event_cb(btn_ok, alert_dialog_ok_click, LV_EVENT_CLICKED, data);
+
+    lv_obj_t *oklbl = lv_label_create(btn_ok);
+    lv_label_set_text(oklbl, cfg->ok_label ? cfg->ok_label : "Acknowledge");
+    lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+    lv_obj_center(oklbl);
+
+    if (grp) {
+      lv_group_add_obj(grp, btn_c);
+      lv_group_add_obj(grp, btn_ok);
+      lv_group_focus_obj(btn_ok);
+    }
+  } else {
+    lv_obj_t *btn = lv_button_create(card);
+    lv_obj_set_size(btn, 110, 26);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(accent), 0);
+    lv_obj_set_style_radius(btn, 3, 0);
+    lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_event_cb(btn, alert_dialog_ok_click, LV_EVENT_CLICKED, data);
+
+    lv_obj_t *blbl = lv_label_create(btn);
+    lv_label_set_text(blbl, cfg->ok_label ? cfg->ok_label : "Acknowledge");
+    lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+    lv_obj_center(blbl);
+
+    if (grp) {
+      lv_group_add_obj(grp, btn);
+      lv_group_focus_obj(btn);
+    }
+  }
+
+  return ov;
+}
+
+void eos_lvgl_dialog_close(lv_obj_t *dialog) {
   if (dialog) {
     lv_obj_delete(dialog);
   }

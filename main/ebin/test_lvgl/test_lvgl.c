@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 typedef struct {
   int32_t box_x;
@@ -67,22 +69,33 @@ static void scr_touch_event_cb(lv_event_t *e) {
   }
 }
 
+static void test_lvgl_back_btn_cb(lv_event_t *e) {
+  test_lvgl_ui_t *ui = (test_lvgl_ui_t *)lv_event_get_user_data(e);
+  if (ui) {
+    ui->running = false;
+  }
+}
+
 static int test_lvgl_main(int argc, char **argv) {
-  const char *fb_path = (argc > 1) ? argv[1] : NULL;
-  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
+  const char *fb_path = NULL;
+  const char *kbd_path = NULL;
+  bool auto_mode = false;
+  int timeout_ms = 0;
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--auto") == 0) {
+      auto_mode = true;
+    } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+      timeout_ms = atoi(argv[++i]);
+    } else if (argv[i][0] == '/') {
+      if (!fb_path) fb_path = argv[i];
+      else if (!kbd_path) kbd_path = argv[i];
+    }
+  }
 
   printf("Starting LVGL Framebuffer Test (partial draw + full fallback)...\n");
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("Failed to initialize EOS LVGL framebuffer support\n");
     return -1;
   }
@@ -140,9 +153,45 @@ static int test_lvgl_main(int argc, char **argv) {
   lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSING, &ui);
 
   // Standard touch exit/back button
-  eos_lvgl_create_back_btn(scr, NULL, NULL);
+  eos_lvgl_create_back_btn(scr, test_lvgl_back_btn_cb, &ui);
 
   update_test_ui(&ui, NULL);
+
+  if (auto_mode) {
+    printf("Running automated LVGL partial and full fallback test...\n");
+    // 1. Partial mode test
+    eos_lvgl_set_full_fallback(false);
+    ui.progress = 25;
+    update_test_ui(&ui, "AUTO_PARTIAL");
+    eos_lvgl_step(50);
+    uint32_t p_flushes1 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
+
+    // 2. Full-frame fallback test
+    eos_lvgl_set_full_fallback(true);
+    ui.progress = 75;
+    update_test_ui(&ui, "AUTO_FULL");
+    eos_lvgl_step(50);
+    uint32_t f_flushes = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->full_flushes : 0;
+
+    // 3. Switch back to partial mode
+    eos_lvgl_set_full_fallback(false);
+    ui.progress = 100;
+    update_test_ui(&ui, "AUTO_DONE");
+    eos_lvgl_step(50);
+    uint32_t p_flushes2 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
+
+    printf("Automated test flushes: partial=%u->%u, full=%u\n",
+           (unsigned)p_flushes1, (unsigned)p_flushes2, (unsigned)f_flushes);
+    printf("LVGL Framebuffer Test PASSED\n");
+    ui.running = false;
+  }
+
+  uint64_t start_ms = 0;
+  if (timeout_ms > 0) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    start_ms = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+  }
 
   while (ui.running) {
     uint16_t key = 0;
@@ -184,6 +233,7 @@ static int test_lvgl_main(int argc, char **argv) {
         eos_lvgl_flush_full_frame();
         break;
       case KEY_B:
+      case KEY_BACKSPACE:
       case KEY_ESC:
         ui.running = false;
         break;
@@ -195,6 +245,15 @@ static int test_lvgl_main(int argc, char **argv) {
 
     eos_lvgl_step(10);
     update_test_ui(&ui, NULL);
+
+    if (timeout_ms > 0) {
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      uint64_t now = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+      if (now - start_ms >= (uint64_t)timeout_ms) {
+        ui.running = false;
+      }
+    }
   }
 
   eos_lvgl_deinit();

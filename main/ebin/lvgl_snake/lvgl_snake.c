@@ -5,11 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
+#include <unistd.h>
 
-#define SNAKE_COLS      18
-#define SNAKE_ROWS      16
-#define SNAKE_CELL_SIZE 12
-#define SNAKE_MAX_LEN   (SNAKE_COLS * SNAKE_ROWS)
+#define SNAKE_MAX_LEN   512
 
 typedef struct {
   int8_t x;
@@ -17,6 +15,12 @@ typedef struct {
 } snake_pt_t;
 
 typedef struct {
+  int cols;
+  int rows;
+  int cell_size;
+  int board_w;
+  int board_h;
+
   snake_pt_t body[SNAKE_MAX_LEN];
   int len;
   int8_t dir_x;
@@ -53,17 +57,19 @@ static bool snake_occupies(const snake_game_t *g, int8_t x, int8_t y) {
 }
 
 static void snake_spawn_food(snake_game_t *g) {
+  int cols = g->cols > 0 ? g->cols : 18;
+  int rows = g->rows > 0 ? g->rows : 14;
   for (int tries = 0; tries < 200; tries++) {
-    int8_t fx = (int8_t)(rand() % SNAKE_COLS);
-    int8_t fy = (int8_t)(rand() % SNAKE_ROWS);
+    int8_t fx = (int8_t)(rand() % cols);
+    int8_t fy = (int8_t)(rand() % rows);
     if (!snake_occupies(g, fx, fy)) {
       g->food.x = fx;
       g->food.y = fy;
       return;
     }
   }
-  for (int8_t y = 0; y < SNAKE_ROWS; y++) {
-    for (int8_t x = 0; x < SNAKE_COLS; x++) {
+  for (int8_t y = 0; y < rows; y++) {
+    for (int8_t x = 0; x < cols; x++) {
       if (!snake_occupies(g, x, y)) {
         g->food.x = x;
         g->food.y = y;
@@ -74,9 +80,11 @@ static void snake_spawn_food(snake_game_t *g) {
 }
 
 static void snake_reset(snake_game_t *g) {
+  int cols = g->cols > 0 ? g->cols : 18;
+  int rows = g->rows > 0 ? g->rows : 14;
   g->len = 4;
-  int8_t sx = SNAKE_COLS / 2;
-  int8_t sy = SNAKE_ROWS / 2;
+  int8_t sx = (int8_t)(cols / 2);
+  int8_t sy = (int8_t)(rows / 2);
   for (int i = 0; i < g->len; i++) {
     g->body[i].x = (int8_t)(sx - i);
     g->body[i].y = sy;
@@ -92,16 +100,17 @@ static void snake_reset(snake_game_t *g) {
 }
 
 static void snake_sync_ui(snake_game_t *g) {
+  int cs = g->cell_size > 0 ? g->cell_size : 10;
   if (g->food_obj) {
-    lv_obj_set_pos(g->food_obj, g->food.x * SNAKE_CELL_SIZE + 1,
-                   g->food.y * SNAKE_CELL_SIZE + 1);
+    lv_obj_set_pos(g->food_obj, g->food.x * cs + 1,
+                   g->food.y * cs + 1);
   }
 
   for (int i = 0; i < SNAKE_MAX_LEN; i++) {
     if (i < g->len) {
       if (!g->seg_objs[i]) {
         lv_obj_t *seg = lv_obj_create(g->board);
-        lv_obj_set_size(seg, SNAKE_CELL_SIZE - 2, SNAKE_CELL_SIZE - 2);
+        lv_obj_set_size(seg, cs - 2, cs - 2);
         lv_obj_set_style_border_width(seg, 0, 0);
         lv_obj_set_style_radius(seg, 2, 0);
         lv_obj_set_style_pad_all(seg, 0, 0);
@@ -109,8 +118,8 @@ static void snake_sync_ui(snake_game_t *g) {
         g->seg_objs[i] = seg;
       }
       lv_obj_clear_flag(g->seg_objs[i], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_pos(g->seg_objs[i], g->body[i].x * SNAKE_CELL_SIZE + 1,
-                     g->body[i].y * SNAKE_CELL_SIZE + 1);
+      lv_obj_set_pos(g->seg_objs[i], g->body[i].x * cs + 1,
+                     g->body[i].y * cs + 1);
       lv_obj_set_style_bg_color(
           g->seg_objs[i],
           (i == 0) ? lv_color_hex(0x34D399) : lv_color_hex(0x10B981), 0);
@@ -131,6 +140,19 @@ static void snake_sync_ui(snake_game_t *g) {
   } else {
     lv_label_set_text(g->status_lbl, "Arrows:Steer A:Pause C:Speed B/ESC:Quit");
   }
+
+  FILE *tb = fopen("/tmp/tbar.tmp", "w");
+  if (tb) {
+    if (g->game_over) {
+      fprintf(tb, "@%ld Game Over (Score: %d)\n[A]Retry  [B]Exit\n", (long)getpid(), g->score);
+    } else if (g->paused) {
+      fprintf(tb, "@%ld Game Paused\n[A]Resume  [B]Exit\n", (long)getpid());
+    } else {
+      fprintf(tb, "@%ld Snake Game\n[▲▼◄►]Steer  [A]Pause  [C]Speed  [B]Exit\n", (long)getpid());
+    }
+    fclose(tb);
+    rename("/tmp/tbar.tmp", "/tmp/tbar");
+  }
 }
 
 static void snake_tick(snake_game_t *g) {
@@ -143,7 +165,7 @@ static void snake_tick(snake_game_t *g) {
   int8_t nx = (int8_t)(g->body[0].x + g->dir_x);
   int8_t ny = (int8_t)(g->body[0].y + g->dir_y);
 
-  if (nx < 0 || nx >= SNAKE_COLS || ny < 0 || ny >= SNAKE_ROWS ||
+  if (nx < 0 || nx >= g->cols || ny < 0 || ny >= g->rows ||
       snake_occupies(g, nx, ny)) {
     g->game_over = true;
     snake_sync_ui(g);
@@ -173,20 +195,18 @@ static void snake_tick(snake_game_t *g) {
   snake_sync_ui(g);
 }
 
+static void snake_back_btn_cb(lv_event_t *e) {
+  snake_game_t *g = (snake_game_t *)lv_event_get_user_data(e);
+  if (g) {
+    g->quit = true;
+  }
+}
+
 int lvgl_snake_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("lvgl_snake: failed to init LVGL\n");
     return -1;
   }
@@ -199,6 +219,29 @@ int lvgl_snake_main(int argc, char **argv) {
 
   srand((unsigned)now_ms());
 
+  uint32_t scr_w = eos_lvgl_get_width();
+  uint32_t scr_h = eos_lvgl_get_height();
+
+  int header_h = 18;
+  int footer_h = 16;
+  int avail_w = (int)scr_w - 12;
+  int avail_h = (int)scr_h - header_h - footer_h - 6;
+
+  int cols = 18;
+  int rows = 14;
+  int cell_size = avail_h / rows;
+  if (cell_size * cols > avail_w) {
+    cell_size = avail_w / cols;
+  }
+  if (cell_size < 6) cell_size = 6;
+  if (cell_size > 22) cell_size = 22;
+
+  g->cols = cols;
+  g->rows = rows;
+  g->cell_size = cell_size;
+  g->board_w = cols * cell_size + 4;
+  g->board_h = rows * cell_size + 4;
+
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1120), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
@@ -206,12 +249,11 @@ int lvgl_snake_main(int argc, char **argv) {
 
   g->score_lbl = lv_label_create(scr);
   lv_obj_set_style_text_color(g->score_lbl, lv_color_hex(0xFDE047), 0);
-  lv_obj_align(g->score_lbl, LV_ALIGN_TOP_MID, 0, 6);
+  lv_obj_align(g->score_lbl, LV_ALIGN_TOP_MID, 0, 4);
 
   g->board = lv_obj_create(scr);
-  lv_obj_set_size(g->board, SNAKE_COLS * SNAKE_CELL_SIZE + 4,
-                  SNAKE_ROWS * SNAKE_CELL_SIZE + 4);
-  lv_obj_align(g->board, LV_ALIGN_CENTER, 0, -2);
+  lv_obj_set_size(g->board, g->board_w, g->board_h);
+  lv_obj_align(g->board, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(g->board, lv_color_hex(0x111827), 0);
   lv_obj_set_style_border_color(g->board, lv_color_hex(0x3B82F6), 0);
   lv_obj_set_style_border_width(g->board, 2, 0);
@@ -220,18 +262,22 @@ int lvgl_snake_main(int argc, char **argv) {
   lv_obj_clear_flag(g->board, LV_OBJ_FLAG_SCROLLABLE);
 
   g->food_obj = lv_obj_create(g->board);
-  lv_obj_set_size(g->food_obj, SNAKE_CELL_SIZE - 2, SNAKE_CELL_SIZE - 2);
+  lv_obj_set_size(g->food_obj, g->cell_size - 2, g->cell_size - 2);
   lv_obj_set_style_bg_color(g->food_obj, lv_color_hex(0xEF4444), 0);
   lv_obj_set_style_border_width(g->food_obj, 0, 0);
-  lv_obj_set_style_radius(g->food_obj, SNAKE_CELL_SIZE / 2, 0);
+  lv_obj_set_style_radius(g->food_obj, g->cell_size / 2, 0);
   lv_obj_clear_flag(g->food_obj, LV_OBJ_FLAG_SCROLLABLE);
 
   g->status_lbl = lv_label_create(scr);
   lv_obj_set_style_text_color(g->status_lbl, lv_color_hex(0x94A3B8), 0);
-  lv_obj_align(g->status_lbl, LV_ALIGN_BOTTOM_MID, 0, -6);
+  lv_obj_align(g->status_lbl, LV_ALIGN_BOTTOM_MID, 0, -4);
 
   // Standard touch exit/back button
-  eos_lvgl_create_back_btn(scr, NULL, NULL);
+  lv_obj_t *back_btn = eos_lvgl_create_back_btn(scr, snake_back_btn_cb, g);
+  if (back_btn) {
+    lv_obj_set_size(back_btn, 24, 18);
+    lv_obj_align(back_btn, LV_ALIGN_TOP_RIGHT, -4, 2);
+  }
 
   snake_reset(g);
   snake_sync_ui(g);
@@ -281,6 +327,7 @@ int lvgl_snake_main(int argc, char **argv) {
         snake_sync_ui(g);
         break;
       case KEY_B:
+      case KEY_BACKSPACE:
       case KEY_ESC:
         g->quit = true;
         break;

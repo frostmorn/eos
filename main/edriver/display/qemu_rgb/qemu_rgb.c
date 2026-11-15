@@ -6,6 +6,8 @@
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_qemu_rgb.h>
 #include <esp_memory_utils.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "ecore/dev.h"
 #include "ecore/driver.h"
@@ -50,6 +52,7 @@ typedef struct {
   uint32_t clip_w;
   uint32_t clip_h;
   bool has_clip;
+  SemaphoreHandle_t lock;
 } qemu_rgb_state_t;
 
 // ── Implementation ────────────────────────────────────────────
@@ -126,6 +129,7 @@ bool driver_display_qemu_rgb_init(eos_dev_t *dev) {
   state->bpp = (bpp == 32) ? 32 : 16;
   state->rotation = (uint8_t)(rotation & 3);
   state->has_clip = false;
+  state->lock = xSemaphoreCreateRecursiveMutex();
 
   // Apply rotation if requested
   if (state->rotation != 0) {
@@ -164,6 +168,10 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
   }
 
   qemu_rgb_state_t *state = dev->state;
+  if (state->lock) {
+    xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+  }
+
   uint32_t x = state->has_clip ? state->clip_x : 0;
   uint32_t y = state->has_clip ? state->clip_y : 0;
   uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
@@ -172,6 +180,7 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
 
   if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
       y + h > (uint32_t)state->height) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EINVAL;
     return -1;
   }
@@ -183,13 +192,16 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
 
   size_t row_bytes = (size_t)w * bytes_per_pixel;
   if (row_bytes == 0 || len < row_bytes) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EINVAL;
     return -1;
   }
 
   uint32_t total_rows = (uint32_t)(len / row_bytes);
-  if (total_rows == 0)
+  if (total_rows == 0) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     return 0;
+  }
   if (total_rows > h)
     total_rows = h;
 
@@ -211,10 +223,12 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
                                             (int)(x + w), (int)(y + total_rows), draw_buf);
   if (err != ESP_OK) {
     EOS_LOGE("qemu_rgb: draw_bitmap failed: %s", esp_err_to_name(err));
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EIO;
     return -1;
   }
 
+  if (state->lock) xSemaphoreGiveRecursive(state->lock);
   return (ssize_t)draw_bytes;
 }
 
@@ -268,6 +282,18 @@ int driver_display_qemu_rgb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args)
     }
     break;
   }
+  case EOS_DISPLAY_IOCTL_LOCK:
+    if (state->lock) {
+      xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+    }
+    break;
+
+  case EOS_DISPLAY_IOCTL_UNLOCK:
+    if (state->lock) {
+      xSemaphoreGiveRecursive(state->lock);
+    }
+    break;
+
   default:
     errno = ENOTTY;
     ret = -1;
@@ -282,6 +308,10 @@ void driver_display_qemu_rgb_shutdown(eos_dev_t *dev) {
     return;
 
   qemu_rgb_state_t *state = dev->state;
+  if (state->lock) {
+    vSemaphoreDelete(state->lock);
+    state->lock = NULL;
+  }
   if (state->panel) {
     esp_lcd_panel_disp_on_off(state->panel, false);
     esp_lcd_panel_del(state->panel);

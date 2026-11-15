@@ -168,6 +168,23 @@ static bool eos_dev_is_same_device(eos_dev_t *existing, eos_dev_t *dev) {
     return (a1 == a2);
   }
 
+  // Check display/vfb and display/compositor: distinguished by bounding box / role
+  if (strcmp(dev->driver->scope, "display") == 0 &&
+      (strcmp(dev->driver->name, "vfb") == 0 || strcmp(dev->driver->name, "compositor") == 0)) {
+    int x1 = eos_cfg_get_i(existing->cfg, "x", 0);
+    int y1 = eos_cfg_get_i(existing->cfg, "y", 0);
+    int w1 = eos_cfg_get_i(existing->cfg, "w", 0);
+    int h1 = eos_cfg_get_i(existing->cfg, "h", 0);
+    int x2 = eos_cfg_get_i(dev->cfg, "x", 0);
+    int y2 = eos_cfg_get_i(dev->cfg, "y", 0);
+    int w2 = eos_cfg_get_i(dev->cfg, "w", 0);
+    int h2 = eos_cfg_get_i(dev->cfg, "h", 0);
+    char *r1 = eos_cfg_get_s(existing->cfg, "role", "");
+    char *r2 = eos_cfg_get_s(dev->cfg, "role", "");
+    if (r1 && r2 && strcmp(r1, r2) != 0) return false;
+    return (x1 == x2 && y1 == y2 && w1 == w2 && h1 == h2);
+  }
+
   // For all other device drivers attached under the same parent (flash, wifi, sta, ap,
   // gpio_keyboard, max98357 sound, battery, adc, display, bridge):
   // Two instances of the same driver under the same parent represent the same device.

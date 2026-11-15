@@ -29,7 +29,8 @@ docs/
 │   ├── kernel-core.md                 # Unified Device Model, Device Tree, capsmgr, proc, fapi, asset
 │   ├── vfs-and-filesystems.md         # VFS hierarchy: tmpfs (/), devfs (/dev), binfs (/bin), pipefs, procfs
 │   ├── wrappers-and-syscalls.md       # Linker wrappers (-Wl,--wrap), memory leak tracking, reentrant syscalls
-│   └── memory-and-stacks.md           # Internal SRAM vs External PSRAM, DMA constraints, kvec optimization
+│   ├── memory-and-stacks.md           # Internal SRAM vs External PSRAM, DMA constraints, kvec optimization
+│   └── shared-lvgl-interface.md       # Shared LVGL UI layer, display compositor, modals, keyboard, IPC
 ├── hardware/                          # Hardware targets & board specifications
 │   ├── board-porting.md               # Declarative hardware architecture (init.sh, sdkconfig), setboard.py
 │   ├── targets.md                     # Hardware target reference (lilka_v23, jc4880p443c_i_w_y, esp32s3_qemu)
@@ -47,14 +48,14 @@ docs/
 
 ## 1. Binaries & Command-Line Tools (`docs/binaries/`)
 
-* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 57 native binaries:
-  * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `touch`, `tree`, `write`.
+* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 64 native binaries:
+  * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `time`, `touch`, `tree`, `uptime`, `write`.
   * **Checksums & Encoding:** `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `cksum`, `base64`.
-  * **System & Shell:** `ush`, `launcher`, `mount`, `umount`.
+  * **System & Shell:** `ush`, `launcher`, `mount`, `umount`, `statusbar`, `toolbar`.
   * **Hardware & Bus Control:** `battery`, `devctl`, `lsi2c`, `soldercheck`.
   * **Network Management:** `netctl`, `wlanctl`.
   * **GUI Applications:** `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`.
-  * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_hash`, `test_sound`, `test_input`, `test_lvgl`, `test_sdl`, etc.
+  * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_hash`, `test_sound`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, etc.
 * [**Hash, Checksum & Base64 Tools**](./binaries/hash-and-checksum-tools.md) — `md5sum`/`sha*sum`/`cksum`/`base64`: shared library, check-list format, differences from GNU coreutils, memory behaviour, and how the tools are tested.
 * [**BinFS, Native Binaries & Execution**](./binaries/execution-architecture.md) — Linker section `.eos_bins`, script assets (`init.sh`), execution pipeline (`exec.c`), MicroShell (`ush.c`), pipes, and redirections.
 * [**Dynamic ELF Applications & Runtime Loader**](./binaries/elf-applications.md) — Standalone dynamic apps, runtime symbol resolution, PSRAM execution, app compilation, and toolchain discovery.
@@ -81,6 +82,7 @@ docs/
 * [**Virtual Filesystem (VFS) & Subsystems**](./architecture/vfs-and-filesystems.md) — Root `tmpfs` (`/`), dynamic `devfs` (`/dev`), executable `binfs` (`/bin`), diagnostic `procfs` (`/proc`), and inter-process `pipefs` (`/proc/pipes`).
 * [**POSIX, FreeRTOS & Syscall Wrappers**](./architecture/wrappers-and-syscalls.md) — Linker-wrapped syscalls (`-Wl,--wrap`), memory allocation leak tracking (`heap_caps.c`), reentrant filesystem syscalls, thread creation (`pthread.c`), and SDL 1.2/2.0 compatibility layers.
 * [**Embedded Memory Architecture & Stack Allocation**](./architecture/memory-and-stacks.md) — Physical memory domains (Internal SRAM vs External PSRAM), allocation capabilities, DMA constraints, stack dimensioning, and Pratt parser PSRAM migration (+56.3 KB SRAM saved).
+* [**Shared LVGL UI Layer & Display Pipeline**](./architecture/shared-lvgl-interface.md) — Unified LVGL v8 subsystem (`ecore/lvgl.c`), display compositor integration, input pipeline, touch coordinate transformation, shared modal dialogs, on-screen keyboard, and status/toolbar IPC APIs.
 
 ---
 

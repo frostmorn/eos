@@ -1,5 +1,7 @@
 #include "ecore/proc.h"
 #include "ecore/bin.h"
+#include "ecore/dev.h"
+#include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
@@ -120,8 +122,7 @@ void eos_proc_init_env(eos_proc_t *proc) {
   eos_proc_setenv_internal(proc, "EOS_LOG_FILE", EOS_DEFAULT_LOG_FILE, 0);
 }
 
-char *eos_proc_getenv(const char *name) {
-  eos_proc_t *proc = eos_proc_current();
+static char *eos_proc_getenv_internal(eos_proc_t *proc, const char *name) {
   if (!proc || !name) return NULL;
 
   size_t name_len = strlen(name);
@@ -134,6 +135,11 @@ char *eos_proc_getenv(const char *name) {
   return NULL;
 }
 
+char *eos_proc_getenv(const char *name) {
+  eos_proc_t *proc = eos_proc_current();
+  return eos_proc_getenv_internal(proc, name);
+}
+
 int eos_proc_setenv(const char *name, const char *value, int overwrite) {
   eos_proc_t *proc = eos_proc_current();
   if (!proc) return -1;
@@ -144,12 +150,71 @@ int eos_proc_setenv(const char *name, const char *value, int overwrite) {
   return rc;
 }
 
-int eos_proc_unsetenv(const char *name) {
-  eos_proc_t *proc = eos_proc_current();
-  if (!proc || !name) return -1;
+int eos_proc_setenv_pid(pid_t pid, const char *name, const char *value, int overwrite) {
+  proc_lock();
+  if (!s_proc_table) {
+    proc_unlock();
+    return -1;
+  }
+  eos_proc_t *p = NULL;
+  for (size_t i = 0; i < kv_size(s_proc_table->procs); i++) {
+    eos_proc_t *slot = kv_A(s_proc_table->procs, i);
+    if (slot && slot->in_use && slot->pid == pid) {
+      p = slot;
+      break;
+    }
+  }
+  if (!p) {
+    proc_unlock();
+    return -1;
+  }
+  int rc = eos_proc_setenv_internal(p, name, value, overwrite);
+  proc_unlock();
+  return rc;
+}
 
+char *eos_proc_getenv_pid(pid_t pid, const char *name) {
+  proc_lock();
+  if (!s_proc_table) {
+    proc_unlock();
+    return NULL;
+  }
+  eos_proc_t *p = NULL;
+  for (size_t i = 0; i < kv_size(s_proc_table->procs); i++) {
+    eos_proc_t *slot = kv_A(s_proc_table->procs, i);
+    if (slot && slot->in_use && slot->pid == pid) {
+      p = slot;
+      break;
+    }
+  }
+  if (!p) {
+    proc_unlock();
+    return NULL;
+  }
+  char *val = eos_proc_getenv_internal(p, name);
+  proc_unlock();
+  return val;
+}
+
+int eos_proc_unsetenv_pid(pid_t pid, const char *name) {
+  proc_lock();
+  if (!s_proc_table || !name) {
+    proc_unlock();
+    return -1;
+  }
+  eos_proc_t *proc = NULL;
+  for (size_t i = 0; i < kv_size(s_proc_table->procs); i++) {
+    eos_proc_t *slot = kv_A(s_proc_table->procs, i);
+    if (slot && slot->in_use && slot->pid == pid) {
+      proc = slot;
+      break;
+    }
+  }
+  if (!proc) {
+    proc_unlock();
+    return -1;
+  }
   extern void __real_heap_caps_free(void *ptr);
-
   size_t name_len = strlen(name);
   for (size_t i = 0; i < kv_size(proc->env); i++) {
     char *entry = kv_A(proc->env, i);
@@ -158,12 +223,70 @@ int eos_proc_unsetenv(const char *name) {
       kv_drop_fast(char *, proc->env, i);
       kv_opt(char *, proc->env);
       eos_proc_rebuild_env_array(proc);
+      proc_unlock();
       eos_log_sync_env(name, NULL);
       return 0;
     }
   }
+  proc_unlock();
   eos_log_sync_env(name, NULL);
   return 0;
+}
+
+int eos_proc_unsetenv(const char *name) {
+  eos_proc_t *proc = eos_proc_current();
+  if (!proc || !name) return -1;
+  return eos_proc_unsetenv_pid(proc->pid, name);
+}
+
+void eos_proc_resolve_display_env(pid_t pid, uint32_t bin_flags) {
+  const char *force_fb = eos_proc_getenv_pid(pid, "EOS_FB_FORCE");
+  if (force_fb && force_fb[0] != '\0') {
+    eos_proc_setenv_pid(pid, "EOS_FB", force_fb, 1);
+  } else {
+    uint32_t role_val = EOS_DISPLAY_ROLE_MAIN;
+    if (bin_flags & EOS_BIN_FLAG_ROLE_MASK) {
+      role_val = (bin_flags & EOS_BIN_FLAG_ROLE_MASK) >> EOS_BIN_FLAG_ROLE_SHIFT;
+    }
+
+    const char *role_env = NULL;
+    const char *def_fb = "/dev/vfb0";
+    switch (role_val) {
+    case EOS_DISPLAY_ROLE_FULL:
+      role_env = "EOS_FB_FULL";
+      def_fb = "/dev/vfb3";
+      break;
+    case EOS_DISPLAY_ROLE_STATUS:
+      role_env = "EOS_FB_STATUS";
+      def_fb = "/dev/vfb1";
+      break;
+    case EOS_DISPLAY_ROLE_TOOLBAR:
+      role_env = "EOS_FB_TOOLBAR";
+      def_fb = "/dev/vfb2";
+      break;
+    case EOS_DISPLAY_ROLE_MAIN:
+    default:
+      role_env = "EOS_FB_MAIN";
+      def_fb = "/dev/vfb0";
+      break;
+    }
+
+    const char *assigned_fb = role_env ? eos_proc_getenv_pid(pid, role_env) : NULL;
+    if (assigned_fb && assigned_fb[0] != '\0') {
+      eos_proc_setenv_pid(pid, "EOS_FB", assigned_fb, 1);
+    } else {
+      const char *dev_name = (def_fb[0] == '/' && strncmp(def_fb, "/dev/", 5) == 0) ? def_fb + 5 : def_fb;
+      if (!eos_dev_find_by_name(dev_name)) {
+        def_fb = "/dev/fb0";
+      }
+      eos_proc_setenv_pid(pid, "EOS_FB", def_fb, 1);
+    }
+  }
+
+  const char *force_touch = eos_proc_getenv_pid(pid, "EOS_TOUCH_FORCE");
+  if (force_touch && force_touch[0] != '\0') {
+    eos_proc_setenv_pid(pid, "EOS_TOUCH", force_touch, 1);
+  }
 }
 
 char **eos_proc_get_environ(void) {

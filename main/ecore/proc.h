@@ -147,8 +147,12 @@ pid_t waitpid(pid_t pid, int *status, int options);
 void eos_proc_init_env(eos_proc_t *proc);
 char *eos_proc_getenv(const char *name);
 int eos_proc_setenv(const char *name, const char *value, int overwrite);
+char *eos_proc_getenv_pid(pid_t pid, const char *name);
+int eos_proc_setenv_pid(pid_t pid, const char *name, const char *value, int overwrite);
 int eos_proc_unsetenv(const char *name);
+int eos_proc_unsetenv_pid(pid_t pid, const char *name);
 char **eos_proc_get_environ(void);
+void eos_proc_resolve_display_env(pid_t pid, uint32_t bin_flags);
 
 // Memory block allocation tracking & registry
 void eos_proc_reg_memblock(void *block);

@@ -38,9 +38,10 @@ typedef struct {
 ### Standard Linux Input Keycodes:
 Drivers map hardware keypad lines to canonical key identifiers:
 * `KEY_UP` (103), `KEY_DOWN` (108), `KEY_LEFT` (105), `KEY_RIGHT` (106)
-* `KEY_ENTER` (28, Select / Action)
+* `KEY_ENTER` (28, Select / Action / Keypad Button A)
+* `KEY_BACKSPACE` (14, Back / Dismiss / Keypad Button B)
 * `KEY_SPACE` (57, Start / Menu)
-* `KEY_A` (30), `KEY_B` (48), `KEY_C` (46), `KEY_D` (32)
+* `KEY_C` (46, Action / Keypad Button C), `KEY_D` (32, Action / Keypad Button D)
 * `KEY_ESC` (1, Back / Escape)
 * `KEY_SLEEP` (142, Power / Sleep)
 
@@ -58,7 +59,10 @@ For game loops or UI engines that cannot block:
 
 | IOCTL Command | Numeric Code | Argument Type | Description |
 | :--- | :---: | :--- | :--- |
-| `EOS_KEYBOARD_IOCTL_POLL` | `300` | `eos_input_event_t *out_ev` | Polls event queue non-blocking. Returns `0` if event retrieved, `-1` with `EWOULDBLOCK` if empty. |
+| `EOS_KEYBOARD_IOCTL_POLL` | `300` | `eos_input_event_t *out_ev` | Polls keyboard event queue non-blocking. Returns `0` if event retrieved, `-1` with `EWOULDBLOCK` if empty. |
+| `EOS_TOUCH_IOCTL_POLL` | `240` | `eos_input_event_t *out_ev` | Polls touch controller instantaneous state (single sample per frame). |
+| `EOS_TOUCH_IOCTL_GET_COORDS` | `241` | `eos_touch_coords_t *coords` | Queries raw touch coordinates `(x, y)` and pressed boolean. |
+| `EOS_TOUCH_IOCTL_GET_PRESSURE` | `242` | `uint16_t *pressure` | Queries touch contact pressure value. |
 
 ### Synthetic Event Injection (`write`)
 Any process can inject synthetic input events by writing to `/dev/keyboard0`:

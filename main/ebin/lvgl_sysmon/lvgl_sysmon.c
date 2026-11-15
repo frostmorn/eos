@@ -55,11 +55,17 @@ static void sysmon_refresh(sysmon_ui_t *ui, uint64_t start_ms) {
 
   if (ctx) {
     char lbuf[80];
-    snprintf(lbuf, sizeof(lbuf), "LVGL [%s] P:%u F:%u (%ux%u)",
-             ctx->fallback_full ? "FULL" : "PARTIAL",
+    snprintf(lbuf, sizeof(lbuf), "LVGL Flushes: P:%u F:%u (%ux%u)",
              (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes,
              (unsigned)ctx->width, (unsigned)ctx->height);
     lv_label_set_text(ui->lbl_lvgl, lbuf);
+  }
+}
+
+static void sysmon_back_btn_cb(lv_event_t *e) {
+  sysmon_ui_t *ui = (sysmon_ui_t *)lv_event_get_user_data(e);
+  if (ui) {
+    ui->quit = true;
   }
 }
 
@@ -67,16 +73,7 @@ int lvgl_sysmon_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("lvgl_sysmon: failed to init LVGL\n");
     return -1;
   }
@@ -130,12 +127,12 @@ int lvgl_sysmon_main(int argc, char **argv) {
   lv_obj_align(ui.lbl_lvgl, LV_ALIGN_TOP_LEFT, 10, 184);
 
   lv_obj_t *hint = lv_label_create(scr);
-  lv_label_set_text(hint, "A/Tap:Refresh  C:Mode  D:FullFlush  B/X:Exit");
+  lv_label_set_text(hint, "A/Tap: Refresh    B/X: Exit");
   lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 
   // Standard touch exit/back button
-  eos_lvgl_create_back_btn(scr, NULL, NULL);
+  eos_lvgl_create_back_btn(scr, sysmon_back_btn_cb, &ui);
 
   uint64_t start_ms = get_ms();
   uint64_t last_upd = 0;
@@ -149,15 +146,8 @@ int lvgl_sysmon_main(int argc, char **argv) {
       case KEY_ENTER:
         sysmon_refresh(&ui, start_ms);
         break;
-      case KEY_C:
-        eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
-        sysmon_refresh(&ui, start_ms);
-        break;
-      case KEY_D:
-        eos_lvgl_flush_full_frame();
-        sysmon_refresh(&ui, start_ms);
-        break;
       case KEY_B:
+      case KEY_BACKSPACE:
       case KEY_ESC:
         ui.quit = true;
         break;

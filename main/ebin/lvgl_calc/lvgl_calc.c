@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define CALC_ROWS 4
 #define CALC_COLS 4
@@ -176,20 +177,18 @@ static void calc_btn_click_cb(lv_event_t *e) {
   }
 }
 
+static void calc_back_btn_cb(lv_event_t *e) {
+  calc_state_t *st = (calc_state_t *)lv_event_get_user_data(e);
+  if (st) {
+    st->quit = true;
+  }
+}
+
 int lvgl_calc_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("lvgl_calc: failed to init LVGL\n");
     return -1;
   }
@@ -198,6 +197,8 @@ int lvgl_calc_main(int argc, char **argv) {
   memset(&st, 0, sizeof(st));
 
   uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+  bool compact = (h <= 200);
 
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1120), 0);
@@ -205,14 +206,15 @@ int lvgl_calc_main(int argc, char **argv) {
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   // Display panel
+  int32_t disp_h = compact ? 42 : 68;
   lv_obj_t *disp = lv_obj_create(scr);
-  lv_obj_set_size(disp, (int32_t)w - 12, 68);
-  lv_obj_align(disp, LV_ALIGN_TOP_MID, 0, 6);
+  lv_obj_set_size(disp, (int32_t)w - 12, disp_h);
+  lv_obj_align(disp, LV_ALIGN_TOP_MID, 0, compact ? 3 : 6);
   lv_obj_set_style_bg_color(disp, lv_color_hex(0x0F172A), 0);
   lv_obj_set_style_border_color(disp, lv_color_hex(0x38BDF8), 0);
   lv_obj_set_style_border_width(disp, 1, 0);
   lv_obj_set_style_radius(disp, 6, 0);
-  lv_obj_set_style_pad_all(disp, 6, 0);
+  lv_obj_set_style_pad_all(disp, compact ? 3 : 6, 0);
   lv_obj_clear_flag(disp, LV_OBJ_FLAG_SCROLLABLE);
 
   st.disp_expr = lv_label_create(disp);
@@ -229,15 +231,16 @@ int lvgl_calc_main(int argc, char **argv) {
 
   // 4x4 keypad grid
   int32_t grid_w = (int32_t)w - 12;
-  int32_t btn_w = (grid_w - 18) / CALC_COLS;
-  int32_t btn_h = 38;
-  int32_t start_y = 82;
+  int32_t btn_w = (grid_w - (compact ? 12 : 18)) / CALC_COLS;
+  int32_t btn_h = compact ? 28 : 38;
+  int32_t gap = compact ? 3 : 5;
+  int32_t start_y = compact ? 48 : 82;
 
   for (int r = 0; r < CALC_ROWS; r++) {
     for (int c = 0; c < CALC_COLS; c++) {
       lv_obj_t *btn = lv_obj_create(scr);
       lv_obj_set_size(btn, btn_w, btn_h);
-      lv_obj_set_pos(btn, 6 + c * (btn_w + 6), start_y + r * (btn_h + 5));
+      lv_obj_set_pos(btn, 6 + c * (btn_w + gap), start_y + r * (btn_h + gap));
       lv_obj_set_style_radius(btn, 5, 0);
       lv_obj_set_style_pad_all(btn, 0, 0);
       lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
@@ -261,12 +264,21 @@ int lvgl_calc_main(int argc, char **argv) {
   }
 
   // Standard touch exit/back button
-  eos_lvgl_create_back_btn(scr, NULL, NULL);
+  eos_lvgl_create_back_btn(scr, calc_back_btn_cb, &st);
 
-  lv_obj_t *hint = lv_label_create(scr);
-  lv_label_set_text(hint, "Arrows:Move A/ENT:Press C:Clear D:Del B:Exit");
-  lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
+  if (!compact) {
+    lv_obj_t *hint = lv_label_create(scr);
+    lv_label_set_text(hint, "Arrows:Move A/ENT:Press C:Clear D:Del B:Exit");
+    lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
+    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
+  }
+
+  FILE *tb = fopen("/tmp/tbar.tmp", "w");
+  if (tb) {
+    fprintf(tb, "@%ld Calculator\n[▲▼◄►]Keys  [A]Press  [C]Clr  [B]Exit\n", (long)getpid());
+    fclose(tb);
+    rename("/tmp/tbar.tmp", "/tmp/tbar");
+  }
 
   calc_update_ui(&st);
 
@@ -295,11 +307,11 @@ int lvgl_calc_main(int argc, char **argv) {
         calc_press_token(&st, "C");
         break;
       case KEY_D:
-      case KEY_BACKSPACE:
         if (st.entering) {
           st.cur /= 10;
         }
         break;
+      case KEY_BACKSPACE:
       case KEY_B:
       case KEY_ESC:
         st.quit = true;

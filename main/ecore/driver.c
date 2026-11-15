@@ -47,8 +47,7 @@ bool eos_drv_attach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (dev && dev->driver && dev->driver->attach_req)
     return dev->driver->attach_req(dev, child);
 
-  // Default behaviour
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+  // Default behaviour: allowed
   return true;
 }
 
@@ -56,8 +55,7 @@ bool eos_drv_detach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (dev && dev->driver && dev->driver->detach_req)
     return dev->driver->detach_req(dev, child);
 
-  // Default behaviour
-  EOS_LOGW("Call %s not implemented", __PRETTY_FUNCTION__);
+  // Default behaviour: allowed
   return true;
 }
 

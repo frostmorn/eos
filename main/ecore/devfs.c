@@ -94,7 +94,7 @@ static int devfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_
     return file->base.fd;
   }
 
-  eos_dev_t *dev = eos_dev_find_by_name(devname);
+  eos_dev_t *dev = devfs_resolve(devname);
   if (!dev) {
     errno = ENOENT;
     return -1;

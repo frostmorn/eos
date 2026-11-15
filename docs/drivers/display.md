@@ -11,6 +11,8 @@ Display drivers in EOS reside under `scope == "display"`, exposing standard Virt
 | **`st7789`** | SPI / Parallel LCD | Lilka v2.3 handheld console | 240x240 or 280x240 RGB565 |
 | **`st7701s`** | MIPI-DSI / RGB Parallel | Guition JC4880P4 (JC4880P443C) | 480x480 or 800x480 RGB565 |
 | **`qemu_rgb`** | Espressif Virtual RGB | `esp32s3_qemu` emulator | 320x240 Virtual RGB565 |
+| **`compositor`** | Virtual Multi-Window Compositor | All targets (software layer atop `/dev/fb0`) | Multi-window virtual framebuffers (`/dev/vfb*`) |
+| **`mem_fb`** | PSRAM In-Memory Framebuffer | Offscreen / RAM display surfaces | Arbitrary width x height RGB565 |
 
 ---
 
@@ -54,6 +56,16 @@ All display commands reside in the reserved IOCTL range `200–299`:
 | `EOS_DISPLAY_IOCTL_SET_WINDOW` | `202` | `const eos_display_rect_t *win` | Sets sub-window bounding box `(x, y, w, h)` for partial updates. |
 | `EOS_DISPLAY_IOCTL_GET_WINDOW` | `203` | `eos_display_rect_t *out_win` | Queries current active bounding window coordinates. |
 | `EOS_DISPLAY_IOCTL_FLUSH` | `204` | `none` | Flushes pending DMA strips or triggers frame synchronization. |
+| `EOS_DISPLAY_IOCTL_GET_OFFSET_X` | `205` | `int *out_x` | Queries X offset of virtual window on underlying physical display. |
+| `EOS_DISPLAY_IOCTL_GET_OFFSET_Y` | `206` | `int *out_y` | Queries Y offset of virtual window on underlying physical display. |
+| `EOS_DISPLAY_IOCTL_GET_PHYS_WIDTH`| `207` | `int *out_w` | Queries underlying physical display width. |
+| `EOS_DISPLAY_IOCTL_GET_PHYS_HEIGHT`| `208` | `int *out_h` | Queries underlying physical display height. |
+| `EOS_DISPLAY_IOCTL_GET_PARENT` | `209` | `char *buf` | Gets parent device path string (e.g. `/dev/fb0`). |
+| `EOS_DISPLAY_IOCTL_COMPOSITOR_ATTACH` | `210` | `const char *path` | Attaches a child virtual framebuffer window to the compositor. |
+| `EOS_DISPLAY_IOCTL_COMPOSITOR_DETACH` | `211` | `const char *path` | Detaches a child virtual framebuffer window from the compositor. |
+| `EOS_DISPLAY_IOCTL_COMPOSITOR_SET_Z` | `212` | `int z_order` | Configures Z-order layering of virtual window. |
+| `EOS_DISPLAY_IOCTL_COMPOSITOR_SET_POS`| `213` | `const eos_display_rect_t *rect` | Updates position and size of virtual window on screen. |
+| `EOS_DISPLAY_IOCTL_COMPOSITOR_REDRAW` | `214` | `none` | Triggers compositor composition and physical screen refresh. |
 
 ### Geometry Definition (`eos_display_rect_t`)
 ```c
@@ -89,4 +101,8 @@ devctl attach display st7701s root --pin rst=27,bl=26 --cfg width=480,height=480
 
 # QEMU Emulator: Virtual RGB
 devctl attach display qemu_rgb root --cfg width=320,height=240,bpp=16
+
+# Virtual Display Compositor & Framebuffer:
+devctl attach display compositor fb0 --cfg width=480,height=800
+devctl attach display mem_fb compositor0 --cfg width=480,height=696,role=main,x=0,y=48
 ```

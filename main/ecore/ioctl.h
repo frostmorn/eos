@@ -5,14 +5,19 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
+#include "emisc/rect.h"
 #include "ecore/netif.h"
 
-typedef struct {
-  uint32_t x;
-  uint32_t y;
-  uint32_t w;
-  uint32_t h;
-} eos_display_rect_t;
+typedef eos_rect_t eos_display_rect_t;
+
+// Display surface roles
+#define EOS_DISPLAY_ROLE_MAIN       0
+#define EOS_DISPLAY_ROLE_FULL       1
+#define EOS_DISPLAY_ROLE_STATUS     2
+#define EOS_DISPLAY_ROLE_TOOLBAR    3
+#define EOS_DISPLAY_ROLE_SECONDARY  4
+#define EOS_DISPLAY_ROLE_POPUP      5
 
 typedef struct {
   uint16_t addr;          // 7-bit slave address
@@ -208,7 +213,13 @@ typedef enum {
   // Those calls have to return int (0 on success, -1 on error with errno set)
   EOS_DISPLAY_IOCTL_GET_WIDTH,  // uint32_t *width
   EOS_DISPLAY_IOCTL_GET_HEIGHT, // uint32_t *height
+  EOS_DISPLAY_IOCTL_GET_OFFSET_X, // uint32_t *offset_x
+  EOS_DISPLAY_IOCTL_GET_OFFSET_Y, // uint32_t *offset_y
   EOS_DISPLAY_IOCTL_SET_WINDOW, // const eos_display_rect_t *rect
+  EOS_DISPLAY_IOCTL_GET_WINDOW, // eos_display_rect_t *rect
+  EOS_DISPLAY_IOCTL_FLUSH,      // no args (flush immediate / commit)
+  EOS_DISPLAY_IOCTL_LOCK,       // no args (lock display panel mutual exclusion)
+  EOS_DISPLAY_IOCTL_UNLOCK,     // no args (unlock display panel mutual exclusion)
 
   //=====================================================
   // edriver/storage

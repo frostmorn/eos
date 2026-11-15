@@ -10,11 +10,18 @@
 #define EOS_BIN_MAGIC 0x0C0A00AC
 
 // Bin manifest flags
-#define EOS_BIN_FLAG_NONE        0U
-#define EOS_BIN_FLAG_HIDDEN      (1U << 0) // Hide application from GUI launcher menu
-#define EOS_BIN_FLAG_GUI         (1U << 1) // Application uses framebuffer/GUI directly
-#define EOS_BIN_FLAG_STACK_SRAM  (1U << 2) // Force stack in internal SRAM
-#define EOS_BIN_FLAG_STACK_PSRAM (1U << 3) // Prefer stack in external PSRAM
+#define EOS_BIN_FLAG_NONE         0U
+#define EOS_BIN_FLAG_HIDDEN       (1U << 0) // Hide application from GUI launcher menu
+#define EOS_BIN_FLAG_GUI          (1U << 1) // Application uses framebuffer/GUI directly
+#define EOS_BIN_FLAG_STACK_SRAM   (1U << 2) // Force stack in internal SRAM
+#define EOS_BIN_FLAG_STACK_PSRAM  (1U << 3) // Prefer stack in external PSRAM
+#define EOS_BIN_FLAG_ROLE_SHIFT   4U
+#define EOS_BIN_FLAG_ROLE_MASK    (3U << EOS_BIN_FLAG_ROLE_SHIFT)
+#define EOS_BIN_FLAG_ROLE_MAIN    (0U << EOS_BIN_FLAG_ROLE_SHIFT)
+#define EOS_BIN_FLAG_ROLE_FULL    (1U << EOS_BIN_FLAG_ROLE_SHIFT)
+#define EOS_BIN_FLAG_ROLE_STATUS  (2U << EOS_BIN_FLAG_ROLE_SHIFT)
+#define EOS_BIN_FLAG_ROLE_TOOLBAR (3U << EOS_BIN_FLAG_ROLE_SHIFT)
+#define EOS_BIN_FLAG_FIXED_SIZE   (1U << 6)
 
 // Default, minimum, and GUI thread stack sizes for ebin execution
 #define EOS_BIN_DEFAULT_STACK_SIZE 8192U
@@ -37,6 +44,11 @@ typedef struct {
   char group[EOS_XSMALL_STR_LEN];
   // description to be used in GUI menus, etc.
   char description[EOS_MID_STR_LEN];
+  // Minimum dimensions required by binary
+  uint16_t min_w;
+  uint16_t min_h;
+  // Default toolbar hint text
+  char hint[EOS_MID_STR_LEN];
   // bin entry point
   int (*entry_point)(int argc, char **argv);
 } eos_bin_t;
@@ -44,7 +56,8 @@ typedef struct {
 #define EOS_BIN_INITIALIZER                                                    \
   .magic = EOS_BIN_MAGIC, .flags = EOS_BIN_FLAG_NONE,                          \
   .stack_size = EOS_BIN_DEFAULT_STACK_SIZE, .filename = "", .name = "",        \
-  .group = "", .description = "", .entry_point = eos_bin_main
+  .group = "", .description = "", .min_w = 0, .min_h = 0, .hint = "",         \
+  .entry_point = eos_bin_main
 
 #define EOS_BIN_ATTR __attribute__((section(".eos_bins"))) const
 

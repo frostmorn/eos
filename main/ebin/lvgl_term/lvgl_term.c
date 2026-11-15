@@ -67,9 +67,7 @@ typedef struct {
   lv_obj_t *out_label;
   lv_obj_t *footer_label;
 
-  lv_obj_t *edit_overlay;
-  lv_obj_t *edit_ta;
-  lv_obj_t *edit_kb;
+  lv_obj_t *edit_dialog;
 } term_viewer_state_t;
 
 static uint64_t get_time_ms(void) {
@@ -336,8 +334,7 @@ static void term_update_ui(term_viewer_state_t *st) {
 
   if (st->hdr_meta) {
     char mbuf[48];
-    snprintf(mbuf, sizeof(mbuf), "%dL %s", st->total_lines,
-             eos_lvgl_is_full_fallback() ? "FULL" : "PART");
+    snprintf(mbuf, sizeof(mbuf), "%d lines", st->total_lines);
     lv_label_set_text(st->hdr_meta, mbuf);
   }
 
@@ -361,6 +358,15 @@ static void term_update_ui(term_viewer_state_t *st) {
              "U/D:Scrl(%d/%d)  L/R:Preset  A:Run  D/KB:Edit  B:Exit", (int)sy,
              (int)(sy + (bottom > 0 ? bottom : 0)));
     lv_label_set_text(st->footer_label, fbuf);
+  }
+
+  const char *cur_cmd = st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
+  FILE *tb = fopen("/tmp/tbar.tmp", "w");
+  if (tb) {
+    fprintf(tb, "@%ld Term: %s\n[▲▼]Scroll  [◄►]Preset  [A]Run  [D]Edit  [B]Exit\n",
+            (long)getpid(), cur_cmd);
+    fclose(tb);
+    rename("/tmp/tbar.tmp", "/tmp/tbar");
   }
 }
 
@@ -389,6 +395,13 @@ static void term_btn_run_cb(lv_event_t *e) {
   st->trigger_run = true;
 }
 
+static void term_back_btn_cb(lv_event_t *e) {
+  term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
+  if (st) {
+    st->should_exit = true;
+  }
+}
+
 static void term_cmd_box_cb(lv_event_t *e) {
   term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
   term_open_edit_mode(st);
@@ -401,7 +414,7 @@ static void term_build_ui(term_viewer_state_t *st) {
   bool is_large = (h >= 400);
   int32_t hdr_h = is_large ? 32 : 22;
   int32_t cbar_h = is_large ? 38 : 24;
-  int32_t ftr_h = is_large ? 26 : 20;
+  int32_t ftr_h = is_large ? 26 : 0;
 
   lv_obj_t *scr = lv_screen_active();
   lv_obj_clean(scr);
@@ -419,14 +432,21 @@ static void term_build_ui(term_viewer_state_t *st) {
   lv_obj_set_style_pad_ver(hdr, is_large ? 4 : 2, 0);
 
   st->hdr_title = lv_label_create(hdr);
-  lv_obj_set_width(st->hdr_title, (int32_t)w - (is_large ? 150 : 86));
+  lv_obj_set_width(st->hdr_title, (int32_t)w - (is_large ? 180 : 110));
   lv_label_set_long_mode(st->hdr_title, LV_LABEL_LONG_CLIP);
   lv_obj_set_style_text_color(st->hdr_title, lv_color_hex(0xFFFFFF), 0);
   lv_obj_align(st->hdr_title, LV_ALIGN_LEFT_MID, 0, 0);
 
   st->hdr_meta = lv_label_create(hdr);
   lv_obj_set_style_text_color(st->hdr_meta, lv_color_hex(0x34D399), 0);
-  lv_obj_align(st->hdr_meta, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_align(st->hdr_meta, LV_ALIGN_RIGHT_MID, is_large ? -36 : -28, 0);
+
+  // Dedicated touch exit button
+  lv_obj_t *back_btn = eos_lvgl_create_back_btn(hdr, term_back_btn_cb, st);
+  if (back_btn) {
+    lv_obj_set_size(back_btn, is_large ? 28 : 22, is_large ? 22 : 16);
+    lv_obj_align(back_btn, LV_ALIGN_RIGHT_MID, -2, 0);
+  }
 
   // 2. Command bar with dedicated touch buttons (Prev, Cmd Box, Next, KB, Run)
   lv_obj_t *cbar = lv_obj_create(scr);
@@ -536,336 +556,96 @@ static void term_build_ui(term_viewer_state_t *st) {
   lv_obj_set_style_text_color(st->out_label, lv_color_hex(0x4ADE80), 0);
   lv_obj_align(st->out_label, LV_ALIGN_TOP_LEFT, 0, 0);
 
-  // 4. Footer bar
-  lv_obj_t *ftr = lv_obj_create(scr);
-  lv_obj_set_size(ftr, (int32_t)w, ftr_h);
-  lv_obj_align(ftr, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_style_bg_color(ftr, lv_color_hex(0x1E293B), 0);
-  lv_obj_set_style_border_width(ftr, 0, 0);
-  lv_obj_set_style_radius(ftr, 0, 0);
-  lv_obj_set_style_pad_hor(ftr, 6, 0);
-  lv_obj_set_style_pad_ver(ftr, 1, 0);
+  // 4. Footer bar (large displays only)
+  if (is_large) {
+    lv_obj_t *ftr = lv_obj_create(scr);
+    lv_obj_set_size(ftr, (int32_t)w, ftr_h);
+    lv_obj_align(ftr, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(ftr, lv_color_hex(0x1E293B), 0);
+    lv_obj_set_style_border_width(ftr, 0, 0);
+    lv_obj_set_style_radius(ftr, 0, 0);
+    lv_obj_set_style_pad_hor(ftr, 6, 0);
+    lv_obj_set_style_pad_ver(ftr, 1, 0);
 
-  st->footer_label = lv_label_create(ftr);
-  lv_obj_set_width(st->footer_label, (int32_t)w - 12);
-  lv_label_set_long_mode(st->footer_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->footer_label, lv_color_hex(0x94A3B8), 0);
-  lv_obj_align(st->footer_label, LV_ALIGN_LEFT_MID, 0, 0);
+    st->footer_label = lv_label_create(ftr);
+    lv_obj_set_width(st->footer_label, (int32_t)w - 12);
+    lv_label_set_long_mode(st->footer_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_color(st->footer_label, lv_color_hex(0x94A3B8), 0);
+    lv_obj_align(st->footer_label, LV_ALIGN_LEFT_MID, 0, 0);
+  } else {
+    st->footer_label = NULL;
+  }
 
   term_update_ui(st);
 }
 
-// Edit overlay touch button callbacks
-static void term_edit_btn_run_cb(lv_event_t *e) {
-  term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
-  if (st->edit_ta) {
-    const char *text = lv_textarea_get_text(st->edit_ta);
-    if (text) {
-      while (*text && isspace((unsigned char)*text)) text++;
-      size_t len = strlen(text);
-      while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
-      if (len > 0) {
-        if (len >= sizeof(st->active_cmd)) len = sizeof(st->active_cmd) - 1;
-        memcpy(st->active_cmd, text, len);
-        st->active_cmd[len] = '\0';
-      }
+// Shared input dialog callbacks
+static void term_dialog_submit_cb(const char *text, void *user_data) {
+  term_viewer_state_t *st = (term_viewer_state_t *)user_data;
+  if (!st) return;
+  st->is_editing = false;
+  st->edit_dialog = NULL;
+  if (text) {
+    while (*text && isspace((unsigned char)*text)) text++;
+    size_t len = strlen(text);
+    while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
+    if (len > 0) {
+      if (len >= sizeof(st->active_cmd)) len = sizeof(st->active_cmd) - 1;
+      memcpy(st->active_cmd, text, len);
+      st->active_cmd[len] = '\0';
     }
   }
-  term_close_edit_mode(st);
   st->trigger_run = true;
+  term_update_ui(st);
 }
 
-static void term_edit_btn_cancel_cb(lv_event_t *e) {
-  term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
-  term_close_edit_mode(st);
-}
-
-static void term_kb_event_cb(lv_event_t *e) {
-  term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
-  lv_event_code_t code = lv_event_get_code(e);
-
-  if (code == LV_EVENT_READY) {
-    if (st->edit_ta) {
-      const char *text = lv_textarea_get_text(st->edit_ta);
-      if (text) {
-        while (*text && isspace((unsigned char)*text)) text++;
-        size_t len = strlen(text);
-        while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
-        if (len > 0) {
-          if (len >= sizeof(st->active_cmd)) len = sizeof(st->active_cmd) - 1;
-          memcpy(st->active_cmd, text, len);
-          st->active_cmd[len] = '\0';
-        }
-      }
-    }
-    term_close_edit_mode(st);
-    st->trigger_run = true;
-  } else if (code == LV_EVENT_CANCEL) {
-    term_close_edit_mode(st);
-  }
+static void term_dialog_cancel_cb(const char *text, void *user_data) {
+  (void)text;
+  term_viewer_state_t *st = (term_viewer_state_t *)user_data;
+  if (!st) return;
+  st->is_editing = false;
+  st->edit_dialog = NULL;
+  term_update_ui(st);
 }
 
 static void term_close_edit_mode(term_viewer_state_t *st) {
   if (!st->is_editing)
     return;
-
   st->is_editing = false;
-  eos_lvgl_set_dpad_group_nav(false);
-
-  lv_group_t *g = eos_lvgl_get_group();
-  if (g && st->edit_kb) {
-    lv_group_remove_obj(st->edit_kb);
+  if (st->edit_dialog) {
+    eos_lvgl_close_input_dialog(st->edit_dialog);
+    st->edit_dialog = NULL;
   }
-
-  if (st->edit_overlay) {
-    lv_obj_delete_async(st->edit_overlay);
-    st->edit_overlay = NULL;
-    st->edit_ta = NULL;
-    st->edit_kb = NULL;
-  }
-
   eos_lvgl_clear_keys();
   term_update_ui(st);
 }
 
 static void term_open_edit_mode(term_viewer_state_t *st) {
-  if (st->is_editing)
+  if (st->is_editing || st->edit_dialog)
     return;
 
   st->is_editing = true;
-  uint32_t w = eos_lvgl_get_width();
-  uint32_t h = eos_lvgl_get_height();
-  bool is_large = (h >= 400);
-
-  lv_obj_t *scr = lv_screen_active();
-
-  // Full-screen overlay container
-  st->edit_overlay = lv_obj_create(scr);
-  lv_obj_set_size(st->edit_overlay, (int32_t)w, (int32_t)h);
-  lv_obj_align(st->edit_overlay, LV_ALIGN_TOP_LEFT, 0, 0);
-  lv_obj_set_style_bg_color(st->edit_overlay, lv_color_hex(0x050811), 0);
-  lv_obj_set_style_bg_opa(st->edit_overlay, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_width(st->edit_overlay, 0, 0);
-  lv_obj_set_style_radius(st->edit_overlay, 0, 0);
-  lv_obj_set_style_pad_all(st->edit_overlay, 4, 0);
-
-  // Top Action Bar with Title and Touch Buttons [▶ Run] [✕ Cancel]
-  int32_t top_h = is_large ? 34 : 26;
-  lv_obj_t *top_bar = lv_obj_create(st->edit_overlay);
-  lv_obj_set_size(top_bar, (int32_t)w - 8, top_h);
-  lv_obj_align(top_bar, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(top_bar, lv_color_hex(0x0F172A), 0);
-  lv_obj_set_style_border_width(top_bar, 0, 0);
-  lv_obj_set_style_pad_all(top_bar, 2, 0);
-
-  lv_obj_t *title = lv_label_create(top_bar);
-  lv_label_set_text(title, is_large ? "Command Editor" : "Edit Cmd");
-  lv_obj_set_style_text_color(title, lv_color_hex(0x60A5FA), 0);
-  lv_obj_align(title, LV_ALIGN_LEFT_MID, 4, 0);
-
-  // Cancel Touch Button
-  int32_t btn_top_w = is_large ? 76 : 50;
-  lv_obj_t *btn_cancel = lv_button_create(top_bar);
-  lv_obj_set_size(btn_cancel, btn_top_w, top_h - 4);
-  lv_obj_align(btn_cancel, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0xEF4444), 0);
-  lv_obj_set_style_radius(btn_cancel, 3, 0);
-  lv_obj_set_style_pad_all(btn_cancel, 0, 0);
-  lv_obj_add_event_cb(btn_cancel, term_edit_btn_cancel_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_c = lv_label_create(btn_cancel);
-  lv_label_set_text(lbl_c, is_large ? "✕ Cancel" : "Cancel");
-  lv_obj_set_style_text_color(lbl_c, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(lbl_c, LV_ALIGN_CENTER, 0, 0);
-
-  // Run Touch Button
-  lv_obj_t *btn_ok = lv_button_create(top_bar);
-  lv_obj_set_size(btn_ok, btn_top_w, top_h - 4);
-  lv_obj_align(btn_ok, LV_ALIGN_RIGHT_MID, -(btn_top_w + 4), 0);
-  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(0x16A34A), 0);
-  lv_obj_set_style_radius(btn_ok, 3, 0);
-  lv_obj_set_style_pad_all(btn_ok, 0, 0);
-  lv_obj_add_event_cb(btn_ok, term_edit_btn_run_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_ok = lv_label_create(btn_ok);
-  lv_label_set_text(lbl_ok, is_large ? "▶ Run" : "Run");
-  lv_obj_set_style_text_color(lbl_ok, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(lbl_ok, LV_ALIGN_CENTER, 0, 0);
-
-  // Textarea for command input
-  int32_t ta_y = top_h + 3;
-  int32_t ta_h = is_large ? 38 : 28;
-  st->edit_ta = lv_textarea_create(st->edit_overlay);
-  lv_obj_set_size(st->edit_ta, (int32_t)w - 8, ta_h);
-  lv_obj_align(st->edit_ta, LV_ALIGN_TOP_MID, 0, ta_y);
-  lv_textarea_set_one_line(st->edit_ta, true);
-  const char *initial_cmd =
+  const char *initial =
       st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
-  lv_textarea_set_text(st->edit_ta, initial_cmd);
-  lv_textarea_set_cursor_pos(st->edit_ta, LV_TEXTAREA_CURSOR_LAST);
-  lv_obj_set_style_bg_color(st->edit_ta, lv_color_hex(0x1E293B), 0);
-  lv_obj_set_style_text_color(st->edit_ta, lv_color_hex(0xFDE047), 0);
-  lv_obj_set_style_border_color(st->edit_ta, lv_color_hex(0x3B82F6), 0);
-  lv_obj_set_style_border_width(st->edit_ta, 1, 0);
-  lv_obj_set_style_radius(st->edit_ta, 3, 0);
-  lv_obj_set_style_pad_all(st->edit_ta, 4, 0);
 
-  // Blinking cursor matches text displayment color (0xFDE047)
-  lv_obj_set_style_bg_color(st->edit_ta, lv_color_hex(0xFDE047), LV_PART_CURSOR);
-  lv_obj_set_style_bg_opa(st->edit_ta, LV_OPA_COVER, LV_PART_CURSOR);
-  lv_obj_set_style_border_color(st->edit_ta, lv_color_hex(0xFDE047), LV_PART_CURSOR);
-  lv_obj_set_style_border_width(st->edit_ta, 0, LV_PART_CURSOR);
-  lv_obj_set_style_text_color(st->edit_ta, lv_color_hex(0x0F172A), LV_PART_CURSOR);
-
-  // Hint label between textarea and keyboard
-  if (is_large) {
-    lv_obj_t *hint = lv_label_create(st->edit_overlay);
-    lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, ta_y + ta_h + 4);
-    lv_label_set_text(hint, "Touch keys to type  •  [▶ Run] to execute  •  [✕ Cancel] to discard");
-    lv_obj_set_style_text_color(hint, lv_color_hex(0x64748B), 0);
-  }
-
-  // On-screen Virtual Keyboard
-  // Height deduced proportionally:
-  // On large displays (e.g. 800x480 P4): cap to ~45% screen height (~25% width, ~200px)
-  // On compact displays (e.g. 240x280 Lilka): allocate ~52% screen height (~145px) for clear legibility
-  int32_t kb_y = ta_y + ta_h + 3;
-  int32_t kb_h;
-  if (is_large) {
-    int32_t max_kb_h = (int32_t)(h * 0.45f);
-    kb_h = (int32_t)(w * 0.25f);
-    if (kb_h > max_kb_h) kb_h = max_kb_h;
-    if (kb_h < 150) kb_h = 150;
-  } else {
-    kb_h = (int32_t)(h * 0.52f);
-  }
-  if (kb_h > (int32_t)h - kb_y - 4) kb_h = (int32_t)h - kb_y - 4;
-
-  st->edit_kb = lv_keyboard_create(st->edit_overlay);
-  lv_obj_set_size(st->edit_kb, (int32_t)w - 4, kb_h);
-  lv_obj_align(st->edit_kb, LV_ALIGN_BOTTOM_MID, 0, -4);
-  lv_keyboard_set_textarea(st->edit_kb, st->edit_ta);
-  lv_obj_add_event_cb(st->edit_kb, term_kb_event_cb, LV_EVENT_ALL, st);
-
-  // Styling keyboard for visibility on all screen resolutions
-  lv_obj_set_style_bg_color(st->edit_kb, lv_color_hex(0x0F172A), LV_PART_MAIN);
-  lv_obj_set_style_border_color(st->edit_kb, lv_color_hex(0x334155), LV_PART_MAIN);
-  lv_obj_set_style_border_width(st->edit_kb, 1, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(st->edit_kb, 2, LV_PART_MAIN);
-  lv_obj_set_style_pad_gap(st->edit_kb, 2, LV_PART_MAIN);
-
-  // Normal keyboard buttons
-  lv_obj_set_style_bg_color(st->edit_kb, lv_color_hex(0x1E293B), LV_PART_ITEMS);
-  lv_obj_set_style_text_color(st->edit_kb, lv_color_hex(0xF8FAFC), LV_PART_ITEMS);
-  lv_obj_set_style_border_color(st->edit_kb, lv_color_hex(0x475569), LV_PART_ITEMS);
-  lv_obj_set_style_border_width(st->edit_kb, 1, LV_PART_ITEMS);
-  lv_obj_set_style_radius(st->edit_kb, 3, LV_PART_ITEMS);
-
-  // Focused/Selected button styling
-  lv_obj_set_style_bg_color(st->edit_kb, lv_color_hex(0x2563EB),
-                             LV_PART_ITEMS | LV_STATE_FOCUSED);
-  lv_obj_set_style_border_color(st->edit_kb, lv_color_hex(0xFACC15),
-                                LV_PART_ITEMS | LV_STATE_FOCUSED);
-  lv_obj_set_style_border_width(st->edit_kb, 2,
-                                LV_PART_ITEMS | LV_STATE_FOCUSED);
-  lv_obj_set_style_text_color(st->edit_kb, lv_color_hex(0xFFFFFF),
-                               LV_PART_ITEMS | LV_STATE_FOCUSED);
-
-  lv_obj_set_style_bg_color(st->edit_kb, lv_color_hex(0x2563EB),
-                             LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_border_color(st->edit_kb, lv_color_hex(0xFACC15),
-                                LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_border_width(st->edit_kb, 2,
-                                LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_text_color(st->edit_kb, lv_color_hex(0xFFFFFF),
-                               LV_PART_ITEMS | LV_STATE_FOCUS_KEY);
-
-  lv_group_t *g = eos_lvgl_get_group();
-  if (g) {
-    lv_group_add_obj(g, st->edit_kb);
-    lv_group_focus_obj(st->edit_kb);
-  }
-  lv_obj_add_state(st->edit_kb, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
-  lv_buttonmatrix_set_selected_button(st->edit_kb, 0);
-}
-
-static char term_key_to_ascii(uint16_t key) {
-  if (key >= KEY_1 && key <= KEY_9)
-    return (char)('1' + (key - KEY_1));
-  if (key == KEY_0)
-    return '0';
-  if (key >= KEY_A && key <= KEY_Z)
-    return (char)('a' + (key - KEY_A));
-  if (key == KEY_SPACE)
-    return ' ';
-  if (key == KEY_MINUS)
-    return '-';
-  if (key == KEY_SLASH)
-    return '/';
-  if (key == KEY_DOT)
-    return '.';
-  return 0;
+  eos_lvgl_input_dialog_cfg_t cfg = {
+      .title = "Terminal Command",
+      .prompt = "Enter command:",
+      .initial_text = initial,
+      .ok_label = "Run",
+      .cancel_label = "Cancel",
+      .is_password = false,
+      .ok_cb = term_dialog_submit_cb,
+      .cancel_cb = term_dialog_cancel_cb,
+      .user_data = st,
+  };
+  st->edit_dialog = eos_lvgl_create_input_dialog(&cfg);
 }
 
 static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
   if (st->is_editing) {
-    if (key == KEY_B || key == KEY_ESC) {
+    if (key == KEY_ESC) {
       term_close_edit_mode(st);
-      return;
-    }
-    if (key == KEY_BACKSPACE) {
-      if (st->edit_ta) {
-        lv_textarea_delete_char(st->edit_ta);
-      }
-      return;
-    }
-    if (key == KEY_ENTER) {
-      if (st->edit_ta) {
-        const char *text = lv_textarea_get_text(st->edit_ta);
-        if (text) {
-          while (*text && isspace((unsigned char)*text)) text++;
-          size_t len = strlen(text);
-          while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
-          if (len > 0) {
-            if (len >= sizeof(st->active_cmd)) len = sizeof(st->active_cmd) - 1;
-            memcpy(st->active_cmd, text, len);
-            st->active_cmd[len] = '\0';
-          }
-        }
-      }
-      term_close_edit_mode(st);
-      st->trigger_run = true;
-      return;
-    }
-
-    if (key == KEY_UP || key == KEY_DOWN || key == KEY_LEFT || key == KEY_RIGHT) {
-      if (st->edit_kb) {
-        if (lv_buttonmatrix_get_selected_button(st->edit_kb) ==
-            LV_BUTTONMATRIX_BUTTON_NONE) {
-          lv_buttonmatrix_set_selected_button(st->edit_kb, 0);
-        }
-        uint32_t lv_k = (key == KEY_RIGHT) ? LV_KEY_RIGHT :
-                        (key == KEY_LEFT)  ? LV_KEY_LEFT :
-                        (key == KEY_DOWN)  ? LV_KEY_DOWN : LV_KEY_UP;
-        lv_obj_send_event(st->edit_kb, LV_EVENT_KEY, &lv_k);
-      }
-      return;
-    }
-
-    if (key == KEY_A) {
-      if (st->edit_kb) {
-        uint32_t sel = lv_buttonmatrix_get_selected_button(st->edit_kb);
-        if (sel == LV_BUTTONMATRIX_BUTTON_NONE) {
-          sel = 0;
-          lv_buttonmatrix_set_selected_button(st->edit_kb, 0);
-        }
-        lv_obj_send_event(st->edit_kb, LV_EVENT_VALUE_CHANGED, &sel);
-      }
-      return;
-    }
-
-    char ch = term_key_to_ascii(key);
-    if (ch != 0 && st->edit_ta) {
-      lv_textarea_add_char(st->edit_ta, (uint32_t)ch);
-      return;
     }
     return;
   }
@@ -908,17 +688,13 @@ static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
     term_update_ui(st);
     break;
 
-  case KEY_C:
-    eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
-    term_update_ui(st);
-    break;
-
   case KEY_A:
   case KEY_ENTER:
     st->trigger_run = true;
     break;
 
   case KEY_B:
+  case KEY_BACKSPACE:
   case KEY_ESC:
     st->should_exit = true;
     break;
@@ -988,16 +764,7 @@ int lvgl_term_main(int argc, char **argv) {
   bool stdin_redirected = (proc && eos_proc_fd_map_get(proc, STDIN_FILENO) >= 0);
 
   // Initialize LVGL display
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = NULL,
-      .kbd_path = NULL,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init(NULL) != 0) {
     // CLI fallback when display is occupied or unavailable
     if (run_cmd_arg) {
       char full_cmd[EOS_LARGE_STR_LEN];
@@ -1072,6 +839,10 @@ int lvgl_term_main(int argc, char **argv) {
     eos_lvgl_step(10);
   }
 
+  if (st->edit_dialog) {
+    eos_lvgl_close_input_dialog(st->edit_dialog);
+    st->edit_dialog = NULL;
+  }
   eos_lvgl_deinit();
   free(st->text_buf);
   free(st);

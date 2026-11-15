@@ -31,20 +31,16 @@ static const key_cap_def_t s_key_caps[] = {
 
 #define KEY_CAP_COUNT (sizeof(s_key_caps) / sizeof(s_key_caps[0]))
 
+static void keypad_back_btn_cb(lv_event_t *e) {
+  bool *r = (bool *)lv_event_get_user_data(e);
+  if (r) *r = false;
+}
+
 int lvgl_keypad_main(int argc, char **argv) {
   const char *fb_path = (argc > 1) ? argv[1] : NULL;
   const char *kbd_path = (argc > 2) ? argv[2] : NULL;
 
-  eos_lvgl_cfg_t cfg = {
-      .fb_path = fb_path,
-      .kbd_path = kbd_path,
-      .partial_lines = 0,
-      .force_full_frame = false,
-      .dpad_group_nav = false,
-      .enable_keyboard = true,
-  };
-
-  if (eos_lvgl_init(&cfg) != 0) {
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
     printf("lvgl_keypad: failed to init LVGL\n");
     return -1;
   }
@@ -112,6 +108,9 @@ int lvgl_keypad_main(int argc, char **argv) {
   int consecutive_b = 0;
   bool running = true;
 
+  // Standard touch exit/back button
+  eos_lvgl_create_back_btn(scr, keypad_back_btn_cb, &running);
+
   while (running) {
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
@@ -121,7 +120,7 @@ int lvgl_keypad_main(int argc, char **argv) {
         running = false;
         break;
       }
-      if (key == KEY_B) {
+      if (key == KEY_B || key == KEY_BACKSPACE) {
         consecutive_b++;
         if (consecutive_b >= 3) {
           running = false;
@@ -156,8 +155,7 @@ int lvgl_keypad_main(int argc, char **argv) {
     eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
     if (ctx) {
       char buf3[64];
-      snprintf(buf3, sizeof(buf3), "FB: %s (P:%u F:%u)",
-               ctx->fallback_full ? "FULL" : "PARTIAL",
+      snprintf(buf3, sizeof(buf3), "Flushes: P:%u F:%u",
                (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes);
       lv_label_set_text(lbl_fb, buf3);
     }

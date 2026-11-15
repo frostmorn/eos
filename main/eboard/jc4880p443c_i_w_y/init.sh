@@ -11,5 +11,11 @@ devctl attach bus sdio root --pin clk=18,cmd=19,d0=14,d1=15,d2=16,d3=17 --cfg sl
 devctl attach net wifi sdio1 --pin chip_pu=54
 devctl attach net sta wifi0
 devctl attach net ap wifi0
+devctl attach display compositor fb0 --cfg role=main,x=0,y=48,w=480,h=696,z=1
+devctl attach display compositor fb0 --cfg role=status,x=0,y=0,w=480,h=48,z=1
+devctl attach display compositor fb0 --cfg role=toolbar,x=0,y=744,w=480,h=56,z=1
+devctl attach display compositor fb0 --cfg role=full,x=0,y=0,w=480,h=800,z=10
+statusbar &
+toolbar &
 launcher &
 ush

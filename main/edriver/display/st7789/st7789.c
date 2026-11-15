@@ -7,6 +7,8 @@
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_panel_vendor.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include "ecore/capsmgr.h"
 #include "ecore/driver.h"
@@ -34,6 +36,7 @@ typedef struct {
   bool has_clip;
   uint8_t *dma_buf[2];
   uint8_t dma_idx;
+  SemaphoreHandle_t lock;
 } st7789_state_t;
 
 // Placement options
@@ -203,6 +206,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   state->dma_buf[1] =
       heap_caps_malloc(ST7789_DMA_STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   state->dma_idx = 0;
+  state->lock = xSemaphoreCreateRecursiveMutex();
 
   esp_lcd_panel_reset(state->panel);
   esp_lcd_panel_init(state->panel);
@@ -228,6 +232,10 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
   }
 
   st7789_state_t *state = dev->state;
+  if (state->lock) {
+    xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+  }
+
   uint32_t x = state->has_clip ? state->clip_x : 0;
   uint32_t y = state->has_clip ? state->clip_y : 0;
   uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
@@ -236,6 +244,7 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
 
   if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
       y + h > (uint32_t)state->height) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EINVAL;
     return -1;
   }
@@ -246,13 +255,16 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
 
   size_t row_bytes = (size_t)w * 2;
   if (row_bytes == 0 || len < row_bytes) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EINVAL;
     return -1;
   }
 
   uint32_t total_rows = (uint32_t)(len / row_bytes);
-  if (total_rows == 0)
+  if (total_rows == 0) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     return 0;
+  }
   if (total_rows > h)
     total_rows = h;
 
@@ -280,17 +292,21 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
       memcpy(dst, src + (size_t)sy * row_bytes, chunk_len);
       if (esp_lcd_panel_draw_bitmap(state->panel, x, y + sy, x + w,
                                     y + sy + sh, dst) != ESP_OK) {
+        if (state->lock) xSemaphoreGiveRecursive(state->lock);
         return -1;
       }
     }
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     return (ssize_t)((size_t)total_rows * row_bytes);
   }
 
   // Fallback if persistent ping-pong buffers are unavailable
   if (esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + total_rows,
                                 buf) != ESP_OK) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
     return -1;
   }
+  if (state->lock) xSemaphoreGiveRecursive(state->lock);
   return (ssize_t)((size_t)total_rows * row_bytes);
 }
 
@@ -345,6 +361,18 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     }
     break;
   }
+  case EOS_DISPLAY_IOCTL_LOCK:
+    if (state->lock) {
+      xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+    }
+    break;
+
+  case EOS_DISPLAY_IOCTL_UNLOCK:
+    if (state->lock) {
+      xSemaphoreGiveRecursive(state->lock);
+    }
+    break;
+
   default:
     errno = ENOTTY;
     ret = -1;
@@ -358,6 +386,11 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   st7789_state_t *state = dev->state;
   if (!state)
     return;
+
+  if (state->lock) {
+    vSemaphoreDelete(state->lock);
+    state->lock = NULL;
+  }
 
   int32_t en_pin = eos_pin_get_no(dev->pins, "en");
   int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");

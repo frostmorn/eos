@@ -56,7 +56,7 @@ static void sdl2_query_display_and_input(sdl2_context_t *ctx) {
   if (ctx->fb_fd < 0) {
     const char *fb_path = getenv("EOS_FB");
     if (!fb_path) {
-      fb_path = "/dev/fb0";
+      fb_path = (access("/dev/vfb0", F_OK) == 0) ? "/dev/vfb0" : "/dev/fb0";
     }
     ctx->fb_fd = open(fb_path, O_RDWR);
   }

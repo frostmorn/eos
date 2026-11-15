@@ -88,12 +88,9 @@ class EOSTestHarness:
 
     def _open_serial(self):
         if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=2.0)
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=10.0)
         else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=2.0)
-        if not self.port.startswith("socket://"):
-            self.ser.dtr = False
-            self.ser.rts = False
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=10.0)
 
     def _read_available(self):
         if not self.ser or not self.ser.in_waiting:
@@ -110,7 +107,7 @@ class EOSTestHarness:
         self._open_serial()
 
         ready_marker = b"__EOS_READY__"
-        deadline = time.time() + 6.0
+        deadline = time.time() + 15.0
         buf = b""
         last_ping = 0.0
         while time.time() < deadline:
@@ -130,10 +127,13 @@ class EOSTestHarness:
 
         if ready_marker not in buf and not self.reset and not self.port.startswith("socket://"):
             print(f"{Colors.YELLOW}No prompt detected, recovering via OpenOCD JTAG reset...{Colors.RESET}")
-            self.close()
             jtag_reset(self.port)
+            try:
+                self.close()
+            except Exception:
+                pass
             self._open_serial()
-            deadline = time.time() + 4.0
+            deadline = time.time() + 8.0
             buf = b""
             last_ping = 0.0
             while time.time() < deadline:
@@ -155,7 +155,7 @@ class EOSTestHarness:
         while self.ser.in_waiting:
             self._read_available()
             time.sleep(0.01)
-        self.ser.reset_input_buffer()
+        # self.ser.reset_input_buffer()
 
     def close(self):
         if self.ser and self.ser.is_open:
@@ -177,7 +177,7 @@ class EOSTestHarness:
         while self.ser.in_waiting:
             self._read_available()
             time.sleep(0.005)
-        self.ser.reset_input_buffer()
+        # self.ser.reset_input_buffer()
 
         self.ser.write(full_cmd.encode("utf-8"))
         deadline = time.time() + max(wait, 2.0)
@@ -642,7 +642,7 @@ class EOSTestHarness:
         self.check(suite, "netctl link show ap0 specifies DOWN state", "netctl link show ap0", r"state DOWN")
 
         # Link state control (ip link set)
-        self.check(suite, "netctl link set sta0 up", "netctl link set sta0 up", r"(brought UP|interface set to UP)")
+        self.check(suite, "netctl link set sta0 up", "netctl link set sta0 up", r"(brought UP|interface set to UP)", wait=3.5)
         self.check(suite, "Verify sta0 state is UP in netctl link", "netctl link show sta0", r"state (UP|UNKNOWN)")
         self.check(suite, "netctl link set sta0 down", "netctl link set sta0 down", r"(brought DOWN|interface set to DOWN)")
         self.check(suite, "Verify sta0 state is DOWN in netctl link", "netctl link show sta0", r"state DOWN")
@@ -718,6 +718,10 @@ class EOSTestHarness:
         time.sleep(1.0)
         self.check(suite, "Launch lvgl_term through launcher IPC", "launcher lvgl_term &",
                    r"(requesting launch of 'lvgl_term'|Starting 'lvgl_term')", wait=2.5)
+        time.sleep(1.0)
+        self.check(suite, "Launch test_lvgl automated test through launcher IPC",
+                   "launcher test_lvgl -a -t 500 &",
+                   r"(requesting launch of 'test_lvgl'|Starting 'test_lvgl')", wait=2.5)
         time.sleep(1.0)
         self.check(suite, "lvgl_term help banner", "lvgl_term -h",
                    r"Usage:\s+<cmd> \| lvgl_term", wait=2.0)

@@ -75,9 +75,10 @@ lv_indev_t *eos_lvgl_get_indev(void);
 lv_indev_t *eos_lvgl_get_touch_indev(void);
 lv_group_t *eos_lvgl_get_group(void);
 
-// Query active framebuffer dimensions.
+// Query active framebuffer dimensions and path.
 uint32_t eos_lvgl_get_width(void);
 uint32_t eos_lvgl_get_height(void);
+const char *eos_lvgl_get_fb_path(void);
 
 // Pump LVGL timers and sleep up to max_sleep_ms milliseconds.
 uint32_t eos_lvgl_step(uint32_t max_sleep_ms);
@@ -174,6 +175,19 @@ lv_obj_t *eos_lvgl_create_header(lv_obj_t *parent, const char *title, const char
 // Creates a standardized toast notification floating at top of parent
 lv_obj_t *eos_lvgl_create_toast(lv_obj_t *parent, const char *message, bool is_error);
 
+// Creates a shared on-screen keyboard attached to target_ta (or NULL).
+// If parent is NULL, attaches to lv_screen_active().
+// Supports touch tapping and hardware keypad navigation (arrows move across keys, Enter/A types key).
+// Hardware B and C buttons act as Backspace.
+lv_obj_t *eos_lvgl_create_keyboard(lv_obj_t *parent, lv_obj_t *target_ta);
+
+// Returns the currently active shared on-screen keyboard (or NULL if none active)
+lv_obj_t *eos_lvgl_get_active_keyboard(void);
+
+// Dispatches a hardware key event (arrows, Enter/A, Backspace/B, Esc) directly to the active on-screen keyboard.
+// Returns true if the key was consumed by the keyboard.
+bool eos_lvgl_keyboard_handle_key(uint16_t key);
+
 // Callback signature for modal input dialogs
 typedef void (*eos_lvgl_input_cb_t)(const char *text, void *user_data);
 
@@ -182,6 +196,7 @@ typedef struct {
   const char *prompt;        // Prompt text (e.g. "Enter password:")
   const char *initial_text;  // Initial text field content (or NULL)
   const char *ok_label;      // OK button label (NULL defaults to "OK")
+  const char *cancel_label;  // Cancel button label (NULL defaults to "Cancel")
   bool is_password;          // Enable password character masking
   eos_lvgl_input_cb_t ok_cb;     // Invoked on submit
   eos_lvgl_input_cb_t cancel_cb; // Invoked on cancel (or NULL)
@@ -193,6 +208,72 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg);
 
 // Closes and frees an active input dialog
 void eos_lvgl_close_input_dialog(lv_obj_t *dialog);
+
+// ===================== Statusbar & Toolbar APIs =====================
+
+// Sets active toolbar content (/tmp/tbar) bound to current process PID
+int eos_toolbar_set(const char *title, const char *shortcuts);
+int eos_toolbar_printf(const char *shortcuts, const char *fmt, ...);
+int eos_toolbar_clear(void);
+
+// Sets active statusbar content (/tmp/sbar) bound to current process PID
+int eos_statusbar_set(const char *line1, const char *line2);
+int eos_statusbar_printf(const char *line2, const char *fmt, ...);
+int eos_statusbar_clear(void);
+
+// ===================== Shared Modal Dialogs =====================
+
+// Confirmation Dialog
+typedef void (*eos_lvgl_confirm_cb_t)(bool confirmed, void *user_data);
+
+typedef struct {
+  const char *title;         // Dialog title (e.g. "Confirm Action")
+  const char *message;       // Message prompt
+  const char *confirm_label; // Confirm button label (NULL defaults to "Confirm")
+  const char *cancel_label;  // Cancel button label (NULL defaults to "Cancel")
+  bool dangerous;            // If true, confirm button has red accent
+  eos_lvgl_confirm_cb_t cb;  // Callback invoked with result
+  void *user_data;           // User context pointer
+} eos_lvgl_confirm_dialog_cfg_t;
+
+lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg);
+
+// Information Dialog
+typedef void (*eos_lvgl_info_cb_t)(void *user_data);
+
+typedef struct {
+  const char *title;         // Dialog title (e.g. "Information")
+  const char *message;       // Message body text
+  const char *button_label;  // Dismiss button label (NULL defaults to "OK")
+  eos_lvgl_info_cb_t cb;     // Optional callback invoked on dismissal
+  void *user_data;           // User context pointer
+} eos_lvgl_info_dialog_cfg_t;
+
+lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg);
+
+// Alert Dialog
+typedef enum {
+  EOS_LVGL_ALERT_INFO = 0,
+  EOS_LVGL_ALERT_WARNING,
+  EOS_LVGL_ALERT_ERROR,
+} eos_lvgl_alert_level_t;
+
+typedef void (*eos_lvgl_alert_cb_t)(bool accepted, void *user_data);
+
+typedef struct {
+  const char *title;            // Dialog title
+  const char *message;          // Warning / error message
+  eos_lvgl_alert_level_t level; // Severity level (INFO, WARNING, ERROR)
+  const char *ok_label;         // Primary button (NULL defaults to "Acknowledge")
+  const char *cancel_label;     // Optional secondary button (or NULL for single button)
+  eos_lvgl_alert_cb_t cb;       // Callback invoked on user action
+  void *user_data;              // User context pointer
+} eos_lvgl_alert_dialog_cfg_t;
+
+lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg);
+
+// Closes any shared modal dialog
+void eos_lvgl_dialog_close(lv_obj_t *dialog);
 
 #ifdef __cplusplus
 }

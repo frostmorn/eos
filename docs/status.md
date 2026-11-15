@@ -42,6 +42,8 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | `bus` | `sdio` | **Implemented** | sdio (hardware_test.py) | jc4880p443c_i_w_y |
 | `bus` | `spi` | **Implemented** | devctl | lilka_v23 |
 | `bus` | `usb` | **Partial** | devctl | Manual / Optional |
+| `display` | `compositor` | **Implemented** | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
+| `display` | `mem_fb` | **Implemented** | devctl attach/detach | Manual / Optional |
 | `display` | `qemu_rgb` | **Implemented** | devctl, launcher | esp32s3_qemu |
 | `display` | `st7701s` | **Implemented** | devctl, test_disp_*, launcher | jc4880p443c_i_w_y |
 | `display` | `st7789` | **Implemented** | devctl, test_disp_*, launcher | lilka_v23 |
@@ -84,5 +86,5 @@ This document tracks the implementation, test coverage, and hardware verificatio
 ## 5. Architectural Quality Audits
 
 - **Declarative Layer Audit (`tools/layer_audit.py`):** 16/16 rules passed (`tools/layer_audit_rules.json`).
-- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 34/34 wrapped symbols documented and verified in `main/ewrap/`.
+- **Linker Symbol Wrappers (`tools/wrapcheck.py`):** 39/39 wrapped symbols documented and verified in `main/ewrap/`.
 - **Unused Code Tracking (`tools/unused_code_audit.py`):** Clean analysis of whole-archive core objects.

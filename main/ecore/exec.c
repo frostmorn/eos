@@ -1,5 +1,7 @@
 #include "ecore/bin.h"
+#include "ecore/dev.h"
 #include "ecore/elf.h"
+#include "ecore/ioctl.h"
 #include "ecore/proc.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
@@ -65,7 +67,6 @@ static void *exec_thread_entry(void *arg) {
 }
 
 int execve(const char *path, char *const argv[], char *const envp[]) {
-  (void)envp;
   if (!path) {
     errno = EINVAL;
     return -1;
@@ -154,6 +155,25 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
   ex->ppid = parent_pid;
   ex->pgid = parent_pgid;
   ex->sid = parent_sid;
+
+  // Propagate explicit envp if provided
+  if (envp) {
+    for (int i = 0; envp[i] != NULL; i++) {
+      const char *eq = strchr(envp[i], '=');
+      if (eq) {
+        size_t klen = (size_t)(eq - envp[i]);
+        char key[64];
+        if (klen < sizeof(key)) {
+          memcpy(key, envp[i], klen);
+          key[klen] = '\0';
+          eos_proc_setenv_pid(child_pid, key, eq + 1, 1);
+        }
+      }
+    }
+  }
+
+  // Display role and framebuffer resolution
+  eos_proc_resolve_display_env(child_pid, bin ? bin->flags : EOS_BIN_FLAG_NONE);
 
   pthread_t thread;
   int rc = eos_proc_spawn_thread(child_pid, exec_thread_entry, ex,

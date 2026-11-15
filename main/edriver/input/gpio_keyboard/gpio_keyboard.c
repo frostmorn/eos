@@ -43,8 +43,8 @@ static uint16_t map_key_name(const char *name) {
   if (strcmp(name, "select") == 0 || strcmp(name, "enter") == 0) return KEY_ENTER;
   if (strcmp(name, "start") == 0 || strcmp(name, "space") == 0) return KEY_SPACE;
   if (strcmp(name, "esc") == 0 || strcmp(name, "escape") == 0) return KEY_ESC;
-  if (strcmp(name, "a") == 0) return KEY_A;
-  if (strcmp(name, "b") == 0) return KEY_B;
+  if (strcmp(name, "a") == 0) return KEY_ENTER;
+  if (strcmp(name, "b") == 0) return KEY_BACKSPACE;
   if (strcmp(name, "c") == 0) return KEY_C;
   if (strcmp(name, "d") == 0) return KEY_D;
   if (strcmp(name, "sleep") == 0) return KEY_SLEEP;

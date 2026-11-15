@@ -68,7 +68,7 @@ static void test_colors(int fd) {
 }
 
 int test_disp_colors_main(int argc, char **argv) {
-  const char *path = argc > 1 ? argv[1] : "/dev/fb0";
+  const char *path = argc > 1 ? argv[1] : (getenv("EOS_FB") ? getenv("EOS_FB") : (access("/dev/vfb0", F_OK) == 0 ? "/dev/vfb0" : "/dev/fb0"));
 
   int fd = open(path, O_RDWR);
   if (fd < 0) {

@@ -13,5 +13,11 @@ devctl attach power battery adc0 --pin adc=3 --cfg r_top=33,r_bottom=100
 devctl attach net wifi root
 devctl attach net sta wifi0
 devctl attach net ap wifi0
+devctl attach display compositor fb0 --cfg role=main,x=0,y=32,w=280,h=176,z=1
+devctl attach display compositor fb0 --cfg role=status,x=0,y=0,w=280,h=32,z=1
+devctl attach display compositor fb0 --cfg role=toolbar,x=0,y=208,w=280,h=32,z=1
+devctl attach display compositor fb0 --cfg role=full,x=0,y=0,w=280,h=240,z=10
+statusbar &
+toolbar &
 launcher &
 ush
