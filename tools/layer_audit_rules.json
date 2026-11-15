@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "version": "1.0",
+  "version": "1.1",
   "rules": [
     {
       "id": "rtos_in_ebin",
@@ -239,6 +239,47 @@
         "\\b__real_mkdir\\b"
       ],
       "rationale": "Real VFS/filesystem I/O calls must never be executed while holding central VFS locks to prevent deadlocks and blocking stalls."
+    },
+    {
+      "id": "no_adhoc_path_tokenizing",
+      "name": "Ad-hoc PATH tokenization outside ecore",
+      "type": "forbidden_patterns",
+      "paths": ["main/ebin", "main/ewrap"],
+      "file_extensions": [".c", ".h"],
+      "patterns": [
+        "strtok_r\\s*\\([^,]+,\\s*\":\""
+      ],
+      "rationale": "Executable PATH resolution must use a single canonical helper in main/ecore rather than duplicating strtok_r loops."
+    },
+    {
+      "id": "no_excessive_strcmp_chains_in_ebin",
+      "name": "Monolithic subcommand strcmp chains in ebin",
+      "type": "max_pattern_occurrences_per_file",
+      "paths": ["main/ebin"],
+      "file_extensions": [".c"],
+      "pattern": "\\bif\\s*\\(\\s*strcmp\\s*\\(\\s*(cmd|argv\\[1\\])\\s*,",
+      "max_count": 5,
+      "rationale": "CLI tools with more than 5 subcommands must use a const subcommand dispatch table and centralize device open/close."
+    },
+    {
+      "id": "function_complexity_limits",
+      "name": "Function length, cyclomatic complexity, and nesting limits",
+      "type": "function_metrics",
+      "paths": ["main/ecore", "main/edriver", "main/ewrap", "main/ebin", "main/emisc"],
+      "file_extensions": [".c", ".h"],
+      "max_lines": 120,
+      "max_branches": 30,
+      "max_indent_levels": 5,
+      "rationale": "Functions must remain small, flat, and single-purpose; split large ioctls and command evaluators into static helpers."
+    },
+    {
+      "id": "no_cross_file_code_clones",
+      "name": "Copy-pasted code blocks across files",
+      "type": "duplicate_blocks",
+      "paths": ["main/ecore", "main/edriver", "main/ewrap", "main/ebin", "main/emisc"],
+      "file_extensions": [".c", ".h"],
+      "min_normalized_lines": 8,
+      "rationale": "Shared logic of 8+ normalized lines across multiple files must be extracted into main/emisc/ or a shared subsystem helper."
     }
   ]
 }

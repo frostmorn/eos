@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-EOS Layer Separation Audit Tool
-Automated static analysis tool to check adherence to EOS architectural rules.
+EOS Layer Separation & Complexity Audit Tool
+Automated static analysis tool to check adherence to EOS architectural,
+complexity, and code-duplication rules.
 Rules are declaratively defined in tools/layer_audit_rules.json (or specified via --rules).
 """
 
 import argparse
+import collections
 import json
 import os
 import re
 import sys
+
 
 class Colors:
     GREEN = "\033[92m"
@@ -18,6 +21,85 @@ class Colors:
     CYAN = "\033[96m"
     BOLD = "\033[1m"
     RESET = "\033[0m"
+
+
+COMMENT_AND_STRING_RE = re.compile(
+    r'//.*?$|/\*.*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'',
+    re.DOTALL | re.MULTILINE,
+)
+
+BRANCH_TOKEN_RE = re.compile(
+    r"\b(?:if|else\s+if|for|while|case|catch)\b|\&\&|\|\||\?"
+)
+
+FUNC_START_RE = re.compile(
+    r"^(?:static\s+|inline\s+|const\s+|unsigned\s+|signed\s+|struct\s+|enum\s+|__attribute__\s*\(\([^)]*\)\)\s*)*"
+    r"[a-zA-Z_][\w\s\*]*?\b([a-zA-Z_]\w*)\s*\([^{;]*\)\s*\{?\s*$"
+)
+
+NON_FUNC_PREFIXES = (
+    "if",
+    "for",
+    "while",
+    "switch",
+    "#",
+    "//",
+    "/*",
+    "typedef",
+    "return",
+)
+
+TRIVIAL_NORMALIZED_LINES = {
+    "{",
+    "}",
+    "};",
+    "break;",
+    "continue;",
+    "return;",
+    "return 0;",
+    "return -1;",
+    "return 1;",
+    "return true;",
+    "return false;",
+    "return NULL;",
+    "else {",
+    "} else {",
+    "#endif",
+    "#else",
+}
+
+
+def strip_comments_and_strings_keep_lines(content):
+    """Replace comments and string literals with spaces while preserving line breaks and indentation."""
+    def _repl(match):
+        text = match.group(0)
+        if text.startswith(('"', "'")):
+            return '""'
+        return "".join("\n" if ch == "\n" else " " for ch in text)
+
+    return COMMENT_AND_STRING_RE.sub(_repl, content)
+
+
+def iter_target_files(paths, file_exts, exclude_dirs=None, exclude_files=None):
+    exclude_dirs_set = set(exclude_dirs or [".git", "build", "components", "managed_components", ".board_cache"])
+    exclude_files_set = set(exclude_files or [])
+    for dir_path in paths:
+        if not os.path.exists(dir_path):
+            continue
+        if os.path.isfile(dir_path):
+            if dir_path.endswith(file_exts) and dir_path not in exclude_files_set:
+                yield dir_path
+            continue
+        for root, dirs, files in os.walk(dir_path):
+            dirs[:] = sorted(d for d in dirs if d not in exclude_dirs_set)
+            for file in sorted(files):
+                if not file.endswith(file_exts):
+                    continue
+                filepath = os.path.join(root, file)
+                norm_path = filepath.replace("\\", "/")
+                if norm_path in exclude_files_set or file in exclude_files_set:
+                    continue
+                yield filepath
 
 
 def is_file_scope_global_variable(line):
@@ -32,7 +114,7 @@ def is_file_scope_global_variable(line):
         return False
     if "(" in stripped and ")" in stripped:
         return False
-    
+
     var_decl_pattern = re.compile(r"^(static\s+)?([a-zA-Z_][a-zA-Z0-9_*]+\s+)+[a-zA-Z_][a-zA-Z0-9_*]*(\s*\[.*\])?\s*(=.*;|;)$")
     return bool(var_decl_pattern.match(stripped))
 
@@ -46,34 +128,240 @@ def run_rule_forbidden_patterns(rule):
     compiled = [re.compile(p) for p in patterns]
 
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
-    for dir_path in paths:
-        if not os.path.exists(dir_path):
-            continue
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if not file.endswith(file_exts):
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(("//", "/*", "*")):
                     continue
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
-                    for idx, line in enumerate(lines, 1):
-                        stripped = line.strip()
-                        if not stripped or stripped.startswith(("//", "/*", "*")):
-                            continue
-                        code_part = line.split("//")[0]
-                        for pat in compiled:
-                            if pat.search(code_part):
-                                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
-                                print(f"    Match: {stripped}")
-                                violations += 1
-                except Exception as e:
-                    print(f"Error reading {filepath}: {e}")
+                code_part = line.split("//")[0]
+                for pat in compiled:
+                    if pat.search(code_part):
+                        print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                        print(f"    Match: {stripped}")
+                        violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
     else:
         print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} violation(s) for {name}.")
+    return violations
+
+
+def run_rule_max_pattern_occurrences_per_file(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c", ".h"]))
+    pattern_str = rule.get("pattern", "")
+    max_count = int(rule.get("max_count", 5))
+    pat = re.compile(pattern_str)
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                raw_content = f.read()
+            clean_lines = strip_comments_and_strings_keep_lines(raw_content).splitlines()
+            raw_lines = raw_content.splitlines()
+
+            matches = []
+            for idx, clean_line in enumerate(clean_lines, 1):
+                if pat.search(clean_line):
+                    matches.append((idx, raw_lines[idx - 1].strip()))
+
+            if len(matches) > max_count:
+                first_line = matches[0][0]
+                print(
+                    f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{first_line} "
+                    f"({len(matches)} occurrences > max {max_count})"
+                )
+                for m_idx, m_text in matches[:4]:
+                    print(f"    Line {m_idx}: {m_text}")
+                if len(matches) > 4:
+                    print(f"    ... (+{len(matches) - 4} more occurrences)")
+                violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} file(s) exceeding pattern threshold for {name}.")
+    return violations
+
+
+def run_rule_function_metrics(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c", ".h"]))
+    max_lines = rule.get("max_lines")
+    max_branches = rule.get("max_branches")
+    max_indent_levels = rule.get("max_indent_levels")
+    max_case_labels = rule.get("max_case_labels")
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                raw_content = f.read()
+            clean_lines = strip_comments_and_strings_keep_lines(raw_content).splitlines()
+
+            i = 0
+            n_lines = len(clean_lines)
+            while i < n_lines:
+                line = clean_lines[i]
+                stripped = line.strip()
+                # Check candidate function header starting at column 0
+                if (
+                    line
+                    and not line[0].isspace()
+                    and not stripped.startswith(NON_FUNC_PREFIXES)
+                    and "=" not in line
+                ):
+                    sig_text = line.strip()
+                    sig_end = i
+                    # Allow multi-line function signature up to 4 lines
+                    while (
+                        "{" not in clean_lines[sig_end]
+                        and ";" not in clean_lines[sig_end]
+                        and sig_end + 1 < n_lines
+                        and (sig_end - i) < 4
+                    ):
+                        sig_end += 1
+                        sig_text += " " + clean_lines[sig_end].strip()
+
+                    m = FUNC_START_RE.match(sig_text)
+                    if m and "{" in clean_lines[sig_end]:
+                        func_name = m.group(1)
+                        if func_name not in ("if", "for", "while", "switch", "sizeof"):
+                            start_idx = i
+                            brace_depth = 0
+                            found_open = False
+                            branches = 0
+                            case_count = 0
+                            max_nesting = 0
+                            j = i
+                            while j < n_lines:
+                                cl = clean_lines[j]
+                                opens = cl.count("{")
+                                closes = cl.count("}")
+                                if opens > 0:
+                                    found_open = True
+                                # Nesting depth inside function body (excluding outer function braces)
+                                current_nesting = max(0, brace_depth - 1) if found_open else 0
+                                if cl.strip():
+                                    max_nesting = max(max_nesting, current_nesting)
+                                brace_depth += opens - closes
+                                branches += len(BRANCH_TOKEN_RE.findall(cl))
+                                case_count += len(re.findall(r"\bcase\b", cl))
+                                j += 1
+                                if found_open and brace_depth <= 0:
+                                    break
+
+                            if found_open and brace_depth == 0:
+                                func_len = j - start_idx
+                                reasons = []
+                                if max_lines is not None and func_len > max_lines:
+                                    reasons.append(f"lines={func_len} > {max_lines}")
+                                if max_branches is not None and branches > max_branches:
+                                    reasons.append(f"branches={branches} > {max_branches}")
+                                if max_indent_levels is not None and max_nesting > max_indent_levels:
+                                    reasons.append(f"nesting={max_nesting} > {max_indent_levels}")
+                                if max_case_labels is not None and case_count > max_case_labels:
+                                    reasons.append(f"cases={case_count} > {max_case_labels}")
+
+                                if reasons:
+                                    print(
+                                        f"  [{Colors.RED}VIOLATION{Colors.RESET}] "
+                                        f"{filepath}:{start_idx + 1} in {func_name}() "
+                                        f"[{', '.join(reasons)}]"
+                                    )
+                                    violations += 1
+                                i = j
+                                continue
+                i += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All functions meet complexity and size limits for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} function complexity violation(s) for {name}.")
+    return violations
+
+
+def run_rule_duplicate_blocks(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c", ".h"]))
+    window_size = int(rule.get("min_normalized_lines", 12))
+    cross_file_only = bool(rule.get("cross_file_only", True))
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    chunks = collections.defaultdict(list)
+
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                raw_content = f.read()
+            clean_lines = strip_comments_and_strings_keep_lines(raw_content).splitlines()
+            raw_lines = raw_content.splitlines()
+
+            norm = []
+            for idx, (cl, rl) in enumerate(zip(clean_lines, raw_lines), 1):
+                s = re.sub(r"\s+", " ", cl).strip()
+                raw_s = re.sub(r"\s+", " ", rl.split("//")[0]).strip()
+                if not s or s in TRIVIAL_NORMALIZED_LINES or s.startswith("#"):
+                    continue
+                # Skip pure data/table rows (e.g. font bitmaps or struct designated initializers)
+                if raw_s.startswith(("{0x", ".")):
+                    continue
+                norm.append((idx, raw_s))
+
+            for i in range(len(norm) - window_size + 1):
+                block = tuple(x[1] for x in norm[i : i + window_size])
+                chunks[block].append((filepath, norm[i][0], norm[i + window_size - 1][0]))
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+
+    covered_lines = collections.defaultdict(set)
+    for block, locs in sorted(chunks.items(), key=lambda item: (len(set(x[0] for x in item[1])), len(item[1])), reverse=True):
+        unique_files = {x[0] for x in locs}
+        if len(locs) < 2:
+            continue
+        if cross_file_only and len(unique_files) < 2:
+            continue
+
+        # Skip if all locations in this window are already covered by a previously reported clone
+        if all(any(line in covered_lines[f] for line in range(start, end + 1)) for f, start, end in locs):
+            continue
+
+        for f, start, end in locs:
+            for line in range(start - 5, end + 6):
+                covered_lines[f].add(line)
+
+        loc_summary = ", ".join(f"{f}:{start}-{end}" for f, start, end in locs[:5])
+        if len(locs) > 5:
+            loc_summary += f" (+{len(locs) - 5} more)"
+        print(
+            f"  [{Colors.RED}VIOLATION{Colors.RESET}] Duplicate {window_size}-line block "
+            f"({len(locs)}x across {len(unique_files)} file(s)): {loc_summary}"
+        )
+        for sample in block[:3]:
+            print(f"    | {sample[:95]}")
+        violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No duplicate code blocks found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} duplicate code block group(s) for {name}.")
     return violations
 
 
@@ -87,38 +375,31 @@ def run_rule_no_calls_between_patterns(rule):
     forbidden_calls = [re.compile(p) for p in rule.get("forbidden_calls", [])]
 
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
-    for dir_path in paths:
-        if not os.path.exists(dir_path):
-            continue
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if not file.endswith(file_exts):
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            lock_stack = []
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(("//", "/*", "*")):
                     continue
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
-                    lock_stack = []
-                    for idx, line in enumerate(lines, 1):
-                        stripped = line.strip()
-                        if not stripped or stripped.startswith(("//", "/*", "*")):
-                            continue
-                        code_part = line.split("//")[0]
-                        for lpat in lock_patterns:
-                            if lpat.search(code_part):
-                                lock_stack.append(idx)
+                code_part = line.split("//")[0]
+                for lpat in lock_patterns:
+                    if lpat.search(code_part):
+                        lock_stack.append(idx)
+                if lock_stack:
+                    for fpat in forbidden_calls:
+                        if fpat.search(code_part):
+                            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                            print(f"    Forbidden I/O call while lock held (acquired at line {lock_stack[-1]}): {stripped}")
+                            violations += 1
+                for upat in unlock_patterns:
+                    if upat.search(code_part):
                         if lock_stack:
-                            for fpat in forbidden_calls:
-                                if fpat.search(code_part):
-                                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
-                                    print(f"    Forbidden I/O call while lock held (acquired at line {lock_stack[-1]}): {stripped}")
-                                    violations += 1
-                        for upat in unlock_patterns:
-                            if upat.search(code_part):
-                                if lock_stack:
-                                    lock_stack.pop()
-                except Exception as e:
-                    print(f"Error reading {filepath}: {e}")
+                            lock_stack.pop()
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
@@ -133,30 +414,23 @@ def run_rule_no_globals(rule):
     paths = rule.get("paths", [])
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
 
-    for dir_path in paths:
-        if not os.path.exists(dir_path):
-            continue
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if not file.endswith((".c", ".h")):
+    for filepath in iter_target_files(paths, (".c", ".h"), rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+
+            brace_depth = 0
+            for idx, line in enumerate(lines, 1):
+                stripped = line.strip()
+                if not stripped or stripped.startswith(("//", "/*", "*", "#")):
                     continue
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        lines = f.readlines()
-                    
-                    brace_depth = 0
-                    for idx, line in enumerate(lines, 1):
-                        stripped = line.strip()
-                        if not stripped or stripped.startswith(("//", "/*", "*", "#")):
-                            continue
-                        brace_depth += stripped.count("{") - stripped.count("}")
-                        if brace_depth == 0 and is_file_scope_global_variable(line):
-                            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
-                            print(f"    Match: {stripped}")
-                            violations += 1
-                except Exception as e:
-                    print(f"Error reading {filepath}: {e}")
+                brace_depth += stripped.count("{") - stripped.count("}")
+                if brace_depth == 0 and is_file_scope_global_variable(line):
+                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                    print(f"    Match: {stripped}")
+                    violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
@@ -171,22 +445,15 @@ def run_rule_include_guards(rule):
     paths = rule.get("paths", [])
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
 
-    for dir_path in paths:
-        if not os.path.exists(dir_path):
-            continue
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if not file.endswith(".h"):
-                    continue
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                    if "#pragma once" not in content and "#ifndef" not in content:
-                        print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}: missing #pragma once / include guard")
-                        violations += 1
-                except Exception as e:
-                    print(f"Error reading {filepath}: {e}")
+    for filepath in iter_target_files(paths, (".h",), rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            if "#pragma once" not in content and "#ifndef" not in content:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}: missing #pragma once / include guard")
+                violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
@@ -205,7 +472,6 @@ def run_rule_allowed_directory(rule):
 
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
     for root, dirs, files in os.walk(base_dir):
-        # Exclude directories
         dirs[:] = [d for d in dirs if d not in exclude_dirs]
         for file in files:
             if file.endswith(file_exts):
@@ -263,22 +529,15 @@ def run_rule_driver_enable_guards(rule):
     pattern = re.compile(rule.get("pattern", r"#\s*if(def)?\s+EOS_DRV_\w+_ENABLED"))
 
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
-    for dir_path in paths:
-        if not os.path.exists(dir_path):
-            continue
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if not file.endswith(".c"):
-                    continue
-                filepath = os.path.join(root, file)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                    if not pattern.search(content):
-                        print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Driver source missing EOS_DRV_*_ENABLED guard: {filepath}")
-                        violations += 1
-                except Exception as e:
-                    print(f"Error reading {filepath}: {e}")
+    for filepath in iter_target_files(paths, (".c",), rule.get("exclude_dirs"), rule.get("exclude_files")):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+            if not pattern.search(content):
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Driver source missing EOS_DRV_*_ENABLED guard: {filepath}")
+                violations += 1
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
 
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All driver source files are correctly guarded.")
@@ -350,6 +609,9 @@ def run_rule_driver_structure(rule):
 
 DISPATCHER = {
     "forbidden_patterns": run_rule_forbidden_patterns,
+    "max_pattern_occurrences_per_file": run_rule_max_pattern_occurrences_per_file,
+    "function_metrics": run_rule_function_metrics,
+    "duplicate_blocks": run_rule_duplicate_blocks,
     "no_calls_between_patterns": run_rule_no_calls_between_patterns,
     "no_globals": run_rule_no_globals,
     "mandatory_include_guards": run_rule_include_guards,
@@ -370,11 +632,17 @@ def load_rules(rules_file):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="EOS Declarative Layer Separation Audit Tool")
+    parser = argparse.ArgumentParser(description="EOS Declarative Layer Separation & Complexity Audit Tool")
     parser.add_argument(
         "-r", "--rules",
         default="tools/layer_audit_rules.json",
         help="Path to declarative JSON rules definition (default: tools/layer_audit_rules.json)"
+    )
+    parser.add_argument(
+        "--rule-id",
+        action="append",
+        dest="rule_ids",
+        help="Run only specific rule ID(s) (can be specified multiple times)"
     )
     args = parser.parse_args()
 
@@ -385,6 +653,8 @@ def main():
     executed_rules = 0
 
     for rule in rules:
+        if args.rule_ids and rule.get("id") not in args.rule_ids:
+            continue
         rule_type = rule.get("type")
         handler = DISPATCHER.get(rule_type)
         if not handler:
