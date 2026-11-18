@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "ecore/bin.h"
+#include "ecore/ioctl.h"
 #include "SDL.h"
 
 static int test_sdl_main(int argc, char **argv) {
@@ -24,7 +25,7 @@ static int test_sdl_main(int argc, char **argv) {
 
   uint16_t *pixels = screen->pixels;
   for (int i = 0; i < screen->w * screen->h; i++) {
-    pixels[i] = 0x07E0; // green
+    pixels[i] = EOS_RGB565_GREEN_MASK; // green
   }
 
   SDL_Flip(screen);
@@ -37,7 +38,7 @@ static int test_sdl_main(int argc, char **argv) {
 EOS_BIN_ATTR eos_bin_t test_sdl = {
     EOS_BIN_INITIALIZER,
     .flags = EOS_BIN_FLAG_GUI,
-    .stack_size = 12288U,
+    .stack_size = EOS_BIN_LARGE_STACK_SIZE,
     .filename = "test_sdl",
     .name = "SDL 1.2 Test",
     .group = "Tests",

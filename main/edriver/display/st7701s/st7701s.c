@@ -29,11 +29,7 @@ typedef struct {
   int32_t width;
   int32_t height;
   uint8_t rotation;
-  uint32_t clip_x;
-  uint32_t clip_y;
-  uint32_t clip_w;
-  uint32_t clip_h;
-  bool has_clip;
+  eos_clip_rect_t clip;
   int32_t bl_pin;
   int32_t rst_pin;
   bool bl_ledc_active;
@@ -148,14 +144,94 @@ static void st7701s_backlight_off(int32_t bl_pin, bool ledc_active) {
 
 // ── Driver functions ──────────────────────────────────────────
 
+static bool st7701s_create_bus_and_io(st7701s_state_t *state, int32_t lane_num, int32_t bitrate_mbps) {
+  esp_lcd_dsi_bus_config_t bus_config = {
+      .bus_id = 0,
+      .num_data_lanes = lane_num,
+      .phy_clk_src = 0,
+      .lane_bit_rate_mbps = bitrate_mbps,
+  };
+  esp_err_t err = esp_lcd_new_dsi_bus(&bus_config, &state->dsi_bus);
+  if (err != ESP_OK) {
+    EOS_LOGE("st7701s: new DSI bus failed: %s", esp_err_to_name(err));
+    return false;
+  }
+
+  esp_lcd_dbi_io_config_t dbi_config = {
+      .virtual_channel = 0,
+      .lcd_cmd_bits = 8,
+      .lcd_param_bits = 8,
+  };
+  err = esp_lcd_new_panel_io_dbi(state->dsi_bus, &dbi_config, &state->io);
+  if (err != ESP_OK) {
+    EOS_LOGE("st7701s: new panel IO DBI failed: %s", esp_err_to_name(err));
+    esp_lcd_del_dsi_bus(state->dsi_bus);
+    state->dsi_bus = NULL;
+    return false;
+  }
+  return true;
+}
+
+static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t native_w, int32_t native_h, int32_t dpi_clk_mhz, int32_t rst_pin) {
+  esp_lcd_dpi_panel_config_t dpi_config = {
+      .virtual_channel = 0,
+      .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
+      .dpi_clock_freq_mhz = dpi_clk_mhz,
+      .in_color_format = LCD_COLOR_FMT_RGB565,
+      .out_color_format = LCD_COLOR_FMT_RGB565,
+      .num_fbs = 1,
+      .video_timing = {
+          .h_size = native_w,
+          .v_size = native_h,
+          .hsync_back_porch = 42,
+          .hsync_pulse_width = 12,
+          .hsync_front_porch = 42,
+          .vsync_back_porch = 8,
+          .vsync_pulse_width = 2,
+          .vsync_front_porch = 166,
+      },
+  };
+
+  st7701_vendor_config_t vendor_config = {
+      .init_cmds = (native_w == EOS_DISPLAY_ST7701S_WIDTH && native_h == EOS_DISPLAY_ST7701S_HEIGHT)
+                       ? s_st7701_init_cmds_480_800
+                       : NULL,
+      .init_cmds_size =
+          (native_w == EOS_DISPLAY_ST7701S_WIDTH && native_h == EOS_DISPLAY_ST7701S_HEIGHT)
+              ? (sizeof(s_st7701_init_cmds_480_800) / sizeof(st7701_lcd_init_cmd_t))
+              : 0,
+      .flags = {
+          .use_mipi_interface = 1,
+      },
+      .mipi_config = {
+          .dsi_bus = state->dsi_bus,
+          .dpi_config = &dpi_config,
+      },
+  };
+
+  esp_lcd_panel_dev_config_t panel_cfg = {
+      .reset_gpio_num = rst_pin,
+      .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
+      .bits_per_pixel = 16,
+      .vendor_config = &vendor_config,
+  };
+
+  esp_err_t err = esp_lcd_new_panel_st7701(state->io, &panel_cfg, &state->panel);
+  if (err != ESP_OK) {
+    EOS_LOGE("st7701s: new panel ST7701 failed: %s", esp_err_to_name(err));
+    return false;
+  }
+  return true;
+}
+
 bool driver_display_st7701s_init(eos_dev_t *dev) {
   st7701s_state_t *state = eos_psram_calloc_prefer(1, sizeof(st7701s_state_t));
   if (!state)
     return false;
   dev->state = state;
 
-  int32_t native_w = eos_cfg_get_i(dev->cfg, "width", 480);
-  int32_t native_h = eos_cfg_get_i(dev->cfg, "height", 800);
+  int32_t native_w = eos_cfg_get_i(dev->cfg, "width", EOS_DISPLAY_ST7701S_WIDTH);
+  int32_t native_h = eos_cfg_get_i(dev->cfg, "height", EOS_DISPLAY_ST7701S_HEIGHT);
   uint8_t rotation = eos_cfg_get_i(dev->cfg, "rotation", 0);
   int32_t lane_num = eos_cfg_get_i(dev->cfg, "lane_num", 2);
   int32_t bitrate_mbps = eos_cfg_get_i(dev->cfg, "bitrate_mbps", 750);
@@ -210,18 +286,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
     }
   }
 
-  // Create MIPI DSI bus
-  // Note: phy_clk_src = 0 allows esp_lcd to automatically choose XTAL for rev >= 3.0
-  // or PLL_F20M for rev < 3.0 on ESP32-P4 without triggering abort().
-  esp_lcd_dsi_bus_config_t bus_config = {
-      .bus_id = 0,
-      .num_data_lanes = lane_num,
-      .phy_clk_src = 0,
-      .lane_bit_rate_mbps = bitrate_mbps,
-  };
-  esp_err_t err = esp_lcd_new_dsi_bus(&bus_config, &state->dsi_bus);
-  if (err != ESP_OK) {
-    EOS_LOGE("st7701s: new DSI bus failed: %s", esp_err_to_name(err));
+  if (!st7701s_create_bus_and_io(state, lane_num, bitrate_mbps)) {
     if (state->ldo_phy)
       esp_ldo_release_channel(state->ldo_phy);
     if (bl_pin >= 0)
@@ -233,74 +298,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
     return false;
   }
 
-  // Create DBI IO for commands/parameters
-  esp_lcd_dbi_io_config_t dbi_config = {
-      .virtual_channel = 0,
-      .lcd_cmd_bits = 8,
-      .lcd_param_bits = 8,
-  };
-  err = esp_lcd_new_panel_io_dbi(state->dsi_bus, &dbi_config, &state->io);
-  if (err != ESP_OK) {
-    EOS_LOGE("st7701s: new panel IO DBI failed: %s", esp_err_to_name(err));
-    esp_lcd_del_dsi_bus(state->dsi_bus);
-    if (state->ldo_phy)
-      esp_ldo_release_channel(state->ldo_phy);
-    if (bl_pin >= 0)
-      eos_cap_release(EOS_CAPS_GPIO, bl_pin, dev);
-    if (rst_pin >= 0)
-      eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
-    free(state);
-    dev->state = NULL;
-    return false;
-  }
-
-  // Configure DPI video interface with exact JC4880P443C timings
-  esp_lcd_dpi_panel_config_t dpi_config = {
-      .virtual_channel = 0,
-      .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
-      .dpi_clock_freq_mhz = dpi_clk_mhz,
-      .in_color_format = LCD_COLOR_FMT_RGB565,
-      .out_color_format = LCD_COLOR_FMT_RGB565,
-      .num_fbs = 1,
-      .video_timing = {
-          .h_size = native_w,
-          .v_size = native_h,
-          .hsync_back_porch = 42,
-          .hsync_pulse_width = 12,
-          .hsync_front_porch = 42,
-          .vsync_back_porch = 8,
-          .vsync_pulse_width = 2,
-          .vsync_front_porch = 166,
-      },
-  };
-
-  st7701_vendor_config_t vendor_config = {
-      .init_cmds = (native_w == 480 && native_h == 800)
-                       ? s_st7701_init_cmds_480_800
-                       : NULL,
-      .init_cmds_size =
-          (native_w == 480 && native_h == 800)
-              ? (sizeof(s_st7701_init_cmds_480_800) / sizeof(st7701_lcd_init_cmd_t))
-              : 0,
-      .flags = {
-          .use_mipi_interface = 1,
-      },
-      .mipi_config = {
-          .dsi_bus = state->dsi_bus,
-          .dpi_config = &dpi_config,
-      },
-  };
-
-  esp_lcd_panel_dev_config_t panel_cfg = {
-      .reset_gpio_num = rst_pin,
-      .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-      .bits_per_pixel = 16,
-      .vendor_config = &vendor_config,
-  };
-
-  err = esp_lcd_new_panel_st7701(state->io, &panel_cfg, &state->panel);
-  if (err != ESP_OK) {
-    EOS_LOGE("st7701s: new panel ST7701 failed: %s", esp_err_to_name(err));
+  if (!st7701s_create_panel(dev, state, native_w, native_h, dpi_clk_mhz, rst_pin)) {
     esp_lcd_panel_io_del(state->io);
     esp_lcd_del_dsi_bus(state->dsi_bus);
     if (state->ldo_phy)
@@ -314,7 +312,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
     return false;
   }
 
-  err = esp_lcd_panel_reset(state->panel);
+  esp_err_t err = esp_lcd_panel_reset(state->panel);
   if (err != ESP_OK) {
     EOS_LOGE("st7701s: panel reset failed: %s", esp_err_to_name(err));
   }
@@ -355,39 +353,18 @@ ssize_t driver_display_st7701s_write(eos_dev_t *dev, int fd, const void *buf, si
     xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
   }
 
-  uint32_t x = state->has_clip ? state->clip_x : 0;
-  uint32_t y = state->has_clip ? state->clip_y : 0;
-  uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
-  uint32_t h = state->has_clip ? state->clip_h : (uint32_t)state->height;
-  state->has_clip = false;
+  eos_rect_t r;
+  eos_clip_rect_consume(&state->clip, (uint32_t)state->width, (uint32_t)state->height, &r);
 
-  if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
-      y + h > (uint32_t)state->height) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  size_t expected_len = (size_t)w * h * 2;
-  if (len > expected_len)
-    len = expected_len;
-
-  size_t row_bytes = (size_t)w * 2;
-  if (row_bytes == 0 || len < row_bytes) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  uint32_t total_rows = (uint32_t)(len / row_bytes);
+  uint32_t total_rows = eos_rect_calc_rows(len, r.w, sizeof(uint16_t), r.h);
   if (total_rows == 0) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    return 0;
+    errno = EINVAL;
+    return -1;
   }
-  if (total_rows > h)
-    total_rows = h;
+  size_t row_bytes = (size_t)r.w * sizeof(uint16_t);
 
-  if (esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + total_rows, buf) != ESP_OK) {
+  if (esp_lcd_panel_draw_bitmap(state->panel, r.x, r.y, r.x + r.w, r.y + total_rows, buf) != ESP_OK) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
     return -1;
   }
@@ -397,73 +374,56 @@ ssize_t driver_display_st7701s_write(eos_dev_t *dev, int fd, const void *buf, si
 
 int driver_display_st7701s_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   (void)fd;
-  st7701s_state_t *state = dev->state;
-  if (!state) {
+  st7701s_state_t *st = dev->state;
+  if (!st) {
     errno = ENODEV;
     return -1;
   }
 
-  int ret = 0;
   switch (cmd) {
+  case EOS_DISPLAY_IOCTL_SET_WINDOW:
+    return eos_clip_rect_set(&st->clip, va_arg(args, const eos_display_rect_t *),
+                            (uint32_t)st->width, (uint32_t)st->height);
+
   case EOS_DISPLAY_IOCTL_GET_WIDTH: {
-    uint32_t *width = va_arg(args, uint32_t *);
-    if (!width) {
+    uint32_t *w = va_arg(args, uint32_t *);
+    if (!w) {
       errno = EINVAL;
       return -1;
     }
-    *width = state->width;
-    break;
+    *w = st->width;
+    return 0;
   }
+
+  case EOS_DISPLAY_IOCTL_GET_WINDOW:
+    return eos_clip_rect_get(&st->clip, (uint32_t)st->width, (uint32_t)st->height,
+                            va_arg(args, eos_display_rect_t *));
+
   case EOS_DISPLAY_IOCTL_GET_HEIGHT: {
-    uint32_t *height = va_arg(args, uint32_t *);
-    if (!height) {
+    uint32_t *h = va_arg(args, uint32_t *);
+    if (!h) {
       errno = EINVAL;
       return -1;
     }
-    *height = state->height;
-    break;
-  }
-  case EOS_DISPLAY_IOCTL_SET_WINDOW: {
-    const eos_display_rect_t *rect = va_arg(args, const eos_display_rect_t *);
-    if (rect) {
-      if (rect->w == 0 || rect->h == 0 ||
-          rect->x >= (uint32_t)state->width ||
-          rect->y >= (uint32_t)state->height ||
-          rect->x + rect->w > (uint32_t)state->width ||
-          rect->y + rect->h > (uint32_t)state->height) {
-        state->has_clip = false;
-        errno = EINVAL;
-        return -1;
-      }
-      state->clip_x = rect->x;
-      state->clip_y = rect->y;
-      state->clip_w = rect->w;
-      state->clip_h = rect->h;
-      state->has_clip = true;
-    } else {
-      state->has_clip = false;
-    }
-    break;
+    *h = st->height;
+    return 0;
   }
   case EOS_DISPLAY_IOCTL_LOCK:
-    if (state->lock) {
-      xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+    if (st->lock) {
+      xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
     }
-    break;
+    return 0;
 
   case EOS_DISPLAY_IOCTL_UNLOCK:
-    if (state->lock) {
-      xSemaphoreGiveRecursive(state->lock);
+    if (st->lock) {
+      xSemaphoreGiveRecursive(st->lock);
     }
-    break;
+    return 0;
 
   default:
     errno = ENOTTY;
-    ret = -1;
-    break;
+    return -1;
   }
-
-  return ret;
 }
 
 void driver_display_st7701s_shutdown(eos_dev_t *dev) {

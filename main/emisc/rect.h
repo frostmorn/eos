@@ -37,9 +37,36 @@ bool eos_rect_clip(const eos_rect_t *rect, const eos_rect_t *bounds, eos_rect_t 
 size_t eos_rect_subtract(const eos_rect_t *subject, const eos_rect_t *occluder,
                          eos_rect_t out_pieces[4]);
 
+#define EOS_RECT_MAX_TEMP 64
+
 // Subtracts an array of occluders from subject.
 // Writes resulting non-overlapping visible pieces to out_pieces (up to max_out).
 // Returns number of resulting pieces.
 size_t eos_rect_multi_subtract(const eos_rect_t *subject,
                                const eos_rect_t *occluders, size_t occluder_count,
                                eos_rect_t *out_pieces, size_t max_out);
+
+typedef struct {
+  uint32_t x;
+  uint32_t y;
+  uint32_t w;
+  uint32_t h;
+  bool active;
+} eos_clip_rect_t;
+
+// Validates whether 'rect' fits within display bounds [width x height].
+bool eos_rect_is_valid_window(const eos_rect_t *rect, uint32_t width, uint32_t height);
+
+// Applies window rect to clip state. If rect is NULL, clears clip state.
+// Returns 0 on success, or -1 with errno = EINVAL if invalid.
+int eos_clip_rect_set(eos_clip_rect_t *clip, const eos_rect_t *rect, uint32_t width, uint32_t height);
+
+// Reads the current active window or full [0, 0, width, height] into out.
+int eos_clip_rect_get(const eos_clip_rect_t *clip, uint32_t width, uint32_t height, eos_rect_t *out);
+
+// Reads the effective draw rectangle from clip and resets active clip to false.
+void eos_clip_rect_consume(eos_clip_rect_t *clip, uint32_t width, uint32_t height, eos_rect_t *out);
+
+// Computes total transferable rows given buffer length, row width in pixels, bpp (2 or 4), and max rows.
+// Returns 0 if len < row_bytes or row_bytes == 0.
+uint32_t eos_rect_calc_rows(size_t len, uint32_t width_px, uint8_t bytes_per_pixel, uint32_t max_rows);

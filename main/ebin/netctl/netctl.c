@@ -2,6 +2,8 @@
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
 #include "ecore/netif.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -13,15 +15,13 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#define NETCTL_MAX_IFACES 16
-
 static const char *s_default_ifaces[] = {
     "sta0", "ap0", "wifi0", "br0", "eth0", NULL
 };
 
 static int open_iface(const char *name) {
   if (!name) return -1;
-  char path[64];
+  char path[EOS_LINE_64_LEN];
   if (name[0] == '/') {
     snprintf(path, sizeof(path), "%s", name);
   } else {
@@ -36,18 +36,18 @@ static int open_iface(const char *name) {
   return fd;
 }
 
-static int discover_net_ifaces(char ifaces[NETCTL_MAX_IFACES][16]) {
+static int discover_net_ifaces(char ifaces[NETCTL_MAX_IFACES][EOS_XSMALL_STR_LEN]) {
   int count = 0;
   FILE *f = fopen("/proc/devices", "r");
   if (f) {
-    char line[128];
+    char line[EOS_BUFFER_128_LEN];
     while (fgets(line, sizeof(line), f) && count < NETCTL_MAX_IFACES) {
       int id;
-      char name[32], driver[32], parent[32];
+      char name[EOS_SMALL_STR_LEN], driver[EOS_SMALL_STR_LEN], parent[EOS_SMALL_STR_LEN];
       if (sscanf(line, "%d %31s %31s %31s", &id, name, driver, parent) >= 3) {
         if (strncmp(driver, "net/", 4) == 0) {
-          strncpy(ifaces[count], name, 15);
-          ifaces[count][15] = '\0';
+          strncpy(ifaces[count], name, EOS_XSMALL_STR_LEN - 1);
+          ifaces[count][EOS_XSMALL_STR_LEN - 1] = '\0';
           count++;
         }
       }
@@ -57,11 +57,11 @@ static int discover_net_ifaces(char ifaces[NETCTL_MAX_IFACES][16]) {
 
   if (count == 0) {
     for (int i = 0; s_default_ifaces[i] != NULL && count < NETCTL_MAX_IFACES; i++) {
-      char path[32];
+      char path[EOS_SMALL_STR_LEN];
       snprintf(path, sizeof(path), "/dev/%s", s_default_ifaces[i]);
       if (access(path, F_OK) == 0) {
-        strncpy(ifaces[count], s_default_ifaces[i], 15);
-        ifaces[count][15] = '\0';
+        strncpy(ifaces[count], s_default_ifaces[i], EOS_XSMALL_STR_LEN - 1);
+        ifaces[count][EOS_XSMALL_STR_LEN - 1] = '\0';
         count++;
       }
     }
@@ -152,7 +152,7 @@ static void print_addr_one(int idx, const char *name) {
   if (info.type != EOS_NETIF_TYPE_RADIO && info.ip.ip[0] &&
       strcmp(info.ip.ip, "0.0.0.0") != 0) {
     int prefix = eos_net_mask_to_prefix(info.ip.netmask);
-    char bcast[16] = {0};
+    char bcast[EOS_XSMALL_STR_LEN] = {0};
     eos_net_calc_broadcast(info.ip.ip, info.ip.netmask, bcast, sizeof(bcast));
     const char *scope = (info.flags & EOS_NETIF_FLAG_DHCP_CLIENT) ? "global dynamic" : "global";
     printf("    inet %s/%d brd %s scope %s %s\n",
@@ -184,7 +184,7 @@ static int cmd_link_show(int argc, char **argv) {
     return 0;
   }
 
-  char ifaces[NETCTL_MAX_IFACES][16];
+  char ifaces[NETCTL_MAX_IFACES][EOS_XSMALL_STR_LEN];
   int count = discover_net_ifaces(ifaces);
   for (int i = 0; i < count; i++) {
     print_link_one(i + 1, ifaces[i]);
@@ -287,7 +287,7 @@ static int cmd_addr_show(int argc, char **argv) {
     return 0;
   }
 
-  char ifaces[NETCTL_MAX_IFACES][16];
+  char ifaces[NETCTL_MAX_IFACES][EOS_XSMALL_STR_LEN];
   int count = discover_net_ifaces(ifaces);
   for (int i = 0; i < count; i++) {
     print_addr_one(i + 1, ifaces[i]);
@@ -487,7 +487,7 @@ static int handle_dev_connect(int argc, char **argv, const char *dev) {
   if (argc > 4) {
     strncpy(conn.password, argv[4], sizeof(conn.password) - 1);
   }
-  conn.timeout_ms = 10000;
+  conn.timeout_ms = EOS_DEFAULT_TIMEOUT_MS;
   printf("%s: connecting to \"%s\"...\n", dev, conn.ssid);
   if (ioctl(fd, EOS_STA_IOCTL_CONNECT, &conn) == 0) {
     printf("%s: connected to \"%s\"\n", dev, conn.ssid);

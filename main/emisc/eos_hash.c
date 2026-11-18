@@ -1,4 +1,5 @@
 #include "emisc/eos_hash.h"
+#include "emisc/fancymacro.h"
 #include <string.h>
 
 ///////////////////////////////////////////////////////////////////////
@@ -164,7 +165,7 @@ static inline void store_be64(uint8_t *p, uint64_t v) {
 // Block functions
 ///////////////////////////////////////////////////////////////////////
 static void md5_block(uint32_t *s, const uint8_t *p) {
-  uint32_t m[16];
+  uint32_t m[EOS_HASH_SCHEDULE_16];
   for (int i = 0; i < 16; i++) m[i] = load_le32(p + 4 * i);
   uint32_t a = s[0], b = s[1], c = s[2], d = s[3];
   for (unsigned i = 0; i < 64; i++) {
@@ -184,7 +185,7 @@ static void md5_block(uint32_t *s, const uint8_t *p) {
 }
 
 static void sha1_block(uint32_t *s, const uint8_t *p) {
-  uint32_t w[80];
+  uint32_t w[EOS_HASH_SCHEDULE_80];
   for (int i = 0; i < 16; i++) w[i] = load_be32(p + 4 * i);
   for (int i = 16; i < 80; i++) w[i] = rol32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
   uint32_t a = s[0], b = s[1], c = s[2], d = s[3], e = s[4];
@@ -201,7 +202,7 @@ static void sha1_block(uint32_t *s, const uint8_t *p) {
 }
 
 static void sha256_block(uint32_t *s, const uint8_t *p) {
-  uint32_t w[64];
+  uint32_t w[EOS_HASH_SCHEDULE_64];
   for (int i = 0; i < 16; i++) w[i] = load_be32(p + 4 * i);
   for (int i = 16; i < 64; i++) {
     uint32_t s0 = ror32(w[i - 15], 7) ^ ror32(w[i - 15], 18) ^ (w[i - 15] >> 3);
@@ -301,7 +302,9 @@ int eos_hash_init(eos_hash_ctx_t *ctx, eos_hash_alg_t alg) {
   memset(ctx, 0, sizeof(*ctx));
   ctx->alg = alg;
   ctx->digest_size = (uint32_t)dsz;
-  ctx->block_size = (alg == EOS_HASH_SHA384 || alg == EOS_HASH_SHA512) ? 128u : 64u;
+  ctx->block_size = (alg == EOS_HASH_SHA384 || alg == EOS_HASH_SHA512)
+                        ? EOS_HASH_BLOCK_SIZE_LG
+                        : EOS_HASH_BLOCK_SIZE_SM;
 
 #if defined(ESP_PLATFORM)
   psa_algorithm_t psa_alg = to_psa_alg(alg);
@@ -386,11 +389,11 @@ void eos_hash_final(eos_hash_ctx_t *ctx, uint8_t *out) {
   }
 #endif
   const uint32_t bs = ctx->block_size;
-  const uint32_t len_bytes = (bs == 128u) ? 16u : 8u;
+  const uint32_t len_bytes = (bs == EOS_HASH_BLOCK_SIZE_LG) ? 16u : 8u;
   const uint64_t bits_lo = ctx->total << 3;
   const uint64_t bits_hi = ctx->total >> 61;
 
-  ctx->buf[ctx->buf_len++] = 0x80;
+  ctx->buf[ctx->buf_len++] = EOS_HEX_BYTE_MSB;
   if (ctx->buf_len > bs - len_bytes) {
     memset(ctx->buf + ctx->buf_len, 0, bs - ctx->buf_len);
     hash_block(ctx, ctx->buf);
@@ -399,15 +402,15 @@ void eos_hash_final(eos_hash_ctx_t *ctx, uint8_t *out) {
   memset(ctx->buf + ctx->buf_len, 0, bs - len_bytes - ctx->buf_len);
   if (ctx->alg == EOS_HASH_MD5) {
     store_le64(ctx->buf + bs - 8, bits_lo);
-  } else if (bs == 64u) {
-    store_be64(ctx->buf + 56, bits_lo);
+  } else if (bs == EOS_HASH_BLOCK_SIZE_SM) {
+    store_be64(ctx->buf + EOS_HASH_PAD_LEN_SM, bits_lo);
   } else {
     store_be64(ctx->buf + 112, bits_hi);
-    store_be64(ctx->buf + 120, bits_lo);
+    store_be64(ctx->buf + EOS_HASH_PAD_LEN_LG, bits_lo);
   }
   hash_block(ctx, ctx->buf);
 
-  uint8_t full[64];
+  uint8_t full[EOS_HASH_MAX_DIGEST];
   if (ctx->alg == EOS_HASH_MD5) {
     for (int i = 0; i < 4; i++) store_le32(full + 4 * i, ctx->state.w32[i]);
   } else if (bs == 64u) {

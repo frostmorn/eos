@@ -1,9 +1,5 @@
 #include "includes.h"
 
-#ifndef EOS_DRV_BUS_ROOT_ENABLED
-#define EOS_DRV_BUS_ROOT_ENABLED
-#endif
-
 #ifdef EOS_DRV_BUS_ROOT_ENABLED
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"

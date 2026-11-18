@@ -3,6 +3,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/netif.h"
 #include "emisc/netmisc.h"
+#include "ebin/wlanctl/wlanctl.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -12,13 +13,11 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#define DEFAULT_WLAN_DEV "/dev/wifi0"
-
 static int open_wlan(const char *name) {
   if (!name || !name[0]) {
     name = "wifi0";
   }
-  char path[32];
+  char path[EOS_SMALL_STR_LEN];
   if (name[0] == '/') {
     snprintf(path, sizeof(path), "%s", name);
   } else {
@@ -95,7 +94,7 @@ static int cmd_getmac(int argc, char **argv) {
 
   uint8_t mac[6] = {0};
   if (ioctl(fd, EOS_NETIF_IOCTL_GET_MAC, mac) == 0) {
-    char mac_str[18];
+    char mac_str[EOS_STR_20_LEN];
     eos_net_format_mac(mac, mac_str, sizeof(mac_str));
     printf("%s: MAC address %s\n", dev, mac_str);
     close(fd);
@@ -200,45 +199,69 @@ static int cmd_sniffer(int argc, char **argv) {
   }
 }
 
-static int cmd_dump(int argc, char **argv) {
-  int count = 10;
-  const char *dev = "wifi0";
-  const char *type_filter = NULL;
-  uint8_t bssid_filter[6];
-  bool has_bssid = false;
-  uint8_t src_filter[6];
-  bool has_src = false;
-  uint8_t dst_filter[6];
-  bool has_dst = false;
-  uint32_t hop_interval_ms = 0;
-  bool verbose = false;
-  const char *pcap_path = NULL;
+static void parse_dump_args(int argc, char **argv, wlan_dump_opts_t *opts) {
+  opts->count = 10;
+  opts->dev = "wifi0";
+  opts->type_filter = NULL;
+  opts->has_bssid = false;
+  opts->has_src = false;
+  opts->has_dst = false;
+  opts->hop_interval_ms = 0;
+  opts->verbose = false;
+  opts->pcap_path = NULL;
 
   for (int i = 2; i < argc; i++) {
     if (strcmp(argv[i], "--type") == 0 && i + 1 < argc) {
-      type_filter = argv[++i];
+      opts->type_filter = argv[++i];
     } else if (strcmp(argv[i], "--bssid") == 0 && i + 1 < argc) {
-      has_bssid = eos_net_parse_mac(argv[++i], bssid_filter);
+      opts->has_bssid = eos_net_parse_mac(argv[++i], opts->bssid_filter);
     } else if (strcmp(argv[i], "--src") == 0 && i + 1 < argc) {
-      has_src = eos_net_parse_mac(argv[++i], src_filter);
+      opts->has_src = eos_net_parse_mac(argv[++i], opts->src_filter);
     } else if (strcmp(argv[i], "--dst") == 0 && i + 1 < argc) {
-      has_dst = eos_net_parse_mac(argv[++i], dst_filter);
+      opts->has_dst = eos_net_parse_mac(argv[++i], opts->dst_filter);
     } else if (strcmp(argv[i], "--hop") == 0 && i + 1 < argc) {
-      hop_interval_ms = (uint32_t)atoi(argv[++i]);
+      opts->hop_interval_ms = (uint32_t)atoi(argv[++i]);
     } else if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
-      verbose = true;
+      opts->verbose = true;
     } else if (strcmp(argv[i], "--pcap") == 0 && i + 1 < argc) {
-      pcap_path = argv[++i];
+      opts->pcap_path = argv[++i];
     } else if (argv[i][0] != '-') {
       if (atoi(argv[i]) > 0 || strcmp(argv[i], "0") == 0) {
-        count = atoi(argv[i]);
+        opts->count = atoi(argv[i]);
       } else if (strncmp(argv[i], "wifi", 4) == 0 || argv[i][0] == '/') {
-        dev = argv[i];
+        opts->dev = argv[i];
       }
     }
   }
+}
 
-  int fd = open_wlan(dev);
+static void dump_display_packet(int displayed, const eos_wifi_raw_packet_t *pkt, bool verbose) {
+  printf("[%3d] CH %2u | RSSI %4d dBm | Len %4u | %s (sub %u)\n",
+         displayed, pkt->channel, pkt->rssi, pkt->length,
+         pkt->type_name[0] ? pkt->type_name : "UNKNOWN",
+         pkt->frame_subtype);
+  if (pkt->has_addrs) {
+    char a1[EOS_STR_20_LEN], a2[EOS_STR_20_LEN], a3[EOS_STR_20_LEN];
+    eos_net_format_mac(pkt->addr1, a1, sizeof(a1));
+    eos_net_format_mac(pkt->addr2, a2, sizeof(a2));
+    eos_net_format_mac(pkt->addr3, a3, sizeof(a3));
+    printf("      DA (Addr1): %s  SA (Addr2): %s  BSSID (Addr3): %s\n", a1, a2, a3);
+  }
+  if (verbose && pkt->length > 0) {
+    printf("      Payload hex (%u bytes):\n      ", pkt->length);
+    for (uint16_t j = 0; j < pkt->length && j < EOS_LINE_64_LEN; j++) {
+      printf("%02x ", pkt->payload[j]);
+      if ((j + 1) % EOS_XSMALL_STR_LEN == 0) printf("\n      ");
+    }
+    printf("\n");
+  }
+}
+
+static int cmd_dump(int argc, char **argv) {
+  wlan_dump_opts_t opts;
+  parse_dump_args(argc, argv, &opts);
+
+  int fd = open_wlan(opts.dev);
   if (fd < 0) {
     perror("wlanctl: failed to open device");
     return 1;
@@ -248,27 +271,27 @@ static int cmd_dump(int argc, char **argv) {
   ioctl(fd, EOS_RADIO_IOCTL_SET_PROMISC, &pcfg);
 
   FILE *pcap_file = NULL;
-  if (pcap_path) {
-    pcap_file = fopen(pcap_path, "wb");
+  if (opts.pcap_path) {
+    pcap_file = fopen(opts.pcap_path, "wb");
     if (pcap_file) {
-      uint8_t hdr_buf[32];
+      uint8_t hdr_buf[EOS_SMALL_STR_LEN];
       size_t hdr_len = eos_net_pcap_write_global_header(hdr_buf, sizeof(hdr_buf));
       fwrite(hdr_buf, 1, hdr_len, pcap_file);
-      printf("Saving captured frames to PCAP file: %s\n", pcap_path);
+      printf("Saving captured frames to PCAP file: %s\n", opts.pcap_path);
     } else {
       perror("wlanctl: failed to open PCAP file for writing");
     }
   }
 
-  bool infinite = (count <= 0);
+  bool infinite = (opts.count <= 0);
   if (infinite) {
     printf("Capturing infinite 802.11 frames from %s%s%s%s...\n\n",
-           dev,
-           type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+           opts.dev,
+           opts.type_filter ? " [type=" : "", opts.type_filter ? opts.type_filter : "", opts.type_filter ? "]" : "");
   } else {
     printf("Capturing %d raw 802.11 frames from %s%s%s%s...\n\n",
-           count, dev,
-           type_filter ? " [type=" : "", type_filter ? type_filter : "", type_filter ? "]" : "");
+           opts.count, opts.dev,
+           opts.type_filter ? " [type=" : "", opts.type_filter ? opts.type_filter : "", opts.type_filter ? "]" : "");
   }
 
   int captured = 0;
@@ -276,46 +299,28 @@ static int cmd_dump(int argc, char **argv) {
   uint8_t current_channel = 1;
   int timeouts = 0;
 
-  while (infinite || displayed < count) {
-    if (hop_interval_ms > 0) {
+  while (infinite || displayed < opts.count) {
+    if (opts.hop_interval_ms > 0) {
       current_channel++;
       if (current_channel > 13) current_channel = 1;
       ioctl(fd, EOS_RADIO_IOCTL_SET_CHANNEL, (int)current_channel);
-      usleep(hop_interval_ms * 1000);
+      usleep(opts.hop_interval_ms * EOS_US_PER_MS);
     }
 
     eos_wifi_raw_packet_t pkt;
     ssize_t n = read(fd, &pkt, sizeof(pkt));
     if (n > 0) {
       captured++;
-      if (!eos_net_wifi_match_type(pkt.type_name, type_filter)) continue;
-      if (has_bssid && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr3, bssid_filter))) continue;
-      if (has_src && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr2, src_filter))) continue;
-      if (has_dst && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr1, dst_filter))) continue;
+      if (!eos_net_wifi_match_type(pkt.type_name, opts.type_filter)) continue;
+      if (opts.has_bssid && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr3, opts.bssid_filter))) continue;
+      if (opts.has_src && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr2, opts.src_filter))) continue;
+      if (opts.has_dst && (!pkt.has_addrs || !eos_net_wifi_match_mac(pkt.addr1, opts.dst_filter))) continue;
 
       displayed++;
-      printf("[%3d] CH %2u | RSSI %4d dBm | Len %4u | %s (sub %u)\n",
-             displayed, pkt.channel, pkt.rssi, pkt.length,
-             pkt.type_name[0] ? pkt.type_name : "UNKNOWN",
-             pkt.frame_subtype);
-      if (pkt.has_addrs) {
-        char a1[18], a2[18], a3[18];
-        eos_net_format_mac(pkt.addr1, a1, sizeof(a1));
-        eos_net_format_mac(pkt.addr2, a2, sizeof(a2));
-        eos_net_format_mac(pkt.addr3, a3, sizeof(a3));
-        printf("      DA (Addr1): %s  SA (Addr2): %s  BSSID (Addr3): %s\n", a1, a2, a3);
-      }
-      if (verbose && pkt.length > 0) {
-        printf("      Payload hex (%u bytes):\n      ", pkt.length);
-        for (uint16_t j = 0; j < pkt.length && j < 64; j++) {
-          printf("%02x ", pkt.payload[j]);
-          if ((j + 1) % 16 == 0) printf("\n      ");
-        }
-        printf("\n");
-      }
+      dump_display_packet(displayed, &pkt, opts.verbose);
 
       if (pcap_file) {
-        uint8_t phdr_buf[16];
+        uint8_t phdr_buf[EOS_XSMALL_STR_LEN];
         size_t phdr_len = eos_net_pcap_write_packet_header(phdr_buf, sizeof(phdr_buf),
                                                            0, 0, pkt.length, pkt.length);
         fwrite(phdr_buf, 1, phdr_len, pcap_file);
@@ -325,7 +330,7 @@ static int cmd_dump(int argc, char **argv) {
     } else {
       if (!infinite) {
         timeouts++;
-        if (hop_interval_ms == 0 || timeouts >= 2) {
+        if (opts.hop_interval_ms == 0 || timeouts >= 2) {
           printf("Timeout waiting for 802.11 packet\n");
           break;
         }
@@ -335,7 +340,7 @@ static int cmd_dump(int argc, char **argv) {
 
   if (pcap_file) {
     fclose(pcap_file);
-    printf("PCAP capture saved successfully to %s\n", pcap_path);
+    printf("PCAP capture saved successfully to %s\n", opts.pcap_path);
   }
 
   close(fd);
@@ -350,10 +355,10 @@ static int cmd_send(int argc, char **argv) {
   const char *hex = argv[2];
   const char *dev = (argc > 3) ? argv[3] : "wifi0";
 
-  uint8_t buf[512];
+  uint8_t buf[EOS_SECTOR_SIZE];
   ssize_t byte_len = eos_net_hex_to_bytes(hex, buf, sizeof(buf));
   if (byte_len <= 0) {
-    fprintf(stderr, "wlanctl: invalid hex string (max 512 bytes)\n");
+    fprintf(stderr, "wlanctl: invalid hex string (max %d bytes)\n", EOS_SECTOR_SIZE);
     return 1;
   }
 
@@ -433,7 +438,7 @@ static int cmd_scan(int argc, char **argv) {
       printf("-----------------------------------------------------------------------\n");
       for (size_t i = 0; i < res.count; i++) {
         const char *ssid = res.aps[i].is_hidden ? "<hidden>" : res.aps[i].ssid;
-        char bssid_str[18];
+        char bssid_str[EOS_STR_20_LEN];
         eos_net_format_mac(res.aps[i].bssid, bssid_str, sizeof(bssid_str));
         printf("%-32s  %-17s  %4d  %2u  %-12s\n",
                ssid, bssid_str,

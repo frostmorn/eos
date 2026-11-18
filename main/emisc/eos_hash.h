@@ -38,6 +38,14 @@ typedef enum {
 #define EOS_HASH_MAX_DIGEST 64   // SHA-512
 #define EOS_HASH_MAX_HEX    (EOS_HASH_MAX_DIGEST * 2 + 1)
 
+#define EOS_HASH_BLOCK_SIZE_SM 64U
+#define EOS_HASH_BLOCK_SIZE_LG 128U
+#define EOS_HASH_SCHEDULE_16   16U
+#define EOS_HASH_SCHEDULE_64   64U
+#define EOS_HASH_SCHEDULE_80   80U
+#define EOS_HASH_PAD_LEN_SM    56U
+#define EOS_HASH_PAD_LEN_LG    120U
+
 typedef struct {
   eos_hash_alg_t alg;
   uint32_t block_size;           // 64 or 128

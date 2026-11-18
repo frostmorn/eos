@@ -14,6 +14,14 @@ extern "C" {
 #define EOS_DEFAULT_LOG_FILE "/eos.log"
 #define EOS_LOG_MAX_BYTES    65536U
 
+#ifndef _REENT
+#define _REENT (__getreent())
+#endif
+
+#if defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG) && CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
+#define EOS_HAS_USJ_DRIVER 1
+#endif
+
 // Initialize ESP/EOS log hook and console connection guard
 void eos_log_init(void);
 

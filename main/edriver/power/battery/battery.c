@@ -17,6 +17,8 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include "emisc/psram_alloc.h"
 
 // ── LiPo Discharge Chemistry Curve ────────────────────────────
@@ -42,7 +44,9 @@ static const lipo_lut_t k_lipo_curve[] = {
     {3200,   0},
 };
 
-#define K_LIPO_CURVE_POINTS (sizeof(k_lipo_curve) / sizeof(k_lipo_curve[0]))
+static inline size_t lipo_curve_points(void) {
+  return sizeof(k_lipo_curve) / sizeof(k_lipo_curve[0]);
+}
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -71,12 +75,12 @@ static int32_t battery_calculate_soc(uint32_t v_cell_mv, uint32_t v_empty,
     return 100;
   }
   if (v_cell_mv <= v_empty ||
-      v_cell_mv <= k_lipo_curve[K_LIPO_CURVE_POINTS - 1].mv) {
+      v_cell_mv <= k_lipo_curve[lipo_curve_points() - 1].mv) {
     return 0;
   }
 
   // Piecewise linear interpolation between curve points
-  for (size_t i = 0; i < K_LIPO_CURVE_POINTS - 1; i++) {
+  for (size_t i = 0; i < lipo_curve_points() - 1; i++) {
     uint16_t v_high = k_lipo_curve[i].mv;
     uint16_t v_low = k_lipo_curve[i + 1].mv;
     uint8_t soc_high = k_lipo_curve[i].soc;
@@ -119,10 +123,10 @@ static bool battery_sample_hardware(eos_dev_t *dev, battery_state_t *st,
   }
 
   // Sample ADC 16 times to compute median
-  int32_t pin_samples[16];
+  int32_t pin_samples[EOS_XSMALL_STR_LEN];
   size_t valid_count = 0;
 
-  for (size_t i = 0; i < 16; i++) {
+  for (size_t i = 0; i < EOS_XSMALL_STR_LEN; i++) {
     eos_adc_reading_t reading = {
         .pin = (uint32_t)st->adc_pin,
         .raw = 0,
@@ -351,7 +355,7 @@ static ssize_t driver_power_battery_read(eos_dev_t *dev, int fd, void *dst,
   }
 
   battery_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -370,7 +374,7 @@ static ssize_t driver_power_battery_read(eos_dev_t *dev, int fd, void *dst,
     return -1;
   }
 
-  char buf[128];
+  char buf[EOS_BUFFER_128_LEN];
   int n = 0;
   if (info.status == EOS_BATTERY_STATUS_NOT_PRESENT) {
     n = snprintf(buf, sizeof(buf),
@@ -404,7 +408,7 @@ static int driver_power_battery_ioctl(eos_dev_t *dev, int fd, int cmd,
   }
 
   battery_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }

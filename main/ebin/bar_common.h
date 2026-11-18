@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -11,6 +13,17 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#define BAR_MAX_LINE  128
+#define SBAR_MAX_LINE 128
+#define TBAR_MAX_LINE 128
+
+#define SBAR_MIN_BATTERY_MV 500
+#define SBAR_BATTERY_HIGH_THRESHOLD 80
+#define SBAR_BATTERY_MID_THRESHOLD 55
+#define SBAR_BATTERY_LOW_THRESHOLD 30
+#define SBAR_BATTERY_CRIT_THRESHOLD 10
+#define SBAR_TALL_HEIGHT_THRESHOLD 40
 
 static inline ssize_t bar_read_file(const char *path, char *buf, size_t max_len) {
   int fd = open(path, O_RDONLY);
@@ -34,7 +47,7 @@ static inline bool bar_validate_pid_prefix(char *line, const char **out_text) {
     char *endp = NULL;
     long pid = strtol(line + 1, &endp, 10);
     if (endp && *endp == ' ') {
-      char proc_path[32];
+      char proc_path[EOS_SMALL_STR_LEN];
       snprintf(proc_path, sizeof(proc_path), "/proc/%ld", pid);
       struct stat st;
       if (stat(proc_path, &st) != 0) {

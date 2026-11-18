@@ -13,8 +13,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define TBAR_MAX_LINE 128
-
 typedef struct {
   char line1[TBAR_MAX_LINE];
   char line2[TBAR_MAX_LINE];
@@ -78,7 +76,7 @@ int toolbar_main(int argc, char **argv) {
   }
 
   uint32_t width = 0, height = 0;
-  bar_query_display_size(fd, &width, &height, 280, 32);
+  bar_query_display_size(fd, &width, &height, EOS_DISPLAY_DEFAULT_WIDTH, 32);
 
   size_t buf_pixels = (size_t)width * height;
   uint16_t *buf = (uint16_t *)malloc(buf_pixels * sizeof(uint16_t));

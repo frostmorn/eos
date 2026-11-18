@@ -17,6 +17,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <soc/soc_caps.h>
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
@@ -24,16 +26,6 @@
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
 #include "emisc/psram_alloc.h"
-
-#ifndef SOC_ADC_PERIPH_NUM
-#define SOC_ADC_PERIPH_NUM 2
-#endif
-
-#ifndef SOC_ADC_MAX_CHANNEL_NUM
-#define SOC_ADC_MAX_CHANNEL_NUM 10
-#endif
-
-#define EOS_ADC_TOTAL_CHANNELS (SOC_ADC_PERIPH_NUM * SOC_ADC_MAX_CHANNEL_NUM)
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -300,7 +292,7 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
   }
 
   adc_bus_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -320,7 +312,7 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
     return -1;
   }
 
-  char buf[64];
+  char buf[EOS_LINE_64_LEN];
   int n = snprintf(buf, sizeof(buf), "pin: %" PRId32 "\nraw: %" PRId32 "\nmv: %" PRId32 "\n",
                    st->default_pin, raw, mv);
   if (n <= 0) {
@@ -343,7 +335,7 @@ static int driver_bus_adc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   }
 
   adc_bus_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }

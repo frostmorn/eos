@@ -11,10 +11,11 @@
 #include <esp_timer.h>
 #include "ecore/bin.h"
 #include "ecore/proc.h"
+#include "emisc/fancymacro.h"
 
 static void hook_fn_append(void *arg) {
   const char *msg = (const char *)arg;
-  int fd = open("/tmp/t_hooks.txt", O_WRONLY | O_CREAT | O_APPEND, 0644);
+  int fd = open("/tmp/t_hooks.txt", O_WRONLY | O_CREAT | O_APPEND, EOS_DEFAULT_FILE_MODE);
   if (fd >= 0) {
     write(fd, msg, strlen(msg));
     close(fd);
@@ -46,7 +47,7 @@ static int run_child_hooks(void) {
     return 102;
   }
 
-  return 42;
+  return EOS_DEFAULT_MAGIC_42;
 }
 
 static int run_child_socket(void) {
@@ -122,7 +123,7 @@ static int test_leaks_main(int argc, char **argv) {
   int exit_code = spawn_child("child_hooks");
 
   int fd = open("/tmp/t_hooks.txt", O_RDONLY);
-  char buf[64];
+  char buf[EOS_LINE_64_LEN];
   memset(buf, 0, sizeof(buf));
   if (fd >= 0) {
     read(fd, buf, sizeof(buf) - 1);
@@ -130,7 +131,7 @@ static int test_leaks_main(int argc, char **argv) {
   }
   unlink("/tmp/t_hooks.txt");
 
-  if (exit_code == 42 && strcmp(buf, "3\n1\n") == 0) {
+  if (exit_code == EOS_DEFAULT_MAGIC_42 && strcmp(buf, "3\n1\n") == 0) {
     printf("  [PASS] hooks: LIFO execution and cancellation verified (output: 3, 1)\n");
     passed++;
   } else {
@@ -197,7 +198,7 @@ EOS_BIN_ATTR eos_bin_t test_leaks_bin = {
   .name = "Leak Registry Tests",
   .group = "Tests",
   .flags = EOS_BIN_FLAG_STACK_PSRAM,
-  .stack_size = 8192,
+  .stack_size = EOS_BIN_DEFAULT_STACK_SIZE,
   .description = "Automated test suite for process exit cleanup hooks and leak prevention",
   .entry_point = test_leaks_main,
 };

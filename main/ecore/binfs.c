@@ -2,6 +2,7 @@
 #include "asset.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -196,7 +197,7 @@ static int binfs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
   } else if (bf->asset) {
     st->st_size = (off_t)bf->asset->size;
   }
-  st->st_blksize = 512;
+  st->st_blksize = EOS_SECTOR_SIZE;
   return 0;
 }
 
@@ -223,7 +224,7 @@ static int binfs_stat(void *ctx, const char *path, struct stat *st) {
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG | 0555;
     st->st_size = sizeof(eos_bin_t);
-    st->st_blksize = 512;
+    st->st_blksize = EOS_SECTOR_SIZE;
     return 0;
   }
 
@@ -232,7 +233,7 @@ static int binfs_stat(void *ctx, const char *path, struct stat *st) {
     memset(st, 0, sizeof(*st));
     st->st_mode = S_IFREG | 0555;
     st->st_size = (off_t)asset->size;
-    st->st_blksize = 512;
+    st->st_blksize = EOS_SECTOR_SIZE;
     return 0;
   }
 
@@ -331,7 +332,7 @@ void eos_binfs_init(void) {
       .telldir = binfs_telldir,
   };
 
-  mkdir(EOS_BINFS_ROOT, 0755);
+  mkdir(EOS_BINFS_ROOT, EOS_DEFAULT_DIR_MODE);
   esp_err_t err = eos_vfs_register_ops(EOS_BINFS_ROOT, &ops, NULL);
   if (err != ESP_OK) {
     EOS_LOGE("Failed to register binfs at %s: %s", EOS_BINFS_ROOT, esp_err_to_name(err));

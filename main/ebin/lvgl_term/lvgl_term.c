@@ -2,6 +2,7 @@
 #include "ecore/lvgl.h"
 #include "ecore/proc.h"
 #include "emisc/fancymacro.h"
+#include "ebin/lvgl_term/lvgl_term.h"
 
 #include <ctype.h>
 #include <errno.h>
@@ -13,10 +14,6 @@
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-
-#define TERM_DEFAULT_OUT_FILE "/term.out"
-#define TERM_DEFAULT_IN_FILE  "/term.in"
-#define TERM_MAX_TEXT_BYTES   16384
 
 static const char *const s_preset_cmds[] = {
     "cat /proc/cpuinfo",
@@ -33,8 +30,6 @@ static const char *const s_preset_cmds[] = {
     "cat /proc/uptime",
     "pwd",
 };
-
-#define TERM_PRESET_COUNT (int)(sizeof(s_preset_cmds) / sizeof(s_preset_cmds[0]))
 
 typedef struct {
   char file_path[EOS_MID_STR_LEN];
@@ -73,11 +68,11 @@ typedef struct {
 static uint64_t get_time_ms(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+  return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
 static void ensure_empty_input_file(void) {
-  int fd = open(TERM_DEFAULT_IN_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  int fd = open(TERM_DEFAULT_IN_FILE, O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
   if (fd >= 0) {
     close(fd);
   }
@@ -129,7 +124,7 @@ static int sanitize_terminal_text(const char *raw, size_t raw_len, char *dst,
         if (b3 == 0x82)      repl = '|'; // │
         else if (b3 == 0x9C) repl = '+'; // ├
         else if (b3 == 0x94) repl = '`'; // └
-        else if (b3 == 0x80) repl = '-'; // ─
+        else if (b3 == EOS_HEX_BYTE_MSB) repl = '-'; // ─
         dst[w++] = repl;
         r += 3;
         continue;
@@ -137,9 +132,9 @@ static int sanitize_terminal_text(const char *raw, size_t raw_len, char *dst,
     }
 
     // Skip other multi-byte UTF-8 sequences not supported in ASCII font
-    if (ch >= 0x80) {
+    if (ch >= EOS_HEX_BYTE_MSB) {
       r++;
-      while (r < raw_len && (((unsigned char)raw[r] & 0xC0) == 0x80)) {
+      while (r < raw_len && (((unsigned char)raw[r] & 0xC0) == EOS_HEX_BYTE_MSB)) {
         r++;
       }
       dst[w++] = '?';
@@ -204,7 +199,7 @@ static int term_load_from_fd(term_viewer_state_t *st, int fd,
   raw[total] = '\0';
 
   if (save_copy_path && save_copy_path[0]) {
-    int out_fd = open(save_copy_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int out_fd = open(save_copy_path, O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
     if (out_fd >= 0) {
       if (total > 0) {
         (void)write(out_fd, raw, total);
@@ -333,7 +328,7 @@ static void term_update_ui(term_viewer_state_t *st) {
                     st->title[0] ? st->title : "Terminal Viewer");
 
   if (st->hdr_meta) {
-    char mbuf[48];
+    char mbuf[EOS_STR_48_LEN];
     snprintf(mbuf, sizeof(mbuf), "%d lines", st->total_lines);
     lv_label_set_text(st->hdr_meta, mbuf);
   }
@@ -341,7 +336,7 @@ static void term_update_ui(term_viewer_state_t *st) {
   if (st->cmd_label) {
     const char *cmd =
         st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
-    char cbuf[96];
+    char cbuf[EOS_STR_96_LEN];
     snprintf(cbuf, sizeof(cbuf), "%.48s", cmd);
     lv_label_set_text(st->cmd_label, cbuf);
   }
@@ -353,7 +348,7 @@ static void term_update_ui(term_viewer_state_t *st) {
   if (st->footer_label) {
     int32_t sy = st->viewport ? lv_obj_get_scroll_y(st->viewport) : 0;
     int32_t bottom = st->viewport ? lv_obj_get_scroll_bottom(st->viewport) : 0;
-    char fbuf[96];
+    char fbuf[EOS_STR_96_LEN];
     snprintf(fbuf, sizeof(fbuf),
              "U/D:Scrl(%d/%d)  L/R:Preset  A:Run  D/KB:Edit  B:Exit", (int)sy,
              (int)(sy + (bottom > 0 ? bottom : 0)));
@@ -407,6 +402,164 @@ static void term_cmd_box_cb(lv_event_t *e) {
   term_open_edit_mode(st);
 }
 
+static void term_build_header(term_viewer_state_t *st, lv_obj_t *scr,
+                               uint32_t w, bool is_large, int32_t hdr_h) {
+  lv_obj_t *hdr = lv_obj_create(scr);
+  lv_obj_set_size(hdr, (int32_t)w, hdr_h);
+  lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
+  lv_obj_set_style_bg_color(hdr, lv_color_hex(EOS_COLOR_BG_HDR), 0);
+  lv_obj_set_style_border_width(hdr, 0, 0);
+  lv_obj_set_style_radius(hdr, 0, 0);
+  lv_obj_set_style_pad_hor(hdr, 6, 0);
+  lv_obj_set_style_pad_ver(hdr, is_large ? 4 : 2, 0);
+
+  st->hdr_title = lv_label_create(hdr);
+  lv_obj_set_width(st->hdr_title, (int32_t)w - (is_large ? TERM_HDR_TITLE_MARGIN_LG : TERM_HDR_TITLE_MARGIN_SM));
+  lv_label_set_long_mode(st->hdr_title, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_color(st->hdr_title, lv_color_hex(EOS_THEME_TEXT_WHITE), 0);
+  lv_obj_align(st->hdr_title, LV_ALIGN_LEFT_MID, 0, 0);
+
+  st->hdr_meta = lv_label_create(hdr);
+  lv_obj_set_style_text_color(st->hdr_meta, lv_color_hex(EOS_THEME_ACCENT_GREEN), 0);
+  lv_obj_align(st->hdr_meta, LV_ALIGN_RIGHT_MID,
+               is_large ? -TERM_HDR_META_OFFSET_LG : -TERM_HDR_META_OFFSET_SM, 0);
+
+  // Dedicated touch exit button
+  lv_obj_t *back_btn = eos_lvgl_create_back_btn(hdr, term_back_btn_cb, st);
+  if (back_btn) {
+    lv_obj_set_size(back_btn, is_large ? 28 : 22, is_large ? 22 : 16);
+    lv_obj_align(back_btn, LV_ALIGN_RIGHT_MID, -2, 0);
+  }
+}
+
+static void term_build_cbar(term_viewer_state_t *st, lv_obj_t *scr, uint32_t w,
+                            bool is_large, int32_t hdr_h, int32_t cbar_h) {
+  lv_obj_t *cbar = lv_obj_create(scr);
+  lv_obj_set_size(cbar, (int32_t)w, cbar_h);
+  lv_obj_align(cbar, LV_ALIGN_TOP_MID, 0, hdr_h);
+  lv_obj_set_style_bg_color(cbar, lv_color_hex(EOS_COLOR_BG_SUBHDR), 0);
+  lv_obj_set_style_border_width(cbar, 0, 0);
+  lv_obj_set_style_radius(cbar, 0, 0);
+  lv_obj_set_style_pad_hor(cbar, 4, 0);
+  lv_obj_set_style_pad_ver(cbar, 2, 0);
+
+  int32_t nav_w = is_large ? 34 : 22;
+  int32_t kb_w = is_large ? 86 : 32;
+  int32_t run_w = is_large ? 74 : 28;
+  int32_t btn_h = cbar_h - 4;
+
+  st->btn_prev = lv_button_create(cbar);
+  lv_obj_set_size(st->btn_prev, nav_w, btn_h);
+  lv_obj_align(st->btn_prev, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_set_style_bg_color(st->btn_prev, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
+  lv_obj_set_style_radius(st->btn_prev, 3, 0);
+  lv_obj_set_style_pad_all(st->btn_prev, 0, 0);
+  lv_obj_add_event_cb(st->btn_prev, term_btn_prev_cb, LV_EVENT_CLICKED, st);
+  lv_obj_t *lbl_prev = lv_label_create(st->btn_prev);
+  lv_label_set_text(lbl_prev, "<");
+  lv_obj_align(lbl_prev, LV_ALIGN_CENTER, 0, 0);
+
+  st->btn_next = lv_button_create(cbar);
+  lv_obj_set_size(st->btn_next, nav_w, btn_h);
+  lv_obj_align(st->btn_next, LV_ALIGN_LEFT_MID, nav_w + 3, 0);
+  lv_obj_set_style_bg_color(st->btn_next, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
+  lv_obj_set_style_radius(st->btn_next, 3, 0);
+  lv_obj_set_style_pad_all(st->btn_next, 0, 0);
+  lv_obj_add_event_cb(st->btn_next, term_btn_next_cb, LV_EVENT_CLICKED, st);
+  lv_obj_t *lbl_next = lv_label_create(st->btn_next);
+  lv_label_set_text(lbl_next, ">");
+  lv_obj_align(lbl_next, LV_ALIGN_CENTER, 0, 0);
+
+  st->btn_run = lv_button_create(cbar);
+  lv_obj_set_size(st->btn_run, run_w, btn_h);
+  lv_obj_align(st->btn_run, LV_ALIGN_RIGHT_MID, 0, 0);
+  lv_obj_set_style_bg_color(st->btn_run, lv_color_hex(TERM_CLR_RUN_BTN), 0);
+  lv_obj_set_style_radius(st->btn_run, 3, 0);
+  lv_obj_set_style_pad_all(st->btn_run, 0, 0);
+  lv_obj_add_event_cb(st->btn_run, term_btn_run_cb, LV_EVENT_CLICKED, st);
+  lv_obj_t *lbl_run = lv_label_create(st->btn_run);
+  lv_label_set_text(lbl_run, is_large ? "▶ Run" : "▶");
+  lv_obj_set_style_text_color(lbl_run, lv_color_hex(EOS_THEME_TEXT_WHITE), 0);
+  lv_obj_align(lbl_run, LV_ALIGN_CENTER, 0, 0);
+
+  st->btn_kb = lv_button_create(cbar);
+  lv_obj_set_size(st->btn_kb, kb_w, btn_h);
+  lv_obj_align(st->btn_kb, LV_ALIGN_RIGHT_MID, -(run_w + 3), 0);
+  lv_obj_set_style_bg_color(st->btn_kb, lv_color_hex(EOS_THEME_PRIMARY_BLUE), 0);
+  lv_obj_set_style_radius(st->btn_kb, 3, 0);
+  lv_obj_set_style_pad_all(st->btn_kb, 0, 0);
+  lv_obj_add_event_cb(st->btn_kb, term_btn_kb_cb, LV_EVENT_CLICKED, st);
+  lv_obj_t *lbl_kb = lv_label_create(st->btn_kb);
+  lv_label_set_text(lbl_kb, is_large ? "⌨ Edit" : "⌨");
+  lv_obj_set_style_text_color(lbl_kb, lv_color_hex(EOS_THEME_TEXT_WHITE), 0);
+  lv_obj_align(lbl_kb, LV_ALIGN_CENTER, 0, 0);
+
+  int32_t cmd_box_x = (nav_w * 2) + 6;
+  int32_t cmd_box_w = (int32_t)w - cmd_box_x - (kb_w + run_w + 10);
+  if (cmd_box_w < TERM_MIN_CMD_BOX_W) cmd_box_w = TERM_MIN_CMD_BOX_W;
+
+  st->cmd_box = lv_button_create(cbar);
+  lv_obj_set_size(st->cmd_box, cmd_box_w, btn_h);
+  lv_obj_align(st->cmd_box, LV_ALIGN_LEFT_MID, cmd_box_x, 0);
+  lv_obj_set_style_bg_color(st->cmd_box, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
+  lv_obj_set_style_border_color(st->cmd_box, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
+  lv_obj_set_style_border_width(st->cmd_box, 1, 0);
+  lv_obj_set_style_radius(st->cmd_box, 3, 0);
+  lv_obj_set_style_pad_hor(st->cmd_box, 5, 0);
+  lv_obj_set_style_pad_ver(st->cmd_box, 0, 0);
+  lv_obj_add_event_cb(st->cmd_box, term_cmd_box_cb, LV_EVENT_CLICKED, st);
+
+  st->cmd_label = lv_label_create(st->cmd_box);
+  lv_obj_set_width(st->cmd_label, cmd_box_w - 10);
+  lv_label_set_long_mode(st->cmd_label, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_text_color(st->cmd_label, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
+  lv_obj_align(st->cmd_label, LV_ALIGN_LEFT_MID, 0, 0);
+}
+
+static void term_build_viewport_and_footer(term_viewer_state_t *st, lv_obj_t *scr,
+                                           uint32_t w, uint32_t h, bool is_large,
+                                           int32_t hdr_h, int32_t cbar_h,
+                                           int32_t ftr_h) {
+  int32_t vp_y = hdr_h + cbar_h + 2;
+  int32_t vp_h = (int32_t)h - vp_y - ftr_h - 2;
+  if (vp_h < TERM_MIN_VIEWPORT_H) vp_h = TERM_MIN_VIEWPORT_H;
+
+  st->viewport = lv_obj_create(scr);
+  lv_obj_set_size(st->viewport, (int32_t)w - 4, vp_h);
+  lv_obj_align(st->viewport, LV_ALIGN_TOP_MID, 0, vp_y);
+  lv_obj_set_style_bg_color(st->viewport, lv_color_hex(TERM_CLR_VIEWPORT_BG), 0);
+  lv_obj_set_style_border_color(st->viewport, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
+  lv_obj_set_style_border_width(st->viewport, 1, 0);
+  lv_obj_set_style_radius(st->viewport, 4, 0);
+  lv_obj_set_style_pad_all(st->viewport, 5, 0);
+  lv_obj_set_scroll_dir(st->viewport, LV_DIR_ALL);
+
+  st->out_label = lv_label_create(st->viewport);
+  lv_obj_set_width(st->out_label, (int32_t)w - 18);
+  lv_label_set_long_mode(st->out_label, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_color(st->out_label, lv_color_hex(TERM_CLR_TERMINAL_GREEN), 0);
+  lv_obj_align(st->out_label, LV_ALIGN_TOP_LEFT, 0, 0);
+
+  if (is_large) {
+    lv_obj_t *ftr = lv_obj_create(scr);
+    lv_obj_set_size(ftr, (int32_t)w, ftr_h);
+    lv_obj_align(ftr, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(ftr, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
+    lv_obj_set_style_border_width(ftr, 0, 0);
+    lv_obj_set_style_radius(ftr, 0, 0);
+    lv_obj_set_style_pad_hor(ftr, 6, 0);
+    lv_obj_set_style_pad_ver(ftr, 1, 0);
+
+    st->footer_label = lv_label_create(ftr);
+    lv_obj_set_width(st->footer_label, (int32_t)w - 12);
+    lv_label_set_long_mode(st->footer_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_color(st->footer_label, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
+    lv_obj_align(st->footer_label, LV_ALIGN_LEFT_MID, 0, 0);
+  } else {
+    st->footer_label = NULL;
+  }
+}
+
 static void term_build_ui(term_viewer_state_t *st) {
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
@@ -418,163 +571,12 @@ static void term_build_ui(term_viewer_state_t *st) {
 
   lv_obj_t *scr = lv_screen_active();
   lv_obj_clean(scr);
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1120), 0);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
-  // 1. Header bar
-  lv_obj_t *hdr = lv_obj_create(scr);
-  lv_obj_set_size(hdr, (int32_t)w, hdr_h);
-  lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
-  lv_obj_set_style_bg_color(hdr, lv_color_hex(0x1E3A8A), 0);
-  lv_obj_set_style_border_width(hdr, 0, 0);
-  lv_obj_set_style_radius(hdr, 0, 0);
-  lv_obj_set_style_pad_hor(hdr, 6, 0);
-  lv_obj_set_style_pad_ver(hdr, is_large ? 4 : 2, 0);
-
-  st->hdr_title = lv_label_create(hdr);
-  lv_obj_set_width(st->hdr_title, (int32_t)w - (is_large ? 180 : 110));
-  lv_label_set_long_mode(st->hdr_title, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->hdr_title, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(st->hdr_title, LV_ALIGN_LEFT_MID, 0, 0);
-
-  st->hdr_meta = lv_label_create(hdr);
-  lv_obj_set_style_text_color(st->hdr_meta, lv_color_hex(0x34D399), 0);
-  lv_obj_align(st->hdr_meta, LV_ALIGN_RIGHT_MID, is_large ? -36 : -28, 0);
-
-  // Dedicated touch exit button
-  lv_obj_t *back_btn = eos_lvgl_create_back_btn(hdr, term_back_btn_cb, st);
-  if (back_btn) {
-    lv_obj_set_size(back_btn, is_large ? 28 : 22, is_large ? 22 : 16);
-    lv_obj_align(back_btn, LV_ALIGN_RIGHT_MID, -2, 0);
-  }
-
-  // 2. Command bar with dedicated touch buttons (Prev, Cmd Box, Next, KB, Run)
-  lv_obj_t *cbar = lv_obj_create(scr);
-  lv_obj_set_size(cbar, (int32_t)w, cbar_h);
-  lv_obj_align(cbar, LV_ALIGN_TOP_MID, 0, hdr_h);
-  lv_obj_set_style_bg_color(cbar, lv_color_hex(0x172554), 0);
-  lv_obj_set_style_border_width(cbar, 0, 0);
-  lv_obj_set_style_radius(cbar, 0, 0);
-  lv_obj_set_style_pad_hor(cbar, 4, 0);
-  lv_obj_set_style_pad_ver(cbar, 2, 0);
-
-  int32_t nav_w = is_large ? 34 : 22;
-  int32_t kb_w = is_large ? 86 : 32;
-  int32_t run_w = is_large ? 74 : 28;
-  int32_t btn_h = cbar_h - 4;
-
-  // Previous preset button [<]
-  st->btn_prev = lv_button_create(cbar);
-  lv_obj_set_size(st->btn_prev, nav_w, btn_h);
-  lv_obj_align(st->btn_prev, LV_ALIGN_LEFT_MID, 0, 0);
-  lv_obj_set_style_bg_color(st->btn_prev, lv_color_hex(0x1E293B), 0);
-  lv_obj_set_style_radius(st->btn_prev, 3, 0);
-  lv_obj_set_style_pad_all(st->btn_prev, 0, 0);
-  lv_obj_add_event_cb(st->btn_prev, term_btn_prev_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_prev = lv_label_create(st->btn_prev);
-  lv_label_set_text(lbl_prev, "<");
-  lv_obj_align(lbl_prev, LV_ALIGN_CENTER, 0, 0);
-
-  // Next preset button [>]
-  st->btn_next = lv_button_create(cbar);
-  lv_obj_set_size(st->btn_next, nav_w, btn_h);
-  lv_obj_align(st->btn_next, LV_ALIGN_LEFT_MID, nav_w + 3, 0);
-  lv_obj_set_style_bg_color(st->btn_next, lv_color_hex(0x1E293B), 0);
-  lv_obj_set_style_radius(st->btn_next, 3, 0);
-  lv_obj_set_style_pad_all(st->btn_next, 0, 0);
-  lv_obj_add_event_cb(st->btn_next, term_btn_next_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_next = lv_label_create(st->btn_next);
-  lv_label_set_text(lbl_next, ">");
-  lv_obj_align(lbl_next, LV_ALIGN_CENTER, 0, 0);
-
-  // Run button [▶ Run]
-  st->btn_run = lv_button_create(cbar);
-  lv_obj_set_size(st->btn_run, run_w, btn_h);
-  lv_obj_align(st->btn_run, LV_ALIGN_RIGHT_MID, 0, 0);
-  lv_obj_set_style_bg_color(st->btn_run, lv_color_hex(0x15803D), 0);
-  lv_obj_set_style_radius(st->btn_run, 3, 0);
-  lv_obj_set_style_pad_all(st->btn_run, 0, 0);
-  lv_obj_add_event_cb(st->btn_run, term_btn_run_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_run = lv_label_create(st->btn_run);
-  lv_label_set_text(lbl_run, is_large ? "▶ Run" : "▶");
-  lv_obj_set_style_text_color(lbl_run, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(lbl_run, LV_ALIGN_CENTER, 0, 0);
-
-  // Keyboard Edit button [⌨ Edit]
-  st->btn_kb = lv_button_create(cbar);
-  lv_obj_set_size(st->btn_kb, kb_w, btn_h);
-  lv_obj_align(st->btn_kb, LV_ALIGN_RIGHT_MID, -(run_w + 3), 0);
-  lv_obj_set_style_bg_color(st->btn_kb, lv_color_hex(0x2563EB), 0);
-  lv_obj_set_style_radius(st->btn_kb, 3, 0);
-  lv_obj_set_style_pad_all(st->btn_kb, 0, 0);
-  lv_obj_add_event_cb(st->btn_kb, term_btn_kb_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_kb = lv_label_create(st->btn_kb);
-  lv_label_set_text(lbl_kb, is_large ? "⌨ Edit" : "⌨");
-  lv_obj_set_style_text_color(lbl_kb, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(lbl_kb, LV_ALIGN_CENTER, 0, 0);
-
-  // Command box (clickable to open editor)
-  int32_t cmd_box_x = (nav_w * 2) + 6;
-  int32_t cmd_box_w = (int32_t)w - cmd_box_x - (kb_w + run_w + 10);
-  if (cmd_box_w < 60) cmd_box_w = 60;
-
-  st->cmd_box = lv_button_create(cbar);
-  lv_obj_set_size(st->cmd_box, cmd_box_w, btn_h);
-  lv_obj_align(st->cmd_box, LV_ALIGN_LEFT_MID, cmd_box_x, 0);
-  lv_obj_set_style_bg_color(st->cmd_box, lv_color_hex(0x0F172A), 0);
-  lv_obj_set_style_border_color(st->cmd_box, lv_color_hex(0x334155), 0);
-  lv_obj_set_style_border_width(st->cmd_box, 1, 0);
-  lv_obj_set_style_radius(st->cmd_box, 3, 0);
-  lv_obj_set_style_pad_hor(st->cmd_box, 5, 0);
-  lv_obj_set_style_pad_ver(st->cmd_box, 0, 0);
-  lv_obj_add_event_cb(st->cmd_box, term_cmd_box_cb, LV_EVENT_CLICKED, st);
-
-  st->cmd_label = lv_label_create(st->cmd_box);
-  lv_obj_set_width(st->cmd_label, cmd_box_w - 10);
-  lv_label_set_long_mode(st->cmd_label, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_color(st->cmd_label, lv_color_hex(0xFDE047), 0);
-  lv_obj_align(st->cmd_label, LV_ALIGN_LEFT_MID, 0, 0);
-
-  // 3. Scrollable terminal output viewport
-  int32_t vp_y = hdr_h + cbar_h + 2;
-  int32_t vp_h = (int32_t)h - vp_y - ftr_h - 2;
-  if (vp_h < 60) vp_h = 60;
-
-  st->viewport = lv_obj_create(scr);
-  lv_obj_set_size(st->viewport, (int32_t)w - 4, vp_h);
-  lv_obj_align(st->viewport, LV_ALIGN_TOP_MID, 0, vp_y);
-  lv_obj_set_style_bg_color(st->viewport, lv_color_hex(0x050811), 0);
-  lv_obj_set_style_border_color(st->viewport, lv_color_hex(0x334155), 0);
-  lv_obj_set_style_border_width(st->viewport, 1, 0);
-  lv_obj_set_style_radius(st->viewport, 4, 0);
-  lv_obj_set_style_pad_all(st->viewport, 5, 0);
-  lv_obj_set_scroll_dir(st->viewport, LV_DIR_ALL);
-
-  st->out_label = lv_label_create(st->viewport);
-  lv_obj_set_width(st->out_label, (int32_t)w - 18);
-  lv_label_set_long_mode(st->out_label, LV_LABEL_LONG_WRAP);
-  lv_obj_set_style_text_color(st->out_label, lv_color_hex(0x4ADE80), 0);
-  lv_obj_align(st->out_label, LV_ALIGN_TOP_LEFT, 0, 0);
-
-  // 4. Footer bar (large displays only)
-  if (is_large) {
-    lv_obj_t *ftr = lv_obj_create(scr);
-    lv_obj_set_size(ftr, (int32_t)w, ftr_h);
-    lv_obj_align(ftr, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_style_bg_color(ftr, lv_color_hex(0x1E293B), 0);
-    lv_obj_set_style_border_width(ftr, 0, 0);
-    lv_obj_set_style_radius(ftr, 0, 0);
-    lv_obj_set_style_pad_hor(ftr, 6, 0);
-    lv_obj_set_style_pad_ver(ftr, 1, 0);
-
-    st->footer_label = lv_label_create(ftr);
-    lv_obj_set_width(st->footer_label, (int32_t)w - 12);
-    lv_label_set_long_mode(st->footer_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_color(st->footer_label, lv_color_hex(0x94A3B8), 0);
-    lv_obj_align(st->footer_label, LV_ALIGN_LEFT_MID, 0, 0);
-  } else {
-    st->footer_label = NULL;
-  }
+  term_build_header(st, scr, w, is_large, hdr_h);
+  term_build_cbar(st, scr, w, is_large, hdr_h, cbar_h);
+  term_build_viewport_and_footer(st, scr, w, h, is_large, hdr_h, cbar_h, ftr_h);
 
   term_update_ui(st);
 }
@@ -704,27 +706,8 @@ static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
   }
 }
 
-int lvgl_term_main(int argc, char **argv) {
-  term_viewer_state_t *st = calloc(1, sizeof(term_viewer_state_t));
-  if (!st) {
-    perror("lvgl_term calloc");
-    return -1;
-  }
-
-  st->text_buf = calloc(1, TERM_MAX_TEXT_BYTES);
-  if (!st->text_buf) {
-    free(st);
-    return -1;
-  }
-
-  st->start_time_ms = get_time_ms();
-  snprintf(st->file_path, sizeof(st->file_path), "%s", TERM_DEFAULT_OUT_FILE);
-  snprintf(st->title, sizeof(st->title), "Terminal Viewer");
-  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", s_preset_cmds[0]);
-
-  bool run_cmd_arg = false;
-  bool explicit_file = false;
-
+static int term_parse_args(term_viewer_state_t *st, int argc, char **argv,
+                           bool *run_cmd_arg, bool *explicit_file) {
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       printf("Usage:\n");
@@ -732,84 +715,54 @@ int lvgl_term_main(int argc, char **argv) {
       printf("  <cmd> > /term.out && lvgl_term /term.out [title] [cmd]\n");
       printf("  lvgl_term -c \"<cmd>\" [-t <timeout_ms>]\n");
       printf("  lvgl_term -t <timeout_ms>\n");
-      free(st->text_buf);
-      free(st);
-      return 0;
+      return -1;
     } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
       snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", argv[++i]);
-      run_cmd_arg = true;
+      *run_cmd_arg = true;
     } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
       st->timeout_ms = (uint32_t)strtoul(argv[++i], NULL, 10);
     } else if (argv[i][0] != '-') {
-      if (!explicit_file) {
+      if (!*explicit_file) {
         snprintf(st->file_path, sizeof(st->file_path), "%s", argv[i]);
         snprintf(st->title, sizeof(st->title), "Term: %.22s", argv[i]);
-        explicit_file = true;
+        *explicit_file = true;
       } else if (!st->has_exit_code && argv[i][0]) {
         snprintf(st->title, sizeof(st->title), "%s", argv[i]);
       }
     }
   }
+  return 0;
+}
 
-  // Sync preset index if active_cmd matches a preset
-  for (int i = 0; i < TERM_PRESET_COUNT; i++) {
-    if (strcmp(st->active_cmd, s_preset_cmds[i]) == 0) {
-      st->preset_idx = i;
-      break;
+static int term_cli_fallback(term_viewer_state_t *st, bool run_cmd_arg,
+                             bool stdin_redirected, bool explicit_file) {
+  if (run_cmd_arg) {
+    char full_cmd[EOS_LARGE_STR_LEN];
+    snprintf(full_cmd, sizeof(full_cmd), "%s", st->active_cmd);
+    system(full_cmd);
+  } else if (stdin_redirected && !explicit_file) {
+    char chunk[EOS_SECTOR_SIZE];
+    ssize_t n;
+    while ((n = read(STDIN_FILENO, chunk, sizeof(chunk))) > 0) {
+      (void)write(STDOUT_FILENO, chunk, (size_t)n);
     }
-  }
-
-  // Check if stdin is redirected from a pipe or file (`cmd | lvgl_term`)
-  eos_proc_t *proc = eos_proc_current();
-  bool stdin_redirected = (proc && eos_proc_fd_map_get(proc, STDIN_FILENO) >= 0);
-
-  // Initialize LVGL display
-  if (eos_lvgl_init(NULL) != 0) {
-    // CLI fallback when display is occupied or unavailable
-    if (run_cmd_arg) {
-      char full_cmd[EOS_LARGE_STR_LEN];
-      snprintf(full_cmd, sizeof(full_cmd), "%s", st->active_cmd);
-      system(full_cmd);
-    } else if (stdin_redirected && !explicit_file) {
-      char chunk[512];
+  } else if (explicit_file) {
+    int fd = open(st->file_path, O_RDONLY);
+    if (fd >= 0) {
+      char chunk[EOS_SECTOR_SIZE];
       ssize_t n;
-      while ((n = read(STDIN_FILENO, chunk, sizeof(chunk))) > 0) {
+      while ((n = read(fd, chunk, sizeof(chunk))) > 0) {
         (void)write(STDOUT_FILENO, chunk, (size_t)n);
       }
-    } else if (explicit_file) {
-      int fd = open(st->file_path, O_RDONLY);
-      if (fd >= 0) {
-        char chunk[512];
-        ssize_t n;
-        while ((n = read(fd, chunk, sizeof(chunk))) > 0) {
-          (void)write(STDOUT_FILENO, chunk, (size_t)n);
-        }
-        close(fd);
-      }
+      close(fd);
     }
-    free(st->text_buf);
-    free(st);
-    return 0;
   }
+  free(st->text_buf);
+  free(st);
+  return 0;
+}
 
-  eos_lvgl_clear_keys();
-  term_build_ui(st);
-
-  if (run_cmd_arg) {
-    term_execute_cmd_to_file(st, st->active_cmd);
-  } else if (stdin_redirected && !explicit_file) {
-    snprintf(st->title, sizeof(st->title), "Piped Stream Output");
-    term_load_from_fd(st, STDIN_FILENO, TERM_DEFAULT_OUT_FILE);
-  } else if (explicit_file) {
-    term_load_from_file(st, st->file_path);
-  } else {
-    // Default initial execution of first preset
-    term_execute_cmd_to_file(st, st->active_cmd);
-  }
-
-  term_update_ui(st);
-
-  // Main UI event and rendering loop
+static void term_run_event_loop(term_viewer_state_t *st) {
   while (!st->should_exit) {
     if (st->timeout_ms > 0) {
       uint64_t elapsed_ms = get_time_ms() - st->start_time_ms;
@@ -844,6 +797,70 @@ int lvgl_term_main(int argc, char **argv) {
     st->edit_dialog = NULL;
   }
   eos_lvgl_deinit();
+}
+
+int lvgl_term_main(int argc, char **argv) {
+  term_viewer_state_t *st = calloc(1, sizeof(term_viewer_state_t));
+  if (!st) {
+    perror("lvgl_term calloc");
+    return -1;
+  }
+
+  st->text_buf = calloc(1, TERM_MAX_TEXT_BYTES);
+  if (!st->text_buf) {
+    free(st);
+    return -1;
+  }
+
+  st->start_time_ms = get_time_ms();
+  snprintf(st->file_path, sizeof(st->file_path), "%s", TERM_DEFAULT_OUT_FILE);
+  snprintf(st->title, sizeof(st->title), "Terminal Viewer");
+  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", s_preset_cmds[0]);
+
+  bool run_cmd_arg = false;
+  bool explicit_file = false;
+
+  if (term_parse_args(st, argc, argv, &run_cmd_arg, &explicit_file) != 0) {
+    free(st->text_buf);
+    free(st);
+    return 0;
+  }
+
+  // Sync preset index if active_cmd matches a preset
+  for (int i = 0; i < TERM_PRESET_COUNT; i++) {
+    if (strcmp(st->active_cmd, s_preset_cmds[i]) == 0) {
+      st->preset_idx = i;
+      break;
+    }
+  }
+
+  // Check if stdin is redirected from a pipe or file (`cmd | lvgl_term`)
+  eos_proc_t *proc = eos_proc_current();
+  bool stdin_redirected = (proc && eos_proc_fd_map_get(proc, STDIN_FILENO) >= 0);
+
+  // Initialize LVGL display
+  if (eos_lvgl_init(NULL) != 0) {
+    return term_cli_fallback(st, run_cmd_arg, stdin_redirected, explicit_file);
+  }
+
+  eos_lvgl_clear_keys();
+  term_build_ui(st);
+
+  if (run_cmd_arg) {
+    term_execute_cmd_to_file(st, st->active_cmd);
+  } else if (stdin_redirected && !explicit_file) {
+    snprintf(st->title, sizeof(st->title), "Piped Stream Output");
+    term_load_from_fd(st, STDIN_FILENO, TERM_DEFAULT_OUT_FILE);
+  } else if (explicit_file) {
+    term_load_from_file(st, st->file_path);
+  } else {
+    // Default initial execution of first preset
+    term_execute_cmd_to_file(st, st->active_cmd);
+  }
+
+  term_update_ui(st);
+  term_run_event_loop(st);
+
   free(st->text_buf);
   free(st);
   return 0;

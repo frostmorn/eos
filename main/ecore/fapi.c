@@ -13,7 +13,6 @@
 // use actual multithreading
 
 
-#define EOS_FAPI_COUNT_BUFFERS 2
 
 static char (*s_fapi_buffers)[PATH_MAX] = NULL;
 

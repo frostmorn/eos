@@ -1,4 +1,5 @@
 #include "emisc/rect.h"
+#include <errno.h>
 #include <string.h>
 
 bool eos_rect_is_empty(const eos_rect_t *r) {
@@ -121,8 +122,6 @@ size_t eos_rect_subtract(const eos_rect_t *subject, const eos_rect_t *occluder,
   return count;
 }
 
-#define EOS_RECT_MAX_TEMP 64
-
 size_t eos_rect_multi_subtract(const eos_rect_t *subject,
                                const eos_rect_t *occluders, size_t occluder_count,
                                eos_rect_t *out_pieces, size_t max_out) {
@@ -169,3 +168,75 @@ size_t eos_rect_multi_subtract(const eos_rect_t *subject,
 
   return copy_n;
 }
+
+bool eos_rect_is_valid_window(const eos_rect_t *rect, uint32_t width, uint32_t height) {
+  if (!rect || rect->w == 0 || rect->h == 0) return false;
+  if (rect->x >= width || rect->y >= height) return false;
+  if (rect->x + rect->w > width || rect->y + rect->h > height) return false;
+  return true;
+}
+
+int eos_clip_rect_set(eos_clip_rect_t *clip, const eos_rect_t *rect, uint32_t width, uint32_t height) {
+  if (!clip) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (rect) {
+    if (!eos_rect_is_valid_window(rect, width, height)) {
+      clip->active = false;
+      errno = EINVAL;
+      return -1;
+    }
+    clip->x = rect->x;
+    clip->y = rect->y;
+    clip->w = rect->w;
+    clip->h = rect->h;
+    clip->active = true;
+  } else {
+    clip->active = false;
+  }
+  return 0;
+}
+
+int eos_clip_rect_get(const eos_clip_rect_t *clip, uint32_t width, uint32_t height, eos_rect_t *out) {
+  if (!out) {
+    errno = EINVAL;
+    return -1;
+  }
+  if (clip && clip->active) {
+    out->x = clip->x;
+    out->y = clip->y;
+    out->w = clip->w;
+    out->h = clip->h;
+  } else {
+    out->x = 0;
+    out->y = 0;
+    out->w = width;
+    out->h = height;
+  }
+  return 0;
+}
+
+void eos_clip_rect_consume(eos_clip_rect_t *clip, uint32_t width, uint32_t height, eos_rect_t *out) {
+  if (!out) return;
+  if (clip && clip->active) {
+    out->x = clip->x;
+    out->y = clip->y;
+    out->w = clip->w;
+    out->h = clip->h;
+    clip->active = false;
+  } else {
+    out->x = 0;
+    out->y = 0;
+    out->w = width;
+    out->h = height;
+  }
+}
+
+uint32_t eos_rect_calc_rows(size_t len, uint32_t width_px, uint8_t bytes_per_pixel, uint32_t max_rows) {
+  size_t row_bytes = (size_t)width_px * bytes_per_pixel;
+  if (row_bytes == 0 || len < row_bytes) return 0;
+  uint32_t rows = (uint32_t)(len / row_bytes);
+  return (rows > max_rows) ? max_rows : rows;
+}
+

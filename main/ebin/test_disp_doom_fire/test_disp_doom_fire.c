@@ -10,6 +10,7 @@
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 
 static uint16_t fire_palette(uint8_t heat) {
   uint8_t r, g, b;
@@ -90,7 +91,7 @@ static void test_doom_fire(int fd) {
     if (write(fd, buf, frame_bytes) < 0)
       break;
 
-    usleep(30 * 1000);
+    usleep(30 * EOS_US_PER_MS);
   }
 
 cleanup:

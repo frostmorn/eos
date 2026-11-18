@@ -49,7 +49,7 @@ int battery_main(int argc, char **argv) {
   }
 
   if (show_raw) {
-    char buf[256];
+    char buf[EOS_MID_STR_LEN];
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
     if (n > 0) {
       buf[n] = '\0';
@@ -73,7 +73,7 @@ int battery_main(int argc, char **argv) {
     }
   } else {
     // Fallback to read() if ioctl fails
-    char buf[256];
+    char buf[EOS_MID_STR_LEN];
     ssize_t n = read(fd, buf, sizeof(buf) - 1);
     if (n > 0) {
       buf[n] = '\0';

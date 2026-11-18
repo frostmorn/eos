@@ -15,11 +15,6 @@
 #include <esp_heap_caps.h>
 #endif
 
-// Maximum DMA chunk size matching st7789 driver strip fallback (16 KB)
-#define EOS_LVGL_DMA_STRIP_BYTES  16384U
-#define EOS_LVGL_KEY_QUEUE_SIZE   32U
-#define EOS_LVGL_TOUCH_QUEUE_SIZE 16U
-
 typedef struct {
   eos_lvgl_ctx_t pub;
   uint16_t key_queue[EOS_LVGL_KEY_QUEUE_SIZE];
@@ -42,7 +37,7 @@ typedef struct {
   uint32_t touch_total_travel;
   bool touch_moved;
   bool touch_gestures_enabled;
-  char active_fb_path[64];
+  char active_fb_path[EOS_LINE_64_LEN];
   pid_t owner_pid;
   uint32_t fb_offset_x;
   uint32_t fb_offset_y;
@@ -70,7 +65,7 @@ static uint32_t eos_lvgl_tick_cb(void) {
   struct timeval tv;
   if (gettimeofday(&tv, NULL) == 0) {
     uint32_t ms =
-        (uint32_t)((uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL);
+        (uint32_t)((uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS);
     if (ms > fallback_tick) {
       fallback_tick = ms;
     } else {
@@ -536,6 +531,151 @@ static void lvgl_proc_cleanup_hook(void *arg) {
   }
 }
 
+static int lvgl_init_probe_fb(const char *fb_path, uint32_t *out_w, uint32_t *out_h) {
+  int fb_fd = open(fb_path, O_RDWR);
+  if (fb_fd < 0) {
+    EOS_LOGE("Failed to open framebuffer '%s': %s", fb_path, strerror(errno));
+    return -1;
+  }
+
+  uint32_t width = 0;
+  uint32_t height = 0;
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width) != 0 ||
+      ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height) != 0 || width == 0 ||
+      height == 0) {
+    EOS_LOGE("Failed to query display dimensions on '%s'", fb_path);
+    close(fb_fd);
+    return -1;
+  }
+
+  s_lvgl.pub.fb_fd = fb_fd;
+  s_lvgl.pub.width = width;
+  s_lvgl.pub.height = height;
+
+  uint32_t off_x = 0, off_y = 0;
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_X, &off_x) == 0) {
+    s_lvgl.fb_offset_x = off_x;
+  }
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_Y, &off_y) == 0) {
+    s_lvgl.fb_offset_y = off_y;
+  }
+
+  *out_w = width;
+  *out_h = height;
+  return fb_fd;
+}
+
+static int lvgl_init_buffers(const eos_lvgl_cfg_t *cfg, uint32_t width,
+                             uint32_t height, int fb_fd) {
+  size_t row_bytes = (size_t)width * sizeof(uint16_t);
+  uint32_t strip_h =
+      (cfg && cfg->partial_lines > 0)
+          ? cfg->partial_lines
+          : (uint32_t)(EOS_LVGL_DMA_STRIP_BYTES / row_bytes);
+  if (strip_h == 0)
+    strip_h = 1;
+  if (strip_h > height)
+    strip_h = height;
+
+  s_lvgl.pub.partial_lines = strip_h;
+  s_lvgl.pub.partial_buf_size = (size_t)strip_h * row_bytes;
+  s_lvgl.pub.full_buf_size = (size_t)width * (size_t)height * sizeof(uint16_t);
+
+#ifdef MALLOC_CAP_SPIRAM
+  s_lvgl.pub.full_buf = heap_caps_malloc(
+      s_lvgl.pub.full_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+  if (!s_lvgl.pub.full_buf) {
+    s_lvgl.pub.full_buf = malloc(s_lvgl.pub.full_buf_size);
+  }
+  if (s_lvgl.pub.full_buf) {
+    memset(s_lvgl.pub.full_buf, 0, s_lvgl.pub.full_buf_size);
+  }
+
+  bool force_full = cfg ? cfg->force_full_frame : false;
+  if (!force_full) {
+#ifdef MALLOC_CAP_SPIRAM
+    s_lvgl.pub.partial_buf = heap_caps_malloc(
+        s_lvgl.pub.partial_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+    if (!s_lvgl.pub.partial_buf) {
+      s_lvgl.pub.partial_buf = malloc(s_lvgl.pub.partial_buf_size);
+    }
+    if (s_lvgl.pub.partial_buf) {
+      memset(s_lvgl.pub.partial_buf, 0, s_lvgl.pub.partial_buf_size);
+    }
+  }
+
+  eos_display_rect_t probe_rect = {
+      .x = 0, .y = 0, .w = width, .h = height};
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &probe_rect) != 0) {
+    EOS_LOGW("Display driver rejected SET_WINDOW; enabling full-frame fallback");
+    s_lvgl.pub.fallback_full = true;
+  } else {
+    (void)ioctl(fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, NULL);
+  }
+
+  if (!s_lvgl.pub.partial_buf) {
+    if (!s_lvgl.pub.full_buf) {
+      EOS_LOGE("Failed to allocate both partial and full LVGL framebuffers");
+      close(fb_fd);
+      s_lvgl.pub.fb_fd = -1;
+      return -1;
+    }
+    EOS_LOGW("Using full-frame buffer directly (partial buffer unavailable)");
+    s_lvgl.pub.fallback_full = true;
+  }
+
+  return 0;
+}
+
+static void lvgl_init_inputs(bool enable_kbd, const char *kbd_path,
+                             bool enable_touch, const char *touch_path,
+                             lv_display_t *disp) {
+  if (enable_kbd) {
+    int kbd_fd = open(kbd_path, O_RDONLY);
+    if (kbd_fd >= 0) {
+      s_lvgl.pub.kbd_fd = kbd_fd;
+      lv_indev_t *indev = lv_indev_create();
+      if (indev) {
+        lv_indev_set_type(indev, LV_INDEV_TYPE_KEYPAD);
+        lv_indev_set_read_cb(indev, eos_lvgl_indev_read_cb);
+        if (s_lvgl.pub.group) {
+          lv_indev_set_group(indev, s_lvgl.pub.group);
+        }
+        s_lvgl.pub.indev = indev;
+      }
+    } else {
+      EOS_LOGW("Keyboard device '%s' not available: %s", kbd_path,
+               strerror(errno));
+    }
+  }
+
+  if (enable_touch) {
+    int touch_fd = open(touch_path, O_RDWR);
+    if (touch_fd < 0) {
+      touch_fd = open(touch_path, O_RDONLY);
+    }
+    if (touch_fd < 0 && strcmp(touch_path, "/dev/touch0") == 0) {
+      touch_fd = open("/dev/touch", O_RDONLY);
+    }
+    if (touch_fd >= 0) {
+      s_lvgl.pub.touch_fd = touch_fd;
+      lv_indev_t *tindev = lv_indev_create();
+      if (tindev) {
+        lv_indev_set_type(tindev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_read_cb(tindev, eos_lvgl_touch_read_cb);
+        lv_indev_set_user_data(tindev, &s_lvgl.pub);
+        lv_indev_set_display(tindev, disp);
+        s_lvgl.pub.touch_indev = tindev;
+      }
+    } else {
+      EOS_LOGI("Touch device '%s' not available: %s", touch_path,
+               strerror(errno));
+    }
+  }
+}
+
 int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   pid_t cur_pid = eos_getpid();
   if (s_lvgl.pub.initialized) {
@@ -574,100 +714,16 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
     touch_path = EOS_LVGL_DEFAULT_TOUCH_PATH;
   }
 
-  bool enable_kbd = cfg ? cfg->enable_keyboard : true;
-  bool enable_touch = cfg ? (!cfg->disable_touch) : true;
+  uint32_t width = 0, height = 0;
+  int fb_fd = lvgl_init_probe_fb(fb_path, &width, &height);
+  if (fb_fd < 0) {
+    return -1;
+  }
+
   s_lvgl.pub.dpad_group_nav = cfg ? cfg->dpad_group_nav : true;
 
-  int fb_fd = open(fb_path, O_RDWR);
-  if (fb_fd < 0) {
-    EOS_LOGE("Failed to open framebuffer '%s': %s", fb_path, strerror(errno));
+  if (lvgl_init_buffers(cfg, width, height, fb_fd) != 0) {
     return -1;
-  }
-
-  uint32_t width = 0;
-  uint32_t height = 0;
-  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &width) != 0 ||
-      ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_HEIGHT, &height) != 0 || width == 0 ||
-      height == 0) {
-    EOS_LOGE("Failed to query display dimensions on '%s'", fb_path);
-    close(fb_fd);
-    return -1;
-  }
-
-  s_lvgl.pub.fb_fd = fb_fd;
-  s_lvgl.pub.width = width;
-  s_lvgl.pub.height = height;
-
-  uint32_t off_x = 0, off_y = 0;
-  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_X, &off_x) == 0) {
-    s_lvgl.fb_offset_x = off_x;
-  }
-  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_Y, &off_y) == 0) {
-    s_lvgl.fb_offset_y = off_y;
-  }
-
-  // Compute partial strip height modeled after st7789.c (16 KB DMA strip)
-  size_t row_bytes = (size_t)width * sizeof(uint16_t);
-  uint32_t strip_h =
-      (cfg && cfg->partial_lines > 0)
-          ? cfg->partial_lines
-          : (uint32_t)(EOS_LVGL_DMA_STRIP_BYTES / row_bytes);
-  if (strip_h == 0)
-    strip_h = 1;
-  if (strip_h > height)
-    strip_h = height;
-
-  s_lvgl.pub.partial_lines = strip_h;
-  s_lvgl.pub.partial_buf_size = (size_t)strip_h * row_bytes;
-  s_lvgl.pub.full_buf_size = (size_t)width * (size_t)height * sizeof(uint16_t);
-
-  // Allocate shadow full-frame buffer in PSRAM if available to preserve internal DMA SRAM
-#ifdef MALLOC_CAP_SPIRAM
-  s_lvgl.pub.full_buf = heap_caps_malloc(
-      s_lvgl.pub.full_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
-  if (!s_lvgl.pub.full_buf) {
-    s_lvgl.pub.full_buf = malloc(s_lvgl.pub.full_buf_size);
-  }
-  if (s_lvgl.pub.full_buf) {
-    memset(s_lvgl.pub.full_buf, 0, s_lvgl.pub.full_buf_size);
-  }
-
-  // Allocate partial draw buffer (preferring PSRAM/default heap so 32KB DMA pool stays free for st7789)
-  bool force_full = cfg ? cfg->force_full_frame : false;
-  if (!force_full) {
-#ifdef MALLOC_CAP_SPIRAM
-    s_lvgl.pub.partial_buf = heap_caps_malloc(
-        s_lvgl.pub.partial_buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
-    if (!s_lvgl.pub.partial_buf) {
-      s_lvgl.pub.partial_buf = malloc(s_lvgl.pub.partial_buf_size);
-    }
-    if (s_lvgl.pub.partial_buf) {
-      memset(s_lvgl.pub.partial_buf, 0, s_lvgl.pub.partial_buf_size);
-    }
-  }
-
-  // Verify whether display driver supports EOS_DISPLAY_IOCTL_SET_WINDOW
-  eos_display_rect_t probe_rect = {
-      .x = 0, .y = 0, .w = width, .h = height};
-  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &probe_rect) != 0) {
-    EOS_LOGW("Display driver rejected SET_WINDOW; enabling full-frame fallback");
-    s_lvgl.pub.fallback_full = true;
-  } else {
-    (void)ioctl(fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, NULL);
-  }
-
-  // If partial buffer allocation failed or full frame was requested, fall back to full buffer
-  if (!s_lvgl.pub.partial_buf) {
-    if (!s_lvgl.pub.full_buf) {
-      EOS_LOGE("Failed to allocate both partial and full LVGL framebuffers");
-      close(fb_fd);
-      s_lvgl.pub.fb_fd = -1;
-      return -1;
-    }
-    EOS_LOGW("Using full-frame buffer directly (partial buffer unavailable)");
-    s_lvgl.pub.fallback_full = true;
   }
 
   if (!s_lv_core_initialized) {
@@ -705,56 +761,14 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
   lv_display_set_flush_cb(disp, eos_lvgl_flush_cb);
   s_lvgl.pub.display = disp;
 
-  // Create default focus group
   s_lvgl.pub.group = lv_group_create();
   if (s_lvgl.pub.group) {
     lv_group_set_default(s_lvgl.pub.group);
   }
 
-  // Open keyboard device if enabled
-  if (enable_kbd) {
-    int kbd_fd = open(kbd_path, O_RDONLY);
-    if (kbd_fd >= 0) {
-      s_lvgl.pub.kbd_fd = kbd_fd;
-      lv_indev_t *indev = lv_indev_create();
-      if (indev) {
-        lv_indev_set_type(indev, LV_INDEV_TYPE_KEYPAD);
-        lv_indev_set_read_cb(indev, eos_lvgl_indev_read_cb);
-        if (s_lvgl.pub.group) {
-          lv_indev_set_group(indev, s_lvgl.pub.group);
-        }
-        s_lvgl.pub.indev = indev;
-      }
-    } else {
-      EOS_LOGW("Keyboard device '%s' not available: %s", kbd_path,
-               strerror(errno));
-    }
-  }
-
-  // Open touch device if enabled
-  if (enable_touch) {
-    int touch_fd = open(touch_path, O_RDWR);
-    if (touch_fd < 0) {
-      touch_fd = open(touch_path, O_RDONLY);
-    }
-    if (touch_fd < 0 && strcmp(touch_path, "/dev/touch0") == 0) {
-      touch_fd = open("/dev/touch", O_RDONLY);
-    }
-    if (touch_fd >= 0) {
-      s_lvgl.pub.touch_fd = touch_fd;
-      lv_indev_t *tindev = lv_indev_create();
-      if (tindev) {
-        lv_indev_set_type(tindev, LV_INDEV_TYPE_POINTER);
-        lv_indev_set_read_cb(tindev, eos_lvgl_touch_read_cb);
-        lv_indev_set_user_data(tindev, &s_lvgl.pub);
-        lv_indev_set_display(tindev, disp);
-        s_lvgl.pub.touch_indev = tindev;
-      }
-    } else {
-      EOS_LOGI("Touch device '%s' not available: %s", touch_path,
-               strerror(errno));
-    }
-  }
+  bool enable_kbd = cfg ? cfg->enable_keyboard : true;
+  bool enable_touch = cfg ? (!cfg->disable_touch) : true;
+  lvgl_init_inputs(enable_kbd, kbd_path, enable_touch, touch_path, disp);
 
   s_lvgl.pub.initialized = true;
   return 0;
@@ -868,7 +882,7 @@ uint32_t eos_lvgl_step(uint32_t max_sleep_ms) {
   if (delay == 0)
     delay = 1;
 
-  usleep(delay * 1000U);
+  usleep(delay * (uint32_t)EOS_US_PER_MS);
   return delay;
 }
 
@@ -1157,10 +1171,10 @@ lv_obj_t *eos_lvgl_create_keyboard(lv_obj_t *parent, lv_obj_t *target_ta) {
   if (parent_h <= 0) parent_h = (int32_t)h;
 
   int32_t kb_w = parent_w - 6;
-  if (kb_w > 480) kb_w = 480;
-  int32_t kb_h = parent_h * 50 / 100;
-  if (kb_h < 75) kb_h = 75;
-  if (kb_h > 240) kb_h = 240;
+  if (kb_w > EOS_LVGL_KB_MAX_W) kb_w = EOS_LVGL_KB_MAX_W;
+  int32_t kb_h = parent_h * EOS_LVGL_KB_HEIGHT_PCT / 100;
+  if (kb_h < EOS_LVGL_KB_MIN_H) kb_h = EOS_LVGL_KB_MIN_H;
+  if (kb_h > EOS_LVGL_KB_MAX_H) kb_h = EOS_LVGL_KB_MAX_H;
 
   lv_obj_set_size(kb, kb_w, kb_h);
   lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -2);
@@ -1219,7 +1233,7 @@ static void input_dialog_delete_cb(lv_event_t *e) {
 static void input_dialog_ok_click(lv_event_t *e) {
   eos_input_dialog_data_t *data = (eos_input_dialog_data_t *)lv_event_get_user_data(e);
   if (!data) return;
-  char text_copy[128] = {0};
+  char text_copy[EOS_BUFFER_128_LEN] = {0};
   const char *t = lv_textarea_get_text(data->textarea);
   if (t) strncpy(text_copy, t, sizeof(text_copy) - 1);
   eos_lvgl_input_cb_t cb = data->cfg.ok_cb;
@@ -1295,8 +1309,8 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_align(tlbl, LV_ALIGN_TOP_LEFT, 4, 4);
 
   lv_obj_t *btn_cancel = lv_button_create(card);
-  lv_obj_set_size(btn_cancel, 56, 22);
-  lv_obj_align(btn_cancel, LV_ALIGN_TOP_RIGHT, -64, 0);
+  lv_obj_set_size(btn_cancel, EOS_LVGL_DIALOG_BTN_W, 22);
+  lv_obj_align(btn_cancel, LV_ALIGN_TOP_RIGHT, -EOS_LVGL_DIALOG_CANCEL_X, 0);
   lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
   lv_obj_set_style_border_color(btn_cancel, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(btn_cancel, 1, 0);
@@ -1309,7 +1323,7 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_center(clbl);
 
   lv_obj_t *btn_ok = lv_button_create(card);
-  lv_obj_set_size(btn_ok, 56, 22);
+  lv_obj_set_size(btn_ok, EOS_LVGL_DIALOG_BTN_W, 22);
   lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -2, 0);
   lv_obj_set_style_bg_color(btn_ok, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
   lv_obj_set_style_radius(btn_ok, 3, 0);
@@ -1342,7 +1356,7 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   // On-screen keyboard: ALWAYS created and maximized in remaining height
   int32_t kb_y = 58;
   int32_t kb_h = dlg_h - kb_y - 4;
-  if (kb_h < 60) kb_h = 60;
+  if (kb_h < EOS_LVGL_DIALOG_MIN_KB_H) kb_h = EOS_LVGL_DIALOG_MIN_KB_H;
 
   lv_obj_t *kb = eos_lvgl_create_keyboard(card, ta);
   if (kb) {
@@ -1376,9 +1390,9 @@ void eos_lvgl_close_input_dialog(lv_obj_t *dialog) {
 // ── Statusbar & Toolbar APIs ───────────────────────────────────
 
 int eos_toolbar_set(const char *title, const char *shortcuts) {
-  int fd = open("/tmp/tbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  int fd = open("/tmp/tbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
   if (fd < 0) return -1;
-  char buf[256];
+  char buf[EOS_MID_STR_LEN];
   int len = snprintf(buf, sizeof(buf), "@%ld %s\n%s\n", (long)getpid(),
                      title ? title : "",
                      shortcuts ? shortcuts : "");
@@ -1390,7 +1404,7 @@ int eos_toolbar_set(const char *title, const char *shortcuts) {
 }
 
 int eos_toolbar_printf(const char *shortcuts, const char *fmt, ...) {
-  char title[128] = {0};
+  char title[EOS_BUFFER_128_LEN] = {0};
   va_list args;
   va_start(args, fmt);
   vsnprintf(title, sizeof(title), fmt, args);
@@ -1404,9 +1418,9 @@ int eos_toolbar_clear(void) {
 }
 
 int eos_statusbar_set(const char *line1, const char *line2) {
-  int fd = open("/tmp/sbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  int fd = open("/tmp/sbar.tmp", O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
   if (fd < 0) return -1;
-  char buf[256];
+  char buf[EOS_MID_STR_LEN];
   int len = snprintf(buf, sizeof(buf), "@%ld %s\n%s\n", (long)getpid(),
                      line1 ? line1 : "",
                      line2 ? line2 : "");
@@ -1418,7 +1432,7 @@ int eos_statusbar_set(const char *line1, const char *line2) {
 }
 
 int eos_statusbar_printf(const char *line2, const char *fmt, ...) {
-  char line1[128] = {0};
+  char line1[EOS_BUFFER_128_LEN] = {0};
   va_list args;
   va_start(args, fmt);
   vsnprintf(line1, sizeof(line1), fmt, args);
@@ -1487,7 +1501,7 @@ lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
 
   int32_t dlg_w = (int32_t)w - 20;
   if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < 200) dlg_w = 200;
+  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
 
   lv_obj_t *card = lv_obj_create(ov);
   lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
@@ -1607,7 +1621,7 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
 
   int32_t dlg_w = (int32_t)w - 20;
   if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < 200) dlg_w = 200;
+  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
 
   lv_obj_t *card = lv_obj_create(ov);
   lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
@@ -1623,7 +1637,7 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
 
   // Title
   lv_obj_t *tlbl = lv_label_create(card);
-  char thdr[64];
+  char thdr[EOS_LINE_64_LEN];
   snprintf(thdr, sizeof(thdr), "i  %s", cfg->title ? cfg->title : "Information");
   lv_label_set_text(tlbl, thdr);
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
@@ -1691,72 +1705,9 @@ static void alert_dialog_cancel_click(lv_event_t *e) {
   if (cb) cb(false, ud);
 }
 
-lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
-  if (!cfg) return NULL;
-  lv_obj_t *scr = lv_screen_active();
-  if (!scr) return NULL;
-
-  eos_alert_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_alert_dialog_data_t));
-  if (!data) return NULL;
-  data->cfg = *cfg;
-
-  uint32_t w = eos_lvgl_get_width();
-  uint32_t h = eos_lvgl_get_height();
-
-  lv_obj_t *ov = lv_obj_create(scr);
-  data->overlay = ov;
-  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
-  lv_obj_set_pos(ov, 0, 0);
-  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
-  lv_obj_set_style_border_width(ov, 0, 0);
-  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(ov, alert_dialog_delete_cb, LV_EVENT_DELETE, data);
-
-  int32_t dlg_w = (int32_t)w - 20;
-  if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < 200) dlg_w = 200;
-
-  uint32_t accent = EOS_COLOR_ACCENT_CYAN;
-  const char *icon = "i";
-  if (cfg->level == EOS_LVGL_ALERT_WARNING) {
-    accent = EOS_COLOR_STATUS_ORANGE;
-    icon = "!";
-  } else if (cfg->level == EOS_LVGL_ALERT_ERROR) {
-    accent = EOS_COLOR_STATUS_RED;
-    icon = "X";
-  }
-
-  lv_obj_t *card = lv_obj_create(ov);
-  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
-  lv_obj_center(card);
-  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
-  lv_obj_set_style_border_color(card, lv_color_hex(accent), 0);
-  lv_obj_set_style_border_width(card, 2, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_pad_row(card, 6, 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-
-  // Header
-  lv_obj_t *tlbl = lv_label_create(card);
-  char thdr[64];
-  snprintf(thdr, sizeof(thdr), "%s  %s", icon, cfg->title ? cfg->title : "Alert");
-  lv_label_set_text(tlbl, thdr);
-  lv_obj_set_style_text_color(tlbl, lv_color_hex(accent), 0);
-
-  // Message body
-  if (cfg->message) {
-    lv_obj_t *mlbl = lv_label_create(card);
-    lv_label_set_text(mlbl, cfg->message);
-    lv_obj_set_width(mlbl, dlg_w - 24);
-    lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
-  }
-
-  lv_group_t *grp = eos_lvgl_get_group();
-
+static void alert_dialog_build_buttons(lv_obj_t *card, int32_t dlg_w, uint32_t accent,
+                                       const eos_lvgl_alert_dialog_cfg_t *cfg,
+                                       eos_alert_dialog_data_t *data, lv_group_t *grp) {
   if (cfg->cancel_label) {
     lv_obj_t *btn_row = lv_obj_create(card);
     lv_obj_set_size(btn_row, lv_pct(100), 28);
@@ -1814,6 +1765,74 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
       lv_group_focus_obj(btn);
     }
   }
+}
+
+lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_alert_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_alert_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, alert_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  int32_t dlg_w = (int32_t)w - 20;
+  if (dlg_w > 340) dlg_w = 340;
+  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
+
+  uint32_t accent = EOS_COLOR_ACCENT_CYAN;
+  const char *icon = "i";
+  if (cfg->level == EOS_LVGL_ALERT_WARNING) {
+    accent = EOS_COLOR_STATUS_ORANGE;
+    icon = "!";
+  } else if (cfg->level == EOS_LVGL_ALERT_ERROR) {
+    accent = EOS_COLOR_STATUS_RED;
+    icon = "X";
+  }
+
+  lv_obj_t *card = lv_obj_create(ov);
+  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(accent), 0);
+  lv_obj_set_style_border_width(card, 2, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, 8, 0);
+  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Header
+  lv_obj_t *tlbl = lv_label_create(card);
+  char thdr[EOS_LINE_64_LEN];
+  snprintf(thdr, sizeof(thdr), "%s  %s", icon, cfg->title ? cfg->title : "Alert");
+  lv_label_set_text(tlbl, thdr);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(accent), 0);
+
+  // Message body
+  if (cfg->message) {
+    lv_obj_t *mlbl = lv_label_create(card);
+    lv_label_set_text(mlbl, cfg->message);
+    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  }
+
+  lv_group_t *grp = eos_lvgl_get_group();
+  alert_dialog_build_buttons(card, dlg_w, accent, cfg, data, grp);
 
   return ov;
 }

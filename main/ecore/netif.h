@@ -20,6 +20,13 @@ extern "C" {
 #define EOS_NETIF_FLAG_BRIDGE      (1U << 4) // Interface is a bridge
 #define EOS_NETIF_FLAG_PROMISC     (1U << 5) // Promiscuous mode enabled
 
+#define EOS_NETIF_MAX_IFACES 16
+#define NETCTL_MAX_IFACES    EOS_NETIF_MAX_IFACES
+#define EOS_DEFAULT_WLAN_DEV "/dev/wifi0"
+#define DEFAULT_WLAN_DEV     EOS_DEFAULT_WLAN_DEV
+#define EOS_MAX_SSID_LEN     33
+#define EOS_MAX_PASSPHRASE_LEN 64
+
 // Netif interface types
 typedef enum {
   EOS_NETIF_TYPE_UNKNOWN = 0,

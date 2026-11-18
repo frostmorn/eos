@@ -7,6 +7,15 @@
 
 // Max value for mbr, and practically we would work mostly with it
 #define EOS_MAX_PARTITIONS 4
+#define MBR_SIGNATURE 0xAA55
+#define MBR_SIG_OFFSET 510
+#define MBR_BOOTSTRAP_SIZE 446
+#define GPT_PROTECTIVE 0xEE
+#define GPT_GUID_SIZE 16
+#define GPT_NAME_CHARS 36
+#define SECTOR_SIZE 512
+#define GPT_HEADER_LBA 1
+#define GPT_SIGNATURE 0x5452415020494645ULL // "EFI PART"
 
 #include <stdbool.h>
 #include <stdint.h>

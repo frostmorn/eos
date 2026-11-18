@@ -195,6 +195,8 @@ static inline int eos_net_rssi_to_quality(int8_t rssi) {
 
 // ── PCAP File Format & Packet Filtering Helpers ───────────────────────────
 
+#define EOS_PCAP_LINKTYPE_80211 80
+
 typedef struct __attribute__((packed)) {
   uint32_t magic_number;   /* magic number */
   uint16_t version_major;  /* major version number */
@@ -221,7 +223,7 @@ static inline size_t eos_net_pcap_write_global_header(uint8_t *buf, size_t max_l
   hdr->thiszone = 0;
   hdr->sigfigs = 0;
   hdr->snaplen = 65535;
-  hdr->network = 80; // LINKTYPE_IEEE802_11
+  hdr->network = EOS_PCAP_LINKTYPE_80211;
   return sizeof(eos_pcap_hdr_t);
 }
 

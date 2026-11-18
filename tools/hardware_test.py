@@ -43,30 +43,71 @@ def get_port_usb_info(port):
         return None, None
 
 
-def get_target_cfg():
+def get_target_chip():
     if os.path.exists("sdkconfig"):
         try:
             with open("sdkconfig") as f:
                 content = f.read()
                 if 'CONFIG_IDF_TARGET="esp32s3"' in content:
-                    return "board/esp32s3-builtin.cfg"
+                    return "esp32s3"
                 if 'CONFIG_IDF_TARGET="esp32p4"' in content:
-                    return "board/esp32p4-builtin.cfg"
+                    return "esp32p4"
         except Exception:
             pass
+    return "esp32p4"
+
+
+def get_port_chip(port):
+    """Detects chip model ('esp32s3', 'esp32p4') from USB sysfs bcdDevice descriptor."""
+    try:
+        tty_name = os.path.basename(port)
+        usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
+        bcd_path = os.path.join(usb_dir, "bcdDevice")
+        if os.path.exists(bcd_path):
+            bcd = open(bcd_path).read().strip()
+            if bcd == "0101":
+                return "esp32s3"
+            elif bcd == "0102":
+                return "esp32p4"
+    except Exception:
+        pass
+    return None
+
+
+def get_target_cfg():
+    target_chip = get_target_chip()
+    if target_chip == "esp32s3":
+        return "board/esp32s3-builtin.cfg"
     return "board/esp32p4-builtin.cfg"
 
 
+def resolve_port(port, target_chip=None):
+    if not port or port.startswith("socket://"):
+        return port
+    if not target_chip:
+        target_chip = get_target_chip()
+    candidates = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
+    for c in candidates:
+        if get_port_chip(c) == target_chip:
+            return c
+    if os.path.exists(port):
+        return port
+    return candidates[0] if candidates else port
+
+
 def jtag_reset(port):
-    loc, serial_num = get_port_usb_info(port)
     cfg = get_target_cfg()
+    loc, serial_num = get_port_usb_info(port)
     cmd = [
         "/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd",
         "-f", cfg
     ]
     if serial_num:
         cmd.extend(["-c", f"adapter serial {serial_num}"])
-    cmd.extend(["-c", "init; reset run; shutdown"])
+    if "esp32s3" in cfg:
+        cmd.extend(["-c", "init; halt; mww 0x60008000 0x80000000; resume; shutdown"])
+    else:
+        cmd.extend(["-c", "init; reset run; shutdown"])
     print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
@@ -85,26 +126,69 @@ class EOSTestHarness:
         self.passed = 0
         self.failed = 0
         self.suite_counts = {}
+        self.target_chip = get_target_chip()
+        self.loc, self.serial_num = get_port_usb_info(port)
 
     def _open_serial(self):
+        resolved = resolve_port(self.port, getattr(self, "target_chip", None))
+        if resolved:
+            self.port = resolved
+            loc, s = get_port_usb_info(resolved)
+            if s:
+                self.serial_num = s
         if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=10.0)
+            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=2.0)
         else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=10.0)
+            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=2.0)
 
     def _read_available(self):
-        if not self.ser or not self.ser.in_waiting:
+        try:
+            if not self.ser or not self.ser.is_open:
+                return b""
+            if hasattr(self.ser, "_socket"):
+                return self.ser._socket.recv(4096)
+            n = self.ser.in_waiting
+            if not n:
+                return b""
+            return self.ser.read(n)
+        except Exception:
             return b""
-        if hasattr(self.ser, "_socket"):
-            return self.ser._socket.recv(4096)
-        return self.ser.read(self.ser.in_waiting)
+
+    def _drain_serial(self, timeout=0.5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            chunk = self._read_available()
+            if not chunk:
+                break
+            time.sleep(0.02)
+
+    def _wait_and_reopen(self, timeout=15.0):
+        self.close()
+        time.sleep(1.0)
+        deadline = time.time() + timeout
+        target_chip = getattr(self, "target_chip", None)
+        while time.time() < deadline:
+            target_port = resolve_port(self.port, target_chip)
+            if target_port and os.path.exists(target_port):
+                try:
+                    self.port = target_port
+                    self._open_serial()
+                    if self.ser and self.ser.is_open:
+                        _ = self.ser.in_waiting
+                        return True
+                except Exception:
+                    self.close()
+            time.sleep(0.5)
+        return False
 
     def connect(self):
         if self.reset and not self.port.startswith("socket://"):
             jtag_reset(self.port)
+            self._wait_and_reopen(12.0)
+        else:
+            self._open_serial()
 
         print(f"{Colors.CYAN}Connecting to EOS on {self.port} at {self.baudrate} baud...{Colors.RESET}")
-        self._open_serial()
 
         ready_marker = b"__EOS_READY__"
         deadline = time.time() + 15.0
@@ -127,13 +211,15 @@ class EOSTestHarness:
 
         if ready_marker not in buf and not self.reset and not self.port.startswith("socket://"):
             print(f"{Colors.YELLOW}No prompt detected, recovering via OpenOCD JTAG reset...{Colors.RESET}")
-            jtag_reset(self.port)
             try:
                 self.close()
             except Exception:
                 pass
-            self._open_serial()
-            deadline = time.time() + 8.0
+            time.sleep(0.3)
+            jtag_reset(self.port)
+            if not self._wait_and_reopen(12.0):
+                return
+            deadline = time.time() + 15.0
             buf = b""
             last_ping = 0.0
             while time.time() < deadline:
@@ -151,11 +237,7 @@ class EOSTestHarness:
                     last_ping = now
                 time.sleep(0.05)
 
-        time.sleep(1.0)
-        while self.ser.in_waiting:
-            self._read_available()
-            time.sleep(0.01)
-        # self.ser.reset_input_buffer()
+        self._drain_serial(1.0)
 
     def close(self):
         if self.ser and self.ser.is_open:
@@ -174,12 +256,21 @@ class EOSTestHarness:
         else:
             full_cmd = f"echo {marker}\n"
 
-        while self.ser.in_waiting:
-            self._read_available()
-            time.sleep(0.005)
+        while True:
+            try:
+                if self.ser and self.ser.in_waiting:
+                    self._read_available()
+                    time.sleep(0.005)
+                else:
+                    break
+            except Exception:
+                break
         # self.ser.reset_input_buffer()
 
-        self.ser.write(full_cmd.encode("utf-8"))
+        try:
+            self.ser.write(full_cmd.encode("utf-8"))
+        except Exception as e:
+            return ""
         deadline = time.time() + max(wait, 2.0)
         buf = b""
         marker_bytes = f"\n{marker}".encode("utf-8")
@@ -953,6 +1044,74 @@ class EOSTestHarness:
         self.check(suite, "Cleanup hooks and leak reaping test binary passes with 0 failures", "test_leaks",
                    r"Leak Registry Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=15.0)
 
+    def test_boot_reset_survival(self, count=3):
+        suite = "bootreset"
+        print(f"\n{Colors.BOLD}=== 13. Board Boot & Reset Survival Tests ({count} Consecutive Reset Cycles) ==={Colors.RESET}")
+        if self.port.startswith("socket://"):
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] JTAG hardware reset not applicable to socket / QEMU connection")
+            return
+
+        if suite not in self.suite_counts:
+            self.suite_counts[suite] = {"pass": 0, "fail": 0}
+
+        for cycle in range(1, count + 1):
+            print(f"\n{Colors.CYAN}--- Reset & Boot Cycle {cycle} of {count} ---{Colors.RESET}")
+            try:
+                self.close()
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+            jtag_reset(self.port)
+
+            if not self._wait_and_reopen(15.0):
+                print(f"  [{Colors.RED}FAIL{Colors.RESET}] Cycle {cycle}: Reopening serial port {self.port} timed out after reset")
+                self.failed += 1
+                self.suite_counts[suite]["fail"] += 1
+                continue
+
+            time.sleep(0.5)
+
+            ready_marker = b"__EOS_READY__"
+            deadline = time.time() + 25.0
+            buf = b""
+            last_ping = 0.0
+            prompt_found = False
+
+            while time.time() < deadline:
+                chunk = self._read_available()
+                if chunk:
+                    buf += chunk
+                    if ready_marker in buf:
+                        prompt_found = True
+                        break
+                now = time.time()
+                # Wait until boot completes (~2.5s) before sending ping so we do not flood init.sh
+                if len(buf) > 3000 or (now - (deadline - 25.0) > 2.5):
+                    if now - last_ping > 0.5:
+                        try:
+                            self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                        except Exception:
+                            pass
+                        last_ping = now
+                time.sleep(0.05)
+
+            if not prompt_found:
+                print(f"  [{Colors.RED}FAIL{Colors.RESET}] Cycle {cycle}: Prompt ready canary timed out after reset (buf len={len(buf)})")
+                print(buf.decode("utf-8", errors="replace")[-1500:])
+                self.failed += 1
+                self.suite_counts[suite]["fail"] += 1
+                continue
+
+            self._drain_serial(0.5)
+
+            self.check(suite, f"Cycle {cycle}: Shell prompt alive and responsive",
+                       f"echo boot_cycle_{cycle}_alive", rf"boot_cycle_{cycle}_alive")
+            self.check(suite, f"Cycle {cycle}: /proc/uptime reports clean system restart",
+                       "cat /proc/uptime", r"uptime:\s+\d+s")
+            self.check(suite, f"Cycle {cycle}: /proc/devices verifies active device tree",
+                       "cat /proc/devices", r"bus/root")
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -1003,6 +1162,7 @@ SUITE_REGISTRY = {
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},
     "hash": {"name": "Hash, Checksum & Base64 Tests", "tag": "qemu", "func": lambda h: h.test_hash()},
     "leaks": {"name": "Cleanup-Hook Registry & Resource Leak Tests", "tag": "qemu", "func": lambda h: h.test_leaks()},
+    "bootreset": {"name": "Board Boot & Reset Survival Tests", "tag": "hardware-only", "func": lambda h: h.test_boot_reset_survival()},
     "wlanctl": {"name": "WLAN Radio & Sniffer (wlanctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_wlanctl()},
     "netctl": {"name": "Network Interface Management (netctl) Tests", "tag": "hardware-only", "func": lambda h: h.test_netctl()},
     "sdio": {"name": "Generic SDIO Driver Tests", "tag": "hardware-only", "func": lambda h: h.test_sdio()},
@@ -1010,7 +1170,11 @@ SUITE_REGISTRY = {
 
 
 def auto_detect_port():
-    candidates = glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*")
+    target_chip = get_target_chip()
+    candidates = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
+    for c in candidates:
+        if get_port_chip(c) == target_chip:
+            return c
     return candidates[0] if candidates else "/dev/ttyACM0"
 
 

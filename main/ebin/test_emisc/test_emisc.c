@@ -61,10 +61,7 @@ static void test_fnv1a(test_ctx_t *ctx) {
 
 // ── 2. kvec Vector & Roundup Tests ────────────────────────────
 
-static void test_kvec(test_ctx_t *ctx) {
-  printf("--- kvec Dynamic Array Tests ---\n");
-
-  // kv_roundup32 power-of-2 rounding
+static void test_kvec_roundup(test_ctx_t *ctx) {
   uint32_t r0 = 0;
   kv_roundup32(r0);
   report_test(ctx, "kvec: kv_roundup32(0) == 0", r0 == 0);
@@ -81,41 +78,36 @@ static void test_kvec(test_ctx_t *ctx) {
   kv_roundup32(r30);
   report_test(ctx, "kvec: kv_roundup32(30) == 32", r30 == 32);
 
-  uint32_t r1000 = 1000;
+  uint32_t r1000 = EOS_MS_PER_SEC;
   kv_roundup32(r1000);
-  report_test(ctx, "kvec: kv_roundup32(1000) == 1024", r1000 == 1024);
+  report_test(ctx, "kvec: kv_roundup32(1000) == 1024", r1000 == EOS_LARGE_STR_LEN);
+}
 
-  // kvec_t operations
+static void test_kvec_basic(test_ctx_t *ctx) {
   kvec_t(int) v;
   kv_init(v);
   report_test(ctx, "kvec: kv_init size is 0", kv_size(v) == 0 && kv_max(v) == 0);
   report_test(ctx, "kvec: kvec_t default caps is MALLOC_CAP_DEFAULT", v.caps == MALLOC_CAP_DEFAULT);
 
-  // Push elements
   for (int i = 0; i < 16; i++) {
     kv_push(int, v, i * 5);
   }
   report_test(ctx, "kvec: kv_push 16 elements size check", kv_size(v) == 16);
   report_test(ctx, "kvec: kv_A element retrieval", kv_A(v, 0) == 0 && kv_A(v, 3) == 15 && kv_A(v, 15) == 75);
 
-  // Pop element
   int popped = kv_pop(v);
   report_test(ctx, "kvec: kv_pop returns last element and shrinks size", popped == 75 && kv_size(v) == 15);
 
-  // Push additional element with kv_push
   kv_push(int, v, 4242);
   report_test(ctx, "kvec: kv_push element and size check",
               kv_size(v) == 16 && kv_A(v, 15) == 4242);
 
-  // Resize vector capacity
   kv_resize(int, v, 32);
   report_test(ctx, "kvec: kv_resize expands capacity", kv_max(v) == 32);
 
-  // kv_drop_fast
   kv_drop_fast(int, v, 0);
   report_test(ctx, "kvec: kv_drop_fast removes element and decrements size", kv_size(v) == 15);
 
-  // Vector copy
   kvec_t(int) v_copy;
   kv_init(v_copy);
   kv_copy(int, v_copy, v);
@@ -124,8 +116,9 @@ static void test_kvec(test_ctx_t *ctx) {
 
   kv_destroy(v);
   kv_destroy(v_copy);
+}
 
-  // kvec_psram_t operations
+static void test_kvec_psram_basic(test_ctx_t *ctx) {
   kvec_psram_t(int) vp;
   kv_init(vp);
   report_test(ctx, "kvec: kvec_psram_t caps has MALLOC_CAP_SPIRAM", (vp.caps & MALLOC_CAP_SPIRAM) != 0);
@@ -147,13 +140,11 @@ static void test_kvec(test_ctx_t *ctx) {
 
   kv_destroy(vp);
 
-  // kv_init_caps custom capability
   kvec_t(int) vc;
   kv_init_caps(vc, 0x1234);
   report_test(ctx, "kvec: kv_init_caps sets custom capabilities", vc.caps == 0x1234);
   kv_destroy(vc);
 
-  // kv_pushp and kv_last tests
   kvec_t(int) vp_test;
   kv_init(vp_test);
   int *p_elem = kv_pushp(int, vp_test);
@@ -163,43 +154,37 @@ static void test_kvec(test_ctx_t *ctx) {
   kv_last(vp_test) = 888;
   report_test(ctx, "kvec: kv_last lvalue assignment updates value", kv_A(vp_test, 0) == 888);
   kv_destroy(vp_test);
+}
 
-  // kvec_insert and kvec_drop order preservation
+static void test_kvec_insert_drop_shrink(test_ctx_t *ctx) {
   kvec_t(int) v_order;
   kv_init(v_order);
   kv_push(int, v_order, 10);
   kv_push(int, v_order, 20);
   kv_push(int, v_order, 30);
-  // Insert in middle (index 1 -> 15)
   kv_insert(int, v_order, 1, 15);
   report_test(ctx, "kvec: kv_insert in middle shifts right [10, 15, 20, 30]",
               kv_size(v_order) == 4 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 15 &&
               kv_A(v_order, 2) == 20 && kv_A(v_order, 3) == 30);
-  // Insert at front (index 0 -> 5)
   kv_insert(int, v_order, 0, 5);
   report_test(ctx, "kvec: kv_insert at index 0 shifts right [5, 10, 15, 20, 30]",
               kv_size(v_order) == 5 && kv_A(v_order, 0) == 5 && kv_A(v_order, 1) == 10);
-  // Insert at end (index == size -> 35)
   kv_insert(int, v_order, kv_size(v_order), 35);
   report_test(ctx, "kvec: kv_insert at end appends [..., 30, 35]",
               kv_size(v_order) == 6 && kv_last(v_order) == 35);
 
-  // Drop from middle (index 2: removes 15, leaves [5, 10, 20, 30, 35])
   kv_drop(int, v_order, 2);
   report_test(ctx, "kvec: kv_drop from middle preserves order [5, 10, 20, 30, 35]",
               kv_size(v_order) == 5 && kv_A(v_order, 0) == 5 && kv_A(v_order, 1) == 10 &&
               kv_A(v_order, 2) == 20 && kv_A(v_order, 3) == 30 && kv_A(v_order, 4) == 35);
-  // Drop from front (index 0: removes 5, leaves [10, 20, 30, 35])
   kv_drop(int, v_order, 0);
   report_test(ctx, "kvec: kv_drop from front preserves order [10, 20, 30, 35]",
               kv_size(v_order) == 4 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 20);
-  // Drop from back (index size - 1: removes 35, leaves [10, 20, 30])
   kv_drop(int, v_order, kv_size(v_order) - 1);
   report_test(ctx, "kvec: kv_drop from back preserves order [10, 20, 30]",
               kv_size(v_order) == 3 && kv_A(v_order, 0) == 10 && kv_A(v_order, 1) == 20 && kv_A(v_order, 2) == 30);
   kv_destroy(v_order);
 
-  // kv_shrink test
   kvec_t(int) v_shrink;
   kv_init(v_shrink);
   for (int i = 0; i < 20; i++) {
@@ -211,7 +196,7 @@ static void test_kvec(test_ctx_t *ctx) {
   report_test(ctx, "kvec: kv_shrink compacts capacity to exact size",
               old_max == 64 && kv_size(v_shrink) == 20 && kv_max(v_shrink) == 20 &&
               kv_A(v_shrink, 0) == 1 && kv_last(v_shrink) == 20);
-  // kv_shrink on empty vector
+
   kvec_t(int) v_empty_shrink;
   kv_init(v_empty_shrink);
   kv_shrink(int, v_empty_shrink);
@@ -219,15 +204,15 @@ static void test_kvec(test_ctx_t *ctx) {
               kv_size(v_empty_shrink) == 0 && kv_max(v_empty_shrink) == 0);
   kv_destroy(v_shrink);
   kv_destroy(v_empty_shrink);
+}
 
-  // kv_opt capacity compaction test
+static void test_kvec_opt_and_psram(test_ctx_t *ctx) {
   kvec_t(int) v_opt;
   kv_init(v_opt);
   for (int i = 0; i < 48; i++) {
     kv_push(int, v_opt, i);
   }
   size_t opt_cap_before = kv_max(v_opt);
-  // Pop down to 4 elements so n * 3 (12) < m (>48) and m > 8
   while (kv_size(v_opt) > 4) {
     (void)kv_pop(v_opt);
   }
@@ -237,7 +222,6 @@ static void test_kvec(test_ctx_t *ctx) {
               kv_A(v_opt, 0) == 0 && kv_A(v_opt, 3) == 3);
   kv_destroy(v_opt);
 
-  // PSRAM vector operations: insert, drop, shrink, opt
   kvec_psram_t(int) v_psram;
   kv_init(v_psram);
   for (int i = 0; i < 10; i++) {
@@ -253,6 +237,15 @@ static void test_kvec(test_ctx_t *ctx) {
   report_test(ctx, "kvec: PSRAM kv_shrink sets capacity to exact size in PSRAM",
               kv_max(v_psram) == 10 && (v_psram.caps & MALLOC_CAP_SPIRAM) != 0);
   kv_destroy(v_psram);
+}
+
+static void test_kvec(test_ctx_t *ctx) {
+  printf("--- kvec Dynamic Array Tests ---\n");
+  test_kvec_roundup(ctx);
+  test_kvec_basic(ctx);
+  test_kvec_psram_basic(ctx);
+  test_kvec_insert_drop_shrink(ctx);
+  test_kvec_opt_and_psram(ctx);
 }
 
 // ── 3. fancytree Generic Hierarchy Tests ───────────────────────
@@ -349,10 +342,7 @@ static void test_fancytree(test_ctx_t *ctx) {
 
 // ── 4. netmisc Protocol & Math Tests ──────────────────────────
 
-static void test_netmisc(test_ctx_t *ctx) {
-  printf("--- netmisc IP, Mask, MAC & Protocol Math Tests ---\n");
-
-  // IPv4 to u32
+static void test_netmisc_ip(test_ctx_t *ctx) {
   uint32_t ip1 = eos_net_ipv4_to_u32("192.168.1.1");
   report_test(ctx, "netmisc: 192.168.1.1 -> 0xC0A80101", ip1 == 0xC0A80101U);
 
@@ -364,35 +354,29 @@ static void test_netmisc(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: 0.0.0.0 -> 0x00000000", eos_net_ipv4_to_u32("0.0.0.0") == 0);
   report_test(ctx, "netmisc: NULL / empty -> 0", eos_net_ipv4_to_u32(NULL) == 0 && eos_net_ipv4_to_u32("") == 0);
 
-  // u32 to IPv4 formatting
-  char ip_str[20];
+  char ip_str[EOS_STR_20_LEN];
   eos_net_u32_to_ipv4(0xC0A80101U, ip_str, sizeof(ip_str));
   report_test(ctx, "netmisc: 0xC0A80101 -> \"192.168.1.1\"", strcmp(ip_str, "192.168.1.1") == 0);
 
-  // Prefix to u32
   report_test(ctx, "netmisc: prefix 24 -> 0xFFFFFF00", eos_net_prefix_to_u32(24) == 0xFFFFFF00U);
   report_test(ctx, "netmisc: prefix 16 -> 0xFFFF0000", eos_net_prefix_to_u32(16) == 0xFFFF0000U);
   report_test(ctx, "netmisc: prefix 8 -> 0xFF000000", eos_net_prefix_to_u32(8) == 0xFF000000U);
   report_test(ctx, "netmisc: prefix 32 -> 0xFFFFFFFF", eos_net_prefix_to_u32(32) == 0xFFFFFFFFU);
   report_test(ctx, "netmisc: prefix 0 -> 0", eos_net_prefix_to_u32(0) == 0);
 
-  // u32 to prefix
   report_test(ctx, "netmisc: 0xFFFFFF00 -> prefix 24", eos_net_u32_to_prefix(0xFFFFFF00U) == 24);
   report_test(ctx, "netmisc: 0xFFFF0000 -> prefix 16", eos_net_u32_to_prefix(0xFFFF0000U) == 16);
 
-  // Mask string to prefix
   report_test(ctx, "netmisc: mask \"255.255.255.0\" -> 24",
               eos_net_mask_to_prefix("255.255.255.0") == 24);
   report_test(ctx, "netmisc: mask \"255.0.0.0\" -> 8", eos_net_mask_to_prefix("255.0.0.0") == 8);
   report_test(ctx, "netmisc: mask \"16\" numeric string -> 16", eos_net_mask_to_prefix("16") == 16);
 
-  // Prefix to mask string
-  char mask_buf[20];
+  char mask_buf[EOS_STR_20_LEN];
   eos_net_prefix_to_mask(24, mask_buf, sizeof(mask_buf));
   report_test(ctx, "netmisc: prefix 24 -> \"255.255.255.0\"", strcmp(mask_buf, "255.255.255.0") == 0);
 
-  // Broadcast calculation
-  char bcast[20];
+  char bcast[EOS_STR_20_LEN];
   eos_net_calc_broadcast("192.168.1.100", "255.255.255.0", bcast, sizeof(bcast));
   report_test(ctx, "netmisc: calc_broadcast 192.168.1.100/24 -> 192.168.1.255",
               strcmp(bcast, "192.168.1.255") == 0);
@@ -401,22 +385,21 @@ static void test_netmisc(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: calc_broadcast 10.5.2.1/16 -> 10.5.255.255",
               strcmp(bcast, "10.5.255.255") == 0);
 
-  // Default gateway calculation
-  char gw[20];
+  char gw[EOS_STR_20_LEN];
   eos_net_calc_default_gw("192.168.50.88", gw, sizeof(gw));
   report_test(ctx, "netmisc: calc_default_gw 192.168.50.88 -> 192.168.50.1",
               strcmp(gw, "192.168.50.1") == 0);
 
-  // CIDR notation parsing
-  char cidr_ip[20], cidr_mask[20];
+  char cidr_ip[EOS_STR_20_LEN], cidr_mask[EOS_STR_20_LEN];
   int cidr_prefix = 0;
   bool cidr_ok = eos_net_parse_cidr("192.168.4.1/24", cidr_ip, sizeof(cidr_ip),
                                     cidr_mask, sizeof(cidr_mask), &cidr_prefix);
   report_test(ctx, "netmisc: parse_cidr \"192.168.4.1/24\"",
               cidr_ok && strcmp(cidr_ip, "192.168.4.1") == 0 &&
               strcmp(cidr_mask, "255.255.255.0") == 0 && cidr_prefix == 24);
+}
 
-  // MAC parsing & formatting
+static void test_netmisc_mac_hex(test_ctx_t *ctx) {
   uint8_t mac[6] = {0};
   bool mac_colons = eos_net_parse_mac("12:34:56:78:9a:bc", mac);
   report_test(ctx, "netmisc: parse_mac with colons",
@@ -428,20 +411,19 @@ static void test_netmisc(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: parse_mac with hyphens",
               mac_hyph_ok && mac_hyphens[0] == 0xde && mac_hyphens[3] == 0xef && mac_hyphens[5] == 0x01);
 
-  char mac_fmt[20];
+  char mac_fmt[EOS_STR_20_LEN];
   eos_net_format_mac(mac, mac_fmt, sizeof(mac_fmt));
   report_test(ctx, "netmisc: format_mac", strcmp(mac_fmt, "12:34:56:78:9a:bc") == 0);
 
   report_test(ctx, "netmisc: parse_mac invalid string returns false", !eos_net_parse_mac("not-a-mac", mac));
 
-  // Hex <-> Bytes conversions
-  uint8_t byte_buf[16] = {0};
+  uint8_t byte_buf[EOS_XSMALL_STR_LEN] = {0};
   ssize_t converted = eos_net_hex_to_bytes("01020304a1b2c3d4", byte_buf, sizeof(byte_buf));
   report_test(ctx, "netmisc: hex_to_bytes length check", converted == 8);
   report_test(ctx, "netmisc: hex_to_bytes content check",
               byte_buf[0] == 0x01 && byte_buf[3] == 0x04 && byte_buf[4] == 0xa1 && byte_buf[7] == 0xd4);
 
-  char hex_out[32] = {0};
+  char hex_out[EOS_SMALL_STR_LEN] = {0};
   size_t hex_len = eos_net_bytes_to_hex(byte_buf, 8, hex_out, sizeof(hex_out));
   report_test(ctx, "netmisc: bytes_to_hex round-trip",
               hex_len == 16 && strcmp(hex_out, "01020304a1b2c3d4") == 0);
@@ -450,8 +432,9 @@ static void test_netmisc(test_ctx_t *ctx) {
               eos_net_hex_to_bytes("abc", byte_buf, sizeof(byte_buf)) == -1);
   report_test(ctx, "netmisc: hex_to_bytes rejects invalid hex chars",
               eos_net_hex_to_bytes("zzff", byte_buf, sizeof(byte_buf)) == -1);
+}
 
-  // WiFi auth name & RSSI quality
+static void test_netmisc_wifi_pcap(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: wifi_auth_name OPEN", strcmp(eos_net_wifi_auth_name(0), "OPEN") == 0);
   report_test(ctx, "netmisc: wifi_auth_name WPA2_PSK", strcmp(eos_net_wifi_auth_name(3), "WPA2_PSK") == 0);
   report_test(ctx, "netmisc: wifi_auth_name out of bounds -> UNKNOWN",
@@ -461,21 +444,19 @@ static void test_netmisc(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: rssi_to_quality -100 dBm -> 0%", eos_net_rssi_to_quality(-100) == 0);
   report_test(ctx, "netmisc: rssi_to_quality -75 dBm -> 50%", eos_net_rssi_to_quality(-75) == 50);
 
-  // PCAP header builders
-  uint8_t pcap_global[32] = {0};
+  uint8_t pcap_global[EOS_SMALL_STR_LEN] = {0};
   size_t g_len = eos_net_pcap_write_global_header(pcap_global, sizeof(pcap_global));
   eos_pcap_hdr_t *ghdr = (eos_pcap_hdr_t *)pcap_global;
   report_test(ctx, "netmisc: pcap_write_global_header magic & snaplen",
-              g_len == sizeof(eos_pcap_hdr_t) && ghdr->magic_number == 0xa1b2c3d4 && ghdr->network == 80);
+              g_len == sizeof(eos_pcap_hdr_t) && ghdr->magic_number == 0xa1b2c3d4 && ghdr->network == EOS_PCAP_LINKTYPE_80211);
 
-  uint8_t pcap_pkt[32] = {0};
+  uint8_t pcap_pkt[EOS_SMALL_STR_LEN] = {0};
   size_t p_len = eos_net_pcap_write_packet_header(pcap_pkt, sizeof(pcap_pkt), 100, 200, 64, 64);
   eos_pcap_packet_hdr_t *phdr = (eos_pcap_packet_hdr_t *)pcap_pkt;
   report_test(ctx, "netmisc: pcap_write_packet_header fields",
               p_len == sizeof(eos_pcap_packet_hdr_t) && phdr->ts_sec == 100 &&
               phdr->ts_usec == 200 && phdr->incl_len == 64);
 
-  // Packet matching
   uint8_t m_filter[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
   uint8_t m_match[6]  = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
   uint8_t m_diff[6]   = {0x00, 0x11, 0x22, 0x33, 0x44, 0x56};
@@ -485,6 +466,13 @@ static void test_netmisc(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: wifi_match_type exact match", eos_net_wifi_match_type("MGMT", "mgmt"));
   report_test(ctx, "netmisc: wifi_match_type wildcard \"all\"", eos_net_wifi_match_type("DATA", "all"));
   report_test(ctx, "netmisc: wifi_match_type mismatch", !eos_net_wifi_match_type("CTRL", "mgmt"));
+}
+
+static void test_netmisc(test_ctx_t *ctx) {
+  printf("--- netmisc IP, Mask, MAC & Protocol Math Tests ---\n");
+  test_netmisc_ip(ctx);
+  test_netmisc_mac_hex(ctx);
+  test_netmisc_wifi_pcap(ctx);
 }
 
 // ── 5. types.h Pin and Configuration Tests ────────────────────
@@ -524,10 +512,10 @@ static void test_types(test_ctx_t *ctx) {
 static void test_fancymacro(test_ctx_t *ctx) {
   printf("--- fancymacro Macro Tests ---\n");
 
-  int sample_arr[7] = {1, 2, 3, 4, 5, 6, 7};
-  report_test(ctx, "fancymacro: EOS_ARR_COUNT counts 7 elements", EOS_ARR_COUNT(sample_arr) == 7);
+  int sample_arr[EOS_STR_8_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
+  report_test(ctx, "fancymacro: EOS_ARR_COUNT counts 8 elements", EOS_ARR_COUNT(sample_arr) == 8);
 
-  const char *str_42 = EOS_STR(42);
+  const char *str_42 = EOS_STR(EOS_DEFAULT_MAGIC_42);
   report_test(ctx, "fancymacro: EOS_STR stringification", strcmp(str_42, "42") == 0);
 }
 
@@ -553,7 +541,7 @@ static void test_rect(test_ctx_t *ctx) {
 
   // Subtraction: center cutout yields 4 pieces
   eos_rect_t sub = {0, 0, 100, 100};
-  eos_rect_t occ = {30, 30, 40, 40};
+  eos_rect_t occ = {30, 30, EOS_SMALL_STR_LEN, EOS_SMALL_STR_LEN};
   eos_rect_t pieces[4];
   size_t count = eos_rect_subtract(&sub, &occ, pieces);
   report_test(ctx, "rect: subtract center cutout produces 4 pieces", count == 4);
@@ -561,7 +549,7 @@ static void test_rect(test_ctx_t *ctx) {
   for (size_t i = 0; i < count; i++) {
     area_sum += pieces[i].w * pieces[i].h;
   }
-  report_test(ctx, "rect: subtract area conservation (10000 - 1600 = 8400)", area_sum == 8400);
+  report_test(ctx, "rect: subtract area conservation (10000 - 1024 = 8976)", area_sum == 8976);
 
   // Subtraction: total cover yields 0 pieces
   count = eos_rect_subtract(&sub, &sub, pieces);
@@ -572,8 +560,8 @@ static void test_rect(test_ctx_t *ctx) {
     {0, 0, 50, 100},
     {50, 0, 50, 50}
   };
-  eos_rect_t multi_out[8];
-  size_t multi_cnt = eos_rect_multi_subtract(&sub, occs, 2, multi_out, 8);
+  eos_rect_t multi_out[EOS_STR_8_LEN];
+  size_t multi_cnt = eos_rect_multi_subtract(&sub, occs, 2, multi_out, EOS_STR_8_LEN);
   report_test(ctx, "rect: multi_subtract leaves remaining corner", multi_cnt == 1);
   report_test(ctx, "rect: multi_subtract remaining corner matches (50,50,50,50)",
               multi_cnt == 1 && multi_out[0].x == 50 && multi_out[0].y == 50 &&

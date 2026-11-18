@@ -9,6 +9,7 @@
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
 static void test_colors(int fd) {
@@ -25,36 +26,36 @@ static void test_colors(int fd) {
 
   // Red
   for (int i = 0; i < w * h; i++)
-    buf[i] = 0xF800;
+    buf[i] = EOS_RGB565_RED_MASK;
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Red");
   }
-  usleep(500 * 1000);
+  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
 
   // Green
   for (int i = 0; i < w * h; i++)
-    buf[i] = 0x07E0;
+    buf[i] = EOS_RGB565_GREEN_MASK;
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Green");
   }
-  usleep(500 * 1000);
+  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
 
   // Blue
   for (int i = 0; i < w * h; i++)
-    buf[i] = 0x001F;
+    buf[i] = EOS_RGB565_BLUE_MASK;
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Blue");
   }
-  usleep(500 * 1000);
+  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
 
   // Gradient
   for (int y = 0; y < h; y++)
     for (int x = 0; x < w; x++)
-      buf[y * w + x] = ((x * 31 / w) << 11) | ((y * 63 / h) << 5);
+      buf[y * w + x] = ((x * EOS_RGB565_RED_MAX / w) << 11) | ((y * EOS_RGB565_GREEN_MAX / h) << 5);
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Gradient");
   }
-  usleep(1000 * 1000);
+  usleep(EOS_US_PER_SEC);
 
   free(buf);
 }

@@ -27,6 +27,42 @@ static const char *get_basename(const char *path) {
   return p;
 }
 
+static int parse_ln_flags(const char *arg, bool *s, bool *f, bool *v) {
+  if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+    print_usage();
+    return 1;
+  }
+  if (strcmp(arg, "--symbolic") == 0 || strcmp(arg, "-s") == 0) {
+    *s = true;
+    return 0;
+  }
+  if (strcmp(arg, "--force") == 0 || strcmp(arg, "-f") == 0) {
+    *f = true;
+    return 0;
+  }
+  if (strcmp(arg, "--verbose") == 0 || strcmp(arg, "-v") == 0) {
+    *v = true;
+    return 0;
+  }
+  if (arg[1] != '-') {
+    for (size_t c = 1; c < strlen(arg); c++) {
+      if (arg[c] == 's') *s = true;
+      else if (arg[c] == 'f') *f = true;
+      else if (arg[c] == 'v') *v = true;
+      else if (arg[c] == 'h') {
+        print_usage();
+        return 1;
+      } else {
+        printf("ln: invalid option -- '%c'\n", arg[c]);
+        return -1;
+      }
+    }
+    return 0;
+  }
+  printf("ln: unrecognized option '%s'\n", arg);
+  return -1;
+}
+
 int ln_main(int argc, char **argv) {
   if (argc < 2) {
     print_usage();
@@ -41,40 +77,10 @@ int ln_main(int argc, char **argv) {
 
   for (int i = 1; i < argc; i++) {
     if (argv[i][0] == '-' && argv[i][1] != '\0') {
-      if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-        print_usage();
-        return 0;
-      }
-      if (strcmp(argv[i], "--symbolic") == 0 || strcmp(argv[i], "-s") == 0) {
-        symbolic = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--force") == 0 || strcmp(argv[i], "-f") == 0) {
-        force = true;
-        continue;
-      }
-      if (strcmp(argv[i], "--verbose") == 0 || strcmp(argv[i], "-v") == 0) {
-        verbose = true;
-        continue;
-      }
-      if (argv[i][1] != '-') {
-        // Multi-flag support like -sf
-        for (size_t c = 1; c < strlen(argv[i]); c++) {
-          if (argv[i][c] == 's') symbolic = true;
-          else if (argv[i][c] == 'f') force = true;
-          else if (argv[i][c] == 'v') verbose = true;
-          else if (argv[i][c] == 'h') {
-            print_usage();
-            return 0;
-          } else {
-            printf("ln: invalid option -- '%c'\n", argv[i][c]);
-            return -1;
-          }
-        }
-        continue;
-      }
-      printf("ln: unrecognized option '%s'\n", argv[i]);
-      return -1;
+      int rc = parse_ln_flags(argv[i], &symbolic, &force, &verbose);
+      if (rc > 0) return 0;
+      if (rc < 0) return -1;
+      continue;
     }
 
     if (!target) {

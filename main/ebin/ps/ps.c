@@ -1,4 +1,6 @@
 #include "ecore/bin.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <stdbool.h>
@@ -12,9 +14,9 @@ typedef struct {
   int pid;
   int ppid;
   char state_c;
-  char name[32];
-  char tty[16];
-  char cmdline[64];
+  char name[EOS_SMALL_STR_LEN];
+  char tty[EOS_XSMALL_STR_LEN];
+  char cmdline[EOS_LINE_64_LEN];
   uint64_t cpu_time_us;
   uint64_t start_time_us;
 } ps_proc_info_t;
@@ -26,7 +28,7 @@ static int compare_procs(const void *a, const void *b) {
 }
 
 static bool parse_proc_status(int pid, ps_proc_info_t *info) {
-  char path[32];
+  char path[EOS_SMALL_STR_LEN];
   snprintf(path, sizeof(path), "/proc/%d/status", pid);
 
   FILE *f = fopen(path, "r");
@@ -37,7 +39,7 @@ static bool parse_proc_status(int pid, ps_proc_info_t *info) {
   info->state_c = 'R';
   strlcpy(info->tty, "?", sizeof(info->tty));
 
-  char line[128];
+  char line[EOS_BUFFER_128_LEN];
   while (fgets(line, sizeof(line), f)) {
     if (strncmp(line, "Name:\t", 6) == 0) {
       char *val = line + 6;
@@ -83,20 +85,20 @@ static bool parse_proc_status(int pid, ps_proc_info_t *info) {
 }
 
 static void print_time_formatted(char *buf, size_t size, uint64_t us) {
-  uint64_t total_sec = us / 1000000;
-  unsigned int hours = (unsigned int)(total_sec / 3600);
-  unsigned int mins = (unsigned int)((total_sec % 3600) / 60);
-  unsigned int secs = (unsigned int)(total_sec % 60);
+  uint64_t total_sec = us / (uint64_t)EOS_US_PER_SEC;
+  unsigned int hours = (unsigned int)(total_sec / EOS_SECS_PER_HOUR);
+  unsigned int mins = (unsigned int)((total_sec % EOS_SECS_PER_HOUR) / EOS_SECS_PER_MIN);
+  unsigned int secs = (unsigned int)(total_sec % EOS_SECS_PER_MIN);
   snprintf(buf, size, "%02u:%02u:%02u", hours, mins, secs);
 }
 
 static void print_stime_formatted(char *buf, size_t size, uint64_t us) {
-  uint64_t total_sec = us / 1000000;
-  unsigned int mins = (unsigned int)(total_sec / 60);
-  unsigned int secs = (unsigned int)(total_sec % 60);
-  if (mins >= 60) {
-    unsigned int hours = mins / 60;
-    mins %= 60;
+  uint64_t total_sec = us / (uint64_t)EOS_US_PER_SEC;
+  unsigned int mins = (unsigned int)(total_sec / EOS_SECS_PER_MIN);
+  unsigned int secs = (unsigned int)(total_sec % EOS_SECS_PER_MIN);
+  if (mins >= EOS_MINS_PER_HOUR) {
+    unsigned int hours = mins / EOS_MINS_PER_HOUR;
+    mins %= EOS_MINS_PER_HOUR;
     snprintf(buf, size, "%02u:%02u", hours, mins);
   } else {
     snprintf(buf, size, "%02u:%02u", mins, secs);
@@ -169,8 +171,8 @@ int ps_main(int argc, char **argv) {
     qsort(procs, count, sizeof(ps_proc_info_t), compare_procs);
   }
 
-  char time_str[16];
-  char stime_str[16];
+  char time_str[EOS_XSMALL_STR_LEN];
+  char stime_str[EOS_XSMALL_STR_LEN];
 
   if (full_format) {
     printf("%-5s %5s %5s %2s %-5s %-8s %8s %s\n",

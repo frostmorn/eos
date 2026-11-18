@@ -5,6 +5,7 @@
 #include "ecore/log.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include "emisc/psram_alloc.h"
 #include <errno.h>
 #include <esp_timer.h>
@@ -321,8 +322,6 @@ static pid_t alloc_next_pid_locked(void) {
   }
   return -1;
 }
-
-#define EOS_MAX_TASK_FLAGS 64
 
 enum {
   EOS_TASK_STATE_USER = 0,
@@ -857,6 +856,46 @@ eos_proc_t *eos_proc_current(void) {
   return NULL;
 }
 
+static eos_proc_t *proc_alloc_initial_context(pid_t pid, pid_t ppid, pid_t pgid, pid_t sid, const char *name) {
+  eos_proc_t *p = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
+  if (!p) {
+    p = (eos_proc_t *)calloc(1, sizeof(eos_proc_t));
+  }
+  if (!p) {
+    return NULL;
+  }
+  p->pid = pid;
+  p->ppid = ppid;
+  p->pgid = pgid;
+  p->sid = sid;
+  p->state = EOS_PROC_STATE_RUNNING;
+  p->start_time = esp_timer_get_time();
+  p->in_use = 1;
+  strlcpy(p->name, name, sizeof(p->name));
+  strlcpy(p->cwd, "/", sizeof(p->cwd));
+  strlcpy(p->tty, "/dev/console", sizeof(p->tty));
+
+  kv_init(p->fds);
+  kv_init(p->dirs);
+  kv_init(p->memblocks);
+  kv_init(p->env);
+  kv_init(p->threads);
+  kv_init(p->fd_map);
+  kv_init(p->cleanup_hooks);
+  p->next_hook_id = 1;
+
+  pthread_mutexattr_t m_attr;
+  pthread_mutexattr_init(&m_attr);
+  pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&p->mem_mutex, &m_attr);
+  pthread_mutex_init(&p->fd_mutex, &m_attr);
+  pthread_mutex_init(&p->cleanup_mutex, &m_attr);
+  pthread_mutexattr_destroy(&m_attr);
+  pthread_cond_init(&p->wait_cond, NULL);
+
+  return p;
+}
+
 void eos_proc_init(void) {
   task_flags_lock();
   if (!s_task_flags) {
@@ -890,84 +929,19 @@ void eos_proc_init(void) {
   table->next_pid = 2;
   kv_init(table->procs);
 
-  // Initialize PID 0 (kernel context)
-  table->kernel_proc = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
-  if (!table->kernel_proc) {
-    table->kernel_proc = (eos_proc_t *)calloc(1, sizeof(eos_proc_t));
-  }
+  table->kernel_proc = proc_alloc_initial_context(0, 0, 0, 0, "kernel");
   if (!table->kernel_proc) {
     pthread_mutex_unlock(&s_init_mutex);
     EOS_LOGE("Failed to allocate kernel process context!\n");
     return;
   }
 
-  eos_proc_t *k = table->kernel_proc;
-  k->pid = 0;
-  k->ppid = 0;
-  k->pgid = 0;
-  k->sid = 0;
-  k->state = EOS_PROC_STATE_RUNNING;
-  k->start_time = esp_timer_get_time();
-  k->in_use = 1;
-  strlcpy(k->name, "kernel", sizeof(k->name));
-  strlcpy(k->cwd, "/", sizeof(k->cwd));
-  strlcpy(k->tty, "/dev/console", sizeof(k->tty));
-
-  kv_init(k->fds);
-  kv_init(k->dirs);
-  kv_init(k->memblocks);
-  kv_init(k->env);
-  kv_init(k->threads);
-  kv_init(k->fd_map);
-  kv_init(k->cleanup_hooks);
-  k->next_hook_id = 1;
-  pthread_mutexattr_t km_attr;
-  pthread_mutexattr_init(&km_attr);
-  pthread_mutexattr_settype(&km_attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&k->mem_mutex, &km_attr);
-  pthread_mutex_init(&k->fd_mutex, &km_attr);
-  pthread_mutex_init(&k->cleanup_mutex, &km_attr);
-  pthread_mutexattr_destroy(&km_attr);
-  pthread_cond_init(&k->wait_cond, NULL);
-
-  // Initialize PID 1 (init / ush shell)
-  eos_proc_t *init_proc = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
-  if (!init_proc) {
-    init_proc = (eos_proc_t *)calloc(1, sizeof(eos_proc_t));
-  }
+  eos_proc_t *init_proc = proc_alloc_initial_context(1, 0, 1, 1, "init");
   if (!init_proc) {
     pthread_mutex_unlock(&s_init_mutex);
     EOS_LOGE("Failed to allocate init process context!\n");
     return;
   }
-
-  init_proc->pid = 1;
-  init_proc->ppid = 0;
-  init_proc->pgid = 1;
-  init_proc->sid = 1;
-  init_proc->state = EOS_PROC_STATE_RUNNING;
-  init_proc->start_time = esp_timer_get_time();
-  init_proc->in_use = 1;
-  strlcpy(init_proc->name, "init", sizeof(init_proc->name));
-  strlcpy(init_proc->cwd, "/", sizeof(init_proc->cwd));
-  strlcpy(init_proc->tty, "/dev/console", sizeof(init_proc->tty));
-
-  kv_init(init_proc->fds);
-  kv_init(init_proc->dirs);
-  kv_init(init_proc->memblocks);
-  kv_init(init_proc->env);
-  kv_init(init_proc->threads);
-  kv_init(init_proc->fd_map);
-  kv_init(init_proc->cleanup_hooks);
-  init_proc->next_hook_id = 1;
-  pthread_mutexattr_t im_attr;
-  pthread_mutexattr_init(&im_attr);
-  pthread_mutexattr_settype(&im_attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&init_proc->mem_mutex, &im_attr);
-  pthread_mutex_init(&init_proc->fd_mutex, &im_attr);
-  pthread_mutex_init(&init_proc->cleanup_mutex, &im_attr);
-  pthread_mutexattr_destroy(&im_attr);
-  pthread_cond_init(&init_proc->wait_cond, NULL);
 
   bool prev_h = eos_proc_heap_tracking_disable();
   eos_proc_init_env(init_proc);
@@ -983,6 +957,53 @@ void eos_proc_init(void) {
   EOS_LOGI("Process table initialized in PSRAM (dynamic kvec storage)\n");
 }
 
+static eos_proc_t *find_or_alloc_proc_slot_locked(void) {
+  size_t count = kv_size(s_proc_table->procs);
+  for (size_t i = 0; i < count; i++) {
+    eos_proc_t *slot = kv_A(s_proc_table->procs, i);
+    if (slot && !slot->in_use) {
+      return slot;
+    }
+  }
+
+  eos_proc_t *p = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
+  if (!p) {
+    p = (eos_proc_t *)calloc(1, sizeof(eos_proc_t));
+  }
+  if (!p) {
+    return NULL;
+  }
+
+  pthread_mutexattr_t m_attr;
+  pthread_mutexattr_init(&m_attr);
+  pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&p->mem_mutex, &m_attr);
+  pthread_mutex_init(&p->fd_mutex, &m_attr);
+  pthread_mutex_init(&p->cleanup_mutex, &m_attr);
+  pthread_mutexattr_destroy(&m_attr);
+  pthread_cond_init(&p->wait_cond, NULL);
+
+  kv_push(eos_proc_t *, s_proc_table->procs, p);
+  return p;
+}
+
+static void proc_inherit_env_locked(eos_proc_t *p, eos_proc_t *cur) {
+  if (cur && kv_size(cur->env) > 0) {
+    for (size_t i = 0; i < kv_size(cur->env); i++) {
+      char *entry = kv_A(cur->env, i);
+      if (entry) {
+        char *dup_e = eos_psram_strdup(entry);
+        if (dup_e) {
+          kv_push(char *, p->env, dup_e);
+        }
+      }
+    }
+    eos_proc_rebuild_env_array(p);
+  } else {
+    eos_proc_init_env(p);
+  }
+}
+
 pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t pgid) {
   if (!s_proc_table) {
     eos_proc_init();
@@ -995,39 +1016,13 @@ pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t p
   bool prev_h = eos_proc_heap_tracking_disable();
   proc_lock();
 
-  eos_proc_t *p = NULL;
-  size_t count = kv_size(s_proc_table->procs);
-  for (size_t i = 0; i < count; i++) {
-    eos_proc_t *slot = kv_A(s_proc_table->procs, i);
-    if (slot && !slot->in_use) {
-      p = slot;
-      break;
-    }
-  }
-
+  eos_proc_t *p = find_or_alloc_proc_slot_locked();
   if (!p) {
-    p = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
-    if (!p) {
-      p = (eos_proc_t *)calloc(1, sizeof(eos_proc_t));
-    }
-    if (!p) {
-      proc_unlock();
-      eos_proc_heap_tracking_restore(prev_h);
-      EOS_LOGE("Failed to allocate process record!\n");
-      errno = ENOMEM;
-      return -1;
-    }
-
-    pthread_mutexattr_t m_attr;
-    pthread_mutexattr_init(&m_attr);
-    pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&p->mem_mutex, &m_attr);
-    pthread_mutex_init(&p->fd_mutex, &m_attr);
-    pthread_mutex_init(&p->cleanup_mutex, &m_attr);
-    pthread_mutexattr_destroy(&m_attr);
-    pthread_cond_init(&p->wait_cond, NULL);
-
-    kv_push(eos_proc_t *, s_proc_table->procs, p);
+    proc_unlock();
+    eos_proc_heap_tracking_restore(prev_h);
+    EOS_LOGE("Failed to allocate process record!\n");
+    errno = ENOMEM;
+    return -1;
   }
 
   pid_t new_pid = alloc_next_pid_locked();
@@ -1073,12 +1068,7 @@ pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t p
     strlcpy(p->name, "proc", sizeof(p->name));
   }
 
-  if (cmdline) {
-    p->cmdline = eos_psram_strdup(cmdline);
-  } else {
-    p->cmdline = NULL;
-  }
-
+  p->cmdline = cmdline ? eos_psram_strdup(cmdline) : NULL;
   strlcpy(p->tty, "/dev/console", sizeof(p->tty));
 
   kv_init(p->fds);
@@ -1088,21 +1078,7 @@ pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t p
   kv_init(p->threads);
   kv_init(p->fd_map);
 
-  // Clone environment from parent
-  if (cur && kv_size(cur->env) > 0) {
-    for (size_t i = 0; i < kv_size(cur->env); i++) {
-      char *entry = kv_A(cur->env, i);
-      if (entry) {
-        char *dup_e = eos_psram_strdup(entry);
-        if (dup_e) {
-          kv_push(char *, p->env, dup_e);
-        }
-      }
-    }
-    eos_proc_rebuild_env_array(p);
-  } else {
-    eos_proc_init_env(p);
-  }
+  proc_inherit_env_locked(p, cur);
 
   proc_unlock();
   eos_proc_heap_tracking_restore(prev_h);
@@ -1200,6 +1176,125 @@ void eos_proc_set_cwd(pid_t pid, const char *cwd) {
   proc_unlock();
 }
 
+static eos_proc_t *proc_find_locked(pid_t pid) {
+  if (!s_proc_table) return NULL;
+  size_t count = kv_size(s_proc_table->procs);
+  for (size_t i = 0; i < count; i++) {
+    eos_proc_t *proc = kv_A(s_proc_table->procs, i);
+    if (proc && proc->in_use && proc->pid == pid) {
+      return proc;
+    }
+  }
+  return NULL;
+}
+
+static void proc_update_cpu_time_locked(eos_proc_t *p) {
+  task_flags_lock();
+  if (s_task_flags) {
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    for (int i = 0; i < EOS_MAX_TASK_FLAGS; i++) {
+      if (s_task_flags[i].task && s_task_flags[i].proc == p && s_task_flags[i].last_state_time > 0) {
+        uint64_t delta = (now >= s_task_flags[i].last_state_time) ? (now - s_task_flags[i].last_state_time) : 0;
+        if (delta > 0) {
+          if (s_task_flags[i].state == EOS_TASK_STATE_USER) {
+            p->user_us += delta;
+          } else if (s_task_flags[i].state == EOS_TASK_STATE_SYS) {
+            p->sys_us += delta;
+          } else if (s_task_flags[i].state == EOS_TASK_STATE_WAIT) {
+            p->wait_us += delta;
+          }
+          s_task_flags[i].last_state_time = now;
+        }
+      }
+    }
+  }
+  task_flags_unlock();
+  p->cpu_time_us = p->user_us + p->sys_us;
+}
+
+static bool proc_drain_cleanup_hooks(pid_t pid) {
+  while (1) {
+    eos_proc_t *p = proc_find_locked(pid);
+    if (!p) return false;
+    pthread_mutex_lock(&p->cleanup_mutex);
+    if (kv_size(p->cleanup_hooks) == 0) {
+      pthread_mutex_unlock(&p->cleanup_mutex);
+      return true;
+    }
+    eos_proc_cleanup_hook_t hook = kv_pop(p->cleanup_hooks);
+    pthread_mutex_unlock(&p->cleanup_mutex);
+    proc_unlock();
+
+    if (hook.fn) {
+      hook.fn(hook.arg);
+    }
+    proc_lock();
+  }
+}
+
+static void proc_close_fds_and_dirs(eos_proc_t *p) {
+  int fds_to_close[EOS_LINE_64_LEN];
+  size_t num_fds = 0;
+  pthread_mutex_lock(&p->fd_mutex);
+  while (kv_size(p->fds) > 0 && num_fds < EOS_LINE_64_LEN) {
+    fds_to_close[num_fds++] = kv_pop(p->fds);
+  }
+  DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
+  size_t num_dirs = 0;
+  while (kv_size(p->dirs) > 0 && num_dirs < EOS_XSMALL_STR_LEN) {
+    dirs_to_close[num_dirs++] = kv_pop(p->dirs);
+  }
+  for (size_t i = 0; i < kv_size(p->fd_map); i++) {
+    kv_A(p->fd_map, i) = -1;
+  }
+  pthread_mutex_unlock(&p->fd_mutex);
+
+  proc_unlock();
+  for (size_t j = 0; j < num_fds; j++) {
+    close(fds_to_close[j]);
+  }
+  for (size_t j = 0; j < num_dirs; j++) {
+    closedir(dirs_to_close[j]);
+  }
+  proc_lock();
+}
+
+static void proc_reap_background_threads(eos_proc_t *p) {
+  bool has_other_threads = false;
+  TaskHandle_t self = xTaskGetCurrentTaskHandle();
+  for (size_t t = 0; t < kv_size(p->threads); t++) {
+    TaskHandle_t th = kv_A(p->threads, t);
+    if (th && th != self) {
+      has_other_threads = true;
+      EOS_LOGW("proc: process '%s' (pid %d) leaked thread %p ('%s') - killing\n",
+               p->name, p->pid, th, pcTaskGetName(th));
+    }
+  }
+  if (has_other_threads) {
+    proc_unlock();
+    bool prev_w = eos_proc_enter_wait();
+    vTaskDelay(pdMS_TO_TICKS(10));
+    eos_proc_leave_wait(prev_w);
+    proc_lock();
+  }
+}
+
+static void proc_terminate_threads_locked(eos_proc_t *p) {
+  TaskHandle_t cur_task = xTaskGetCurrentTaskHandle();
+  for (size_t j = 0; j < kv_size(p->threads); j++) {
+    TaskHandle_t th = kv_A(p->threads, j);
+    if (th && th != cur_task) {
+      eTaskState ts = eTaskGetState(th);
+      if (ts != eDeleted && ts != eInvalid) {
+        eos_proc_task_flags_cleanup(th);
+        vTaskDelete(th);
+      }
+    }
+  }
+  kv_destroy(p->threads);
+  kv_init(p->threads);
+}
+
 void eos_proc_exit(pid_t pid, int exit_code) {
   if (pid == 0) {
     return; // Kernel context never exits
@@ -1210,162 +1305,58 @@ void eos_proc_exit(pid_t pid, int exit_code) {
     return;
   }
 
-  eos_proc_t *p = NULL;
+  eos_proc_t *p = proc_find_locked(pid);
+  if (!p || p->state == EOS_PROC_STATE_ZOMBIE) {
+    proc_unlock();
+    return;
+  }
+
+  proc_update_cpu_time_locked(p);
+
+  if (!proc_drain_cleanup_hooks(pid)) {
+    proc_unlock();
+    return;
+  }
+
+  p = proc_find_locked(pid);
+  if (!p) {
+    proc_unlock();
+    return;
+  }
+
+  proc_close_fds_and_dirs(p);
+
+  p = proc_find_locked(pid);
+  if (!p) {
+    proc_unlock();
+    return;
+  }
+
+  proc_reap_background_threads(p);
+
+  p = proc_find_locked(pid);
+  if (!p) {
+    proc_unlock();
+    return;
+  }
+
+  proc_terminate_threads_locked(p);
+
+  p->exit_code = exit_code;
+  p->last_exit_status = exit_code;
+  p->state = EOS_PROC_STATE_ZOMBIE;
+  p->main_thread = NULL;
+
   size_t count = kv_size(s_proc_table->procs);
   for (size_t i = 0; i < count; i++) {
-    eos_proc_t *proc = kv_A(s_proc_table->procs, i);
-    if (proc && proc->in_use && proc->pid == pid) {
-      p = proc;
-      break;
+    eos_proc_t *child = kv_A(s_proc_table->procs, i);
+    if (child && child->in_use && child->ppid == pid) {
+      child->ppid = 1;
     }
   }
 
-  if (p) {
-    if (p->state == EOS_PROC_STATE_ZOMBIE) {
-      proc_unlock();
-      return;
-    }
-
-    task_flags_lock();
-    if (s_task_flags) {
-      uint64_t now = (uint64_t)esp_timer_get_time();
-      for (int i = 0; i < EOS_MAX_TASK_FLAGS; i++) {
-        if (s_task_flags[i].task && s_task_flags[i].proc == p && s_task_flags[i].last_state_time > 0) {
-          uint64_t delta = (now >= s_task_flags[i].last_state_time) ? (now - s_task_flags[i].last_state_time) : 0;
-          if (delta > 0) {
-            if (s_task_flags[i].state == EOS_TASK_STATE_USER) {
-              p->user_us += delta;
-            } else if (s_task_flags[i].state == EOS_TASK_STATE_SYS) {
-              p->sys_us += delta;
-            } else if (s_task_flags[i].state == EOS_TASK_STATE_WAIT) {
-              p->wait_us += delta;
-            }
-            s_task_flags[i].last_state_time = now;
-          }
-        }
-      }
-    }
-    task_flags_unlock();
-    p->cpu_time_us = p->user_us + p->sys_us;
-
-    // Drain and execute cleanup hooks in LIFO order
-    pthread_mutex_lock(&p->cleanup_mutex);
-    while (kv_size(p->cleanup_hooks) > 0) {
-      eos_proc_cleanup_hook_t hook = kv_pop(p->cleanup_hooks);
-      pthread_mutex_unlock(&p->cleanup_mutex);
-      proc_unlock();
-
-      if (hook.fn) {
-        hook.fn(hook.arg);
-      }
-
-      proc_lock();
-      p = NULL;
-      count = kv_size(s_proc_table->procs);
-      for (size_t i = 0; i < count; i++) {
-        eos_proc_t *proc = kv_A(s_proc_table->procs, i);
-        if (proc && proc->in_use && proc->pid == pid) {
-          p = proc;
-          break;
-        }
-      }
-      if (!p) {
-        proc_unlock();
-        return;
-      }
-      pthread_mutex_lock(&p->cleanup_mutex);
-    }
-    pthread_mutex_unlock(&p->cleanup_mutex);
-
-    // Drain process file descriptors and directories to close without holding proc_lock
-    int fds_to_close[64];
-    size_t num_fds = 0;
-    pthread_mutex_lock(&p->fd_mutex);
-    while (kv_size(p->fds) > 0 && num_fds < 64) {
-      fds_to_close[num_fds++] = kv_pop(p->fds);
-    }
-    DIR *dirs_to_close[16];
-    size_t num_dirs = 0;
-    while (kv_size(p->dirs) > 0 && num_dirs < 16) {
-      dirs_to_close[num_dirs++] = kv_pop(p->dirs);
-    }
-    for (size_t i = 0; i < kv_size(p->fd_map); i++) {
-      kv_A(p->fd_map, i) = -1;
-    }
-    pthread_mutex_unlock(&p->fd_mutex);
-
-    // Release proc lock across I/O and thread draining!
-    proc_unlock();
-    for (size_t j = 0; j < num_fds; j++) {
-      close(fds_to_close[j]);
-    }
-    for (size_t j = 0; j < num_dirs; j++) {
-      closedir(dirs_to_close[j]);
-    }
-    bool has_other_threads = false;
-    TaskHandle_t self = xTaskGetCurrentTaskHandle();
-    for (size_t t = 0; t < kv_size(p->threads); t++) {
-      TaskHandle_t th = kv_A(p->threads, t);
-      if (th && th != self) {
-        has_other_threads = true;
-        EOS_LOGW("proc: process '%s' (pid %d) leaked thread %p ('%s') - killing\n",
-                 p->name, p->pid, th, pcTaskGetName(th));
-      }
-    }
-    if (has_other_threads) {
-      bool prev_w = eos_proc_enter_wait();
-      vTaskDelay(pdMS_TO_TICKS(10)); // let unblocked threads finish and self-delete
-      eos_proc_leave_wait(prev_w);
-    }
-    proc_lock();
-
-    // Re-fetch proc pointer after releasing the lock
-    p = NULL;
-    count = kv_size(s_proc_table->procs);
-    for (size_t i = 0; i < count; i++) {
-      eos_proc_t *proc = kv_A(s_proc_table->procs, i);
-      if (proc && proc->in_use && proc->pid == pid) {
-        p = proc;
-        break;
-      }
-    }
-    if (!p) {
-      proc_unlock();
-      return;
-    }
-
-    // Kill any background threads still alive after the yield
-    TaskHandle_t cur_task = xTaskGetCurrentTaskHandle();
-    for (size_t j = 0; j < kv_size(p->threads); j++) {
-      TaskHandle_t th = kv_A(p->threads, j);
-      if (th && th != cur_task) {
-        eTaskState ts = eTaskGetState(th);
-        if (ts != eDeleted && ts != eInvalid) {
-          eos_proc_task_flags_cleanup(th);
-          vTaskDelete(th);
-        }
-      }
-    }
-    kv_destroy(p->threads);
-    kv_init(p->threads);
-
-    p->exit_code = exit_code;
-    p->last_exit_status = exit_code;
-    p->state = EOS_PROC_STATE_ZOMBIE;
-    p->main_thread = NULL;
-
-    // Orphan re-parenting: all children of this process are re-parented to PID 1 (the init shell)
-    for (size_t i = 0; i < count; i++) {
-      eos_proc_t *proc = kv_A(s_proc_table->procs, i);
-      if (proc && proc->in_use && proc->ppid == pid) {
-        proc->ppid = 1;
-      }
-    }
-
-    pthread_cond_broadcast(&p->wait_cond);
-    pthread_cond_broadcast(&s_proc_table->cond);
-  }
-
+  pthread_cond_broadcast(&p->wait_cond);
+  pthread_cond_broadcast(&s_proc_table->cond);
   proc_unlock();
 }
 
@@ -1684,6 +1675,141 @@ int eos_proc_cancel_exit(int hook_id) {
   return eos_proc_cancel_exit_pid(cur->pid, hook_id);
 }
 
+static int find_matching_child_locked(pid_t pid, pid_t calling_pid, pid_t calling_pgid, bool *has_matching) {
+  *has_matching = false;
+  int zombie_slot = -1;
+  size_t total = kv_size(s_proc_table->procs);
+  for (size_t i = 0; i < total; i++) {
+    eos_proc_t *p = kv_A(s_proc_table->procs, i);
+    if (!p || !p->in_use) continue;
+
+    bool match = false;
+    if (pid == -1) {
+      match = (p->ppid == calling_pid);
+    } else if (pid > 0) {
+      match = (p->pid == pid) && (p->ppid == calling_pid || calling_pid == 1);
+    } else if (pid == 0) {
+      match = (p->pgid == calling_pgid && (p->ppid == calling_pid || calling_pid == 1));
+    } else {
+      match = (p->pgid == -pid && (p->ppid == calling_pid || calling_pid == 1));
+    }
+
+    if (match) {
+      *has_matching = true;
+      if (p->state == EOS_PROC_STATE_ZOMBIE) {
+        zombie_slot = (int)i;
+        break;
+      }
+    }
+  }
+  return zombie_slot;
+}
+
+static void proc_reap_zombie_locked(eos_proc_t *z) {
+  extern void __real_heap_caps_free(void *ptr);
+  extern int __real__close_r(struct _reent *r, int fd);
+  extern int __real_closedir(DIR *pdir);
+
+  int fds_to_close[EOS_LINE_64_LEN];
+  size_t num_fds = 0;
+  pthread_mutex_lock(&z->fd_mutex);
+  while (kv_size(z->fds) > 0 && num_fds < EOS_LINE_64_LEN) {
+    fds_to_close[num_fds++] = kv_pop(z->fds);
+  }
+  DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
+  size_t num_dirs = 0;
+  while (kv_size(z->dirs) > 0 && num_dirs < EOS_XSMALL_STR_LEN) {
+    dirs_to_close[num_dirs++] = kv_pop(z->dirs);
+  }
+  pthread_mutex_unlock(&z->fd_mutex);
+
+  proc_unlock();
+  for (size_t j = 0; j < num_fds; j++) {
+    int fd = fds_to_close[j];
+    if (fd >= 0) {
+      eos_vfs_file_t *f = eos_vfs_file_close_start(fd);
+      __real__close_r(__getreent(), fd);
+      if (f) {
+        eos_vfs_file_release(f);
+      }
+    }
+  }
+
+  for (size_t j = 0; j < num_dirs; j++) {
+    DIR *d = dirs_to_close[j];
+    if (d) {
+      proc_memblock_remove_locked(z, (void *)d, NULL, NULL);
+      eos_vfs_dir_t *dir = eos_vfs_dir_close_start(d);
+      __real_closedir(d);
+      if (dir) {
+        eos_vfs_dir_release(dir);
+      }
+    }
+  }
+  proc_lock();
+
+  if (z->cmdline) {
+    proc_memblock_remove_locked(z, z->cmdline, NULL, NULL);
+    eos_psram_free(z->cmdline);
+    z->cmdline = NULL;
+  }
+
+  if (z->env_array) {
+    proc_memblock_remove_locked(z, z->env_array, NULL, NULL);
+    __real_heap_caps_free(z->env_array);
+    z->env_array = NULL;
+  }
+
+  for (size_t j = 0; j < kv_size(z->env); j++) {
+    char *e = kv_A(z->env, j);
+    if (e) {
+      proc_memblock_remove_locked(z, e, NULL, NULL);
+      __real_heap_caps_free(e);
+    }
+  }
+
+  proc_memblock_remove_locked(z, z->fds.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->dirs.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->env.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->threads.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->fd_map.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->cleanup_hooks.a, NULL, NULL);
+  proc_memblock_remove_locked(z, z->memblocks.a, NULL, NULL);
+
+  for (size_t j = 0; j < kv_size(z->memblocks); j++) {
+    void *b = kv_A(z->memblocks, j).ptr;
+    if (b && !kv_owns_buffer(z->memblocks, b) &&
+        !kv_owns_buffer(z->fds, b) &&
+        !kv_owns_buffer(z->dirs, b) &&
+        !kv_owns_buffer(z->env, b) &&
+        !kv_owns_buffer(z->threads, b) &&
+        !kv_owns_buffer(z->fd_map, b) &&
+        !kv_owns_buffer(z->cleanup_hooks, b)) {
+      __real_heap_caps_free(b);
+    }
+  }
+
+  kv_destroy(z->fds);
+  kv_destroy(z->dirs);
+  kv_destroy(z->env);
+  kv_destroy(z->threads);
+  kv_destroy(z->fd_map);
+  kv_destroy(z->cleanup_hooks);
+  kv_destroy(z->memblocks);
+
+  pthread_mutex_t saved_mem_mutex = z->mem_mutex;
+  pthread_mutex_t saved_fd_mutex = z->fd_mutex;
+  pthread_mutex_t saved_cleanup_mutex = z->cleanup_mutex;
+  pthread_cond_t saved_wait_cond = z->wait_cond;
+  memset(z, 0, sizeof(eos_proc_t));
+  z->mem_mutex = saved_mem_mutex;
+  z->fd_mutex = saved_fd_mutex;
+  z->cleanup_mutex = saved_cleanup_mutex;
+  z->wait_cond = saved_wait_cond;
+  z->in_use = false;
+  z->state = EOS_PROC_STATE_UNUSED;
+}
+
 pid_t eos_waitpid(pid_t pid, int *status, int options) {
   if (!s_proc_table) {
     eos_proc_init();
@@ -1697,32 +1823,7 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
 
   while (1) {
     bool has_matching_child = false;
-    int zombie_slot = -1;
-
-    size_t total = kv_size(s_proc_table->procs);
-    for (size_t i = 0; i < total; i++) {
-      eos_proc_t *p = kv_A(s_proc_table->procs, i);
-      if (!p || !p->in_use) continue;
-
-      bool match = false;
-      if (pid == -1) {
-        match = (p->ppid == calling_pid);
-      } else if (pid > 0) {
-        match = (p->pid == pid) && (p->ppid == calling_pid || calling_pid == 1);
-      } else if (pid == 0) {
-        match = (p->pgid == calling_pgid && (p->ppid == calling_pid || calling_pid == 1));
-      } else {
-        match = (p->pgid == -pid && (p->ppid == calling_pid || calling_pid == 1));
-      }
-
-      if (match) {
-        has_matching_child = true;
-        if (p->state == EOS_PROC_STATE_ZOMBIE) {
-          zombie_slot = (int)i;
-          break;
-        }
-      }
-    }
+    int zombie_slot = find_matching_child_locked(pid, calling_pid, calling_pgid, &has_matching_child);
 
     if (zombie_slot >= 0) {
       eos_proc_t *z = kv_A(s_proc_table->procs, zombie_slot);
@@ -1739,112 +1840,8 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
         cur->cwait_us += z->wait_us + z->cwait_us;
       }
 
-      // Reap the zombie & clean up all process resources
       bool prev_h = eos_proc_heap_tracking_disable();
-      extern void __real_heap_caps_free(void *ptr);
-      extern int __real__close_r(struct _reent *r, int fd);
-      extern int __real_closedir(DIR *pdir);
-
-      int fds_to_close[64];
-      size_t num_fds = 0;
-      pthread_mutex_lock(&z->fd_mutex);
-      while (kv_size(z->fds) > 0 && num_fds < 64) {
-        fds_to_close[num_fds++] = kv_pop(z->fds);
-      }
-      DIR *dirs_to_close[16];
-      size_t num_dirs = 0;
-      while (kv_size(z->dirs) > 0 && num_dirs < 16) {
-        dirs_to_close[num_dirs++] = kv_pop(z->dirs);
-      }
-      pthread_mutex_unlock(&z->fd_mutex);
-
-      proc_unlock();
-      for (size_t j = 0; j < num_fds; j++) {
-        int fd = fds_to_close[j];
-        if (fd >= 0) {
-          eos_vfs_file_t *f = eos_vfs_file_close_start(fd);
-          __real__close_r(__getreent(), fd);
-          if (f) {
-            eos_vfs_file_release(f);
-          }
-        }
-      }
-
-      for (size_t j = 0; j < num_dirs; j++) {
-        DIR *d = dirs_to_close[j];
-        if (d) {
-          proc_memblock_remove_locked(z, (void *)d, NULL, NULL);
-          eos_vfs_dir_t *dir = eos_vfs_dir_close_start(d);
-          __real_closedir(d);
-          if (dir) {
-            eos_vfs_dir_release(dir);
-          }
-        }
-      }
-      proc_lock();
-
-      if (z->cmdline) {
-        proc_memblock_remove_locked(z, z->cmdline, NULL, NULL);
-        eos_psram_free(z->cmdline);
-        z->cmdline = NULL;
-      }
-
-      if (z->env_array) {
-        proc_memblock_remove_locked(z, z->env_array, NULL, NULL);
-        __real_heap_caps_free(z->env_array);
-        z->env_array = NULL;
-      }
-
-      for (size_t j = 0; j < kv_size(z->env); j++) {
-        char *e = kv_A(z->env, j);
-        if (e) {
-          proc_memblock_remove_locked(z, e, NULL, NULL);
-          __real_heap_caps_free(e);
-        }
-      }
-
-      // Ensure any kvec internal buffers are removed from memblocks tracking before free
-      proc_memblock_remove_locked(z, z->fds.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->dirs.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->env.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->threads.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->fd_map.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->cleanup_hooks.a, NULL, NULL);
-      proc_memblock_remove_locked(z, z->memblocks.a, NULL, NULL);
-
-      for (size_t j = 0; j < kv_size(z->memblocks); j++) {
-        void *b = kv_A(z->memblocks, j).ptr;
-        if (b && !kv_owns_buffer(z->memblocks, b) &&
-            !kv_owns_buffer(z->fds, b) &&
-            !kv_owns_buffer(z->dirs, b) &&
-            !kv_owns_buffer(z->env, b) &&
-            !kv_owns_buffer(z->threads, b) &&
-            !kv_owns_buffer(z->fd_map, b) &&
-            !kv_owns_buffer(z->cleanup_hooks, b)) {
-          __real_heap_caps_free(b);
-        }
-      }
-
-      kv_destroy(z->fds);
-      kv_destroy(z->dirs);
-      kv_destroy(z->env);
-      kv_destroy(z->threads);
-      kv_destroy(z->fd_map);
-      kv_destroy(z->cleanup_hooks);
-      kv_destroy(z->memblocks);
-
-      pthread_mutex_t saved_mem_mutex = z->mem_mutex;
-      pthread_mutex_t saved_fd_mutex = z->fd_mutex;
-      pthread_mutex_t saved_cleanup_mutex = z->cleanup_mutex;
-      pthread_cond_t saved_wait_cond = z->wait_cond;
-      memset(z, 0, sizeof(eos_proc_t));
-      z->mem_mutex = saved_mem_mutex;
-      z->fd_mutex = saved_fd_mutex;
-      z->cleanup_mutex = saved_cleanup_mutex;
-      z->wait_cond = saved_wait_cond;
-      z->in_use = false;
-      z->state = EOS_PROC_STATE_UNUSED;
-
+      proc_reap_zombie_locked(z);
       eos_proc_heap_tracking_restore(prev_h);
 
       proc_unlock();
@@ -1863,7 +1860,6 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
       return 0;
     }
 
-    // Blocking wait for child process termination
     bool prev_w = eos_proc_enter_wait();
     pthread_cond_wait(&s_proc_table->cond, &s_proc_table->lock);
     eos_proc_leave_wait(prev_w);
@@ -2217,9 +2213,9 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
     return;
   }
 
-  int fds_to_close[64];
+  int fds_to_close[EOS_LINE_64_LEN];
   size_t num_fds_to_close = 0;
-  DIR *dirs_to_close[16];
+  DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
   size_t num_dirs_to_close = 0;
 
   pthread_mutex_lock(&proc->fd_mutex);
@@ -2234,7 +2230,7 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
         }
       }
     }
-    if (!was_present && num_fds_to_close < 64) {
+    if (!was_present && num_fds_to_close < EOS_LINE_64_LEN) {
       fds_to_close[num_fds_to_close++] = fd;
     }
   }
@@ -2250,7 +2246,7 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
         }
       }
     }
-    if (!was_present && num_dirs_to_close < 16) {
+    if (!was_present && num_dirs_to_close < EOS_XSMALL_STR_LEN) {
       dirs_to_close[num_dirs_to_close++] = dir;
     }
   }

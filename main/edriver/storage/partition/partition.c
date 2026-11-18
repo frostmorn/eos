@@ -49,7 +49,7 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
   state->info = part;
 
   // get sector size from parent
-  uint32_t sector_size = 512; // fallback if parent can't tell us
+  uint32_t sector_size = EOS_SECTOR_SIZE; // fallback if parent can't tell us
   if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE,
                     &sector_size) != 0) {
     EOS_LOGW("partition: %s failed to query parent sector size, "

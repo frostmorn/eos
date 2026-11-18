@@ -1,6 +1,7 @@
 #include "ecore/bin.h"
 #include "ecore/log.h"
 #include "ecore/proc.h"
+#include "ebin/ush/ush.h"
 #include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
 #include <ctype.h>
@@ -14,10 +15,6 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-#define USH_LINE_MAX 256
-#define USH_WELCOME EOS_MASCOT_R " "
-#define USH_STACK_SIZE 12288U
-
 static int ush_readline(char *buf, size_t size) {
   size_t len = 0;
 
@@ -29,7 +26,7 @@ static int ush_readline(char *buf, size_t size) {
     // instead of spinning on read() or returning -1 (which would exit ush
     // and cause eos_main to respawn init.sh / launcher in a loop).
     if (is_console && !eos_console_is_connected()) {
-      usleep(50 * 1000);
+      usleep(EOS_MS_PER_TICK_50 * (useconds_t)EOS_US_PER_MS);
       continue;
     }
 
@@ -46,7 +43,7 @@ static int ush_readline(char *buf, size_t size) {
         return (int)len;
 
       case '\b':
-      case 0x7f: // DEL
+      case '\x7f': // DEL
         if (len > 0) {
           len--;
           printf("\b \b");
@@ -56,7 +53,7 @@ static int ush_readline(char *buf, size_t size) {
 
       default:
         // Filter out non-printable noise bytes on floating UART lines
-        if ((unsigned char)ch >= 0x20 && (unsigned char)ch < 0x7f) {
+        if ((unsigned char)ch >= ' ' && (unsigned char)ch <= '~') {
           if (len + 1 < size) {
             buf[len++] = ch;
             putchar(ch);
@@ -72,7 +69,7 @@ static int ush_readline(char *buf, size_t size) {
     if (n == 0) {
       if (is_console) {
         clearerr(stdin);
-        usleep(20 * 1000);
+        usleep(2 * (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US);
         continue;
       }
       return -1;
@@ -80,7 +77,7 @@ static int ush_readline(char *buf, size_t size) {
 
     if (errno == EAGAIN || errno == EWOULDBLOCK || is_console) {
       clearerr(stdin);
-      usleep(10 * 1000);
+      usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
       continue;
     }
 

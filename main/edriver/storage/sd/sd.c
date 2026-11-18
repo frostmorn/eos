@@ -14,11 +14,10 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
 #include <errno.h>
-
-#define BAD_OFFSET -1
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -35,6 +34,95 @@ typedef struct {
 // ── Init / Shutdown ───────────────────────────────────────────
 
 void driver_storage_sd_shutdown(eos_dev_t *dev);
+
+#if SOC_SDMMC_HOST_SUPPORTED
+static bool init_sd_card_sdio(eos_dev_t *dev, sd_state_t *state) {
+  sdmmc_host_t host_cfg = (sdmmc_host_t)SDMMC_HOST_DEFAULT();
+  int slot = eos_cfg_get_i(dev->parent->cfg, "slot", 0);
+  host_cfg.slot = slot;
+
+  int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", 40000000);
+  if (freq > 0) {
+    host_cfg.max_freq_khz = freq / EOS_MS_PER_SEC;
+  }
+
+  if (dev->parent) {
+    if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SDIO_IOCTL_GET_HOST, &host_cfg) == 0) {
+      if (freq > 0) {
+        host_cfg.max_freq_khz = freq / EOS_MS_PER_SEC;
+      }
+    }
+  }
+
+  if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
+    EOS_LOGW("sd: card initialization over SDIO (slot %d) failed", slot);
+    return false;
+  }
+  return true;
+}
+#endif
+
+static bool init_sd_card_spi(eos_dev_t *dev, sd_state_t *state) {
+  int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
+  if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
+    return false;
+  }
+
+  state->host = SPI2_HOST;
+  if (dev->parent) {
+    if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SPI_IOCTL_GET_HOST, &state->host) != 0) {
+      state->host =
+          (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
+    }
+  }
+
+  int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_20M);
+
+  sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
+  dev_cfg.host_id = state->host;
+  dev_cfg.gpio_cs = cs_pin;
+
+  if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
+    return false;
+  }
+
+  sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
+  host_cfg.slot = state->handle;
+  host_cfg.max_freq_khz = freq / EOS_MS_PER_SEC;
+
+  if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
+    return false;
+  }
+  return true;
+}
+
+static void attach_partitions(eos_dev_t *dev, sd_state_t *state) {
+  eos_drv_t *drv = eos_drv_find("storage", "partition");
+  if (drv == NULL) {
+    EOS_LOGE("Can't find a generic partition driver\n");
+    return;
+  }
+
+  for (uint32_t i = 0; i < state->part_table.count; i++) {
+    eos_dev_t *part_dev = eos_dev_alloc();
+    if (part_dev == NULL) {
+      EOS_LOGE("Can't attach partition to dev tree. Device not allocated\n");
+      continue;
+    }
+
+    eos_cfg_t cfg[] = {
+        {
+            .key = "part",
+            .type = EOS_CFG_PTR,
+            .val.ptr = &state->part_table.parts[i],
+        },
+        {0},
+    };
+    part_dev->driver = drv;
+    part_dev->cfg = cfg;
+    eos_dev_attach(part_dev, dev);
+  }
+}
 
 bool driver_storage_sd_init(eos_dev_t *dev) {
   sd_state_t *state = eos_psram_malloc_prefer(sizeof(sd_state_t));
@@ -53,25 +141,7 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
 
   if (is_sdio) {
 #if SOC_SDMMC_HOST_SUPPORTED
-    sdmmc_host_t host_cfg = (sdmmc_host_t)SDMMC_HOST_DEFAULT();
-    int slot = eos_cfg_get_i(dev->parent->cfg, "slot", 0);
-    host_cfg.slot = slot;
-
-    int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", 40000000);
-    if (freq > 0) {
-      host_cfg.max_freq_khz = freq / 1000;
-    }
-
-    if (dev->parent) {
-      if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SDIO_IOCTL_GET_HOST, &host_cfg) == 0) {
-        if (freq > 0) {
-          host_cfg.max_freq_khz = freq / 1000;
-        }
-      }
-    }
-
-    if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
-      EOS_LOGW("sd: card initialization over SDIO (slot %d) failed", slot);
+    if (!init_sd_card_sdio(dev, state)) {
       driver_storage_sd_shutdown(dev);
       return false;
     }
@@ -81,96 +151,27 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
     return false;
 #endif
   } else {
-    int32_t cs_pin = eos_pin_get_no(dev->pins, "cs");
-    if (cs_pin < 0 || !eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
-      dev->state = NULL;
-      free(state);
-      return false;
-    }
-
-    state->host = SPI2_HOST;
-    if (dev->parent) {
-      if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_SPI_IOCTL_GET_HOST, &state->host) != 0) {
-        state->host =
-            (spi_host_device_t)eos_cfg_get_i(dev->parent->cfg, "host", SPI2_HOST);
-      }
-    }
-
-    int32_t freq = eos_cfg_get_i(dev->cfg, "clock_speed_hz", SPI_MASTER_FREQ_20M);
-
-    // Add SD card as SPI device
-    sdspi_device_config_t dev_cfg = SDSPI_DEVICE_CONFIG_DEFAULT();
-    dev_cfg.host_id = state->host;
-    dev_cfg.gpio_cs = cs_pin;
-
-    if (sdspi_host_init_device(&dev_cfg, &state->handle) != ESP_OK) {
-      driver_storage_sd_shutdown(dev);
-      return false;
-    }
-
-    // Probe card
-    sdmmc_host_t host_cfg = SDSPI_HOST_DEFAULT();
-    host_cfg.slot = state->handle;
-    host_cfg.max_freq_khz = freq / 1000;
-
-    if (sdmmc_card_init(&host_cfg, &state->card) != ESP_OK) {
+    if (!init_sd_card_spi(dev, state)) {
       driver_storage_sd_shutdown(dev);
       return false;
     }
   }
 
-  // Allocate file buffer
   state->io_buff = (char *)malloc(state->card.csd.sector_size);
-
-  // Gracefully die in case no mem :D
   if (!state->io_buff) {
     driver_storage_sd_shutdown(dev);
     return false;
   }
 
-  // Print card info
   sdmmc_card_print_info(stdout, &state->card);
 
-  // Read partition table
   if (eos_diskpart_parse(dev, &state->part_table) != 0) {
     EOS_LOGE("Something happened during partition table reading\n");
     driver_storage_sd_shutdown(dev);
     return false;
   }
 
-  // Find generic partition driver
-  eos_drv_t *drv = eos_drv_find("storage", "partition");
-
-  if (drv == NULL) {
-    EOS_LOGE("Can't find a generic partition driver\n");
-    driver_storage_sd_shutdown(dev);
-    return false;
-  }
-
-  // Attach partitions to device tree
-  for (uint32_t i = 0; i < state->part_table.count; i++) {
-    eos_dev_t *part_dev = eos_dev_alloc();
-
-    eos_cfg_t cfg[] = {
-        {
-            .key = "part",
-            .type = EOS_CFG_PTR,
-            .val.ptr = &state->part_table.parts[i],
-        },
-        {0},
-    };
-
-    if (part_dev == NULL) {
-      EOS_LOGE("Can't attach partition to dev tree. Device not allocated\n");
-      continue;
-    }
-
-    part_dev->driver = drv;
-    part_dev->cfg = cfg;
-    
-    eos_dev_attach(part_dev, dev);
-  }
-
+  attach_partitions(dev, state);
   return true;
 }
 
@@ -315,6 +316,7 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   }
   case EOS_STORAGE_IOCTL_MOUNT:{
     const char *path = va_arg(args, const char *);
+    (void)path;
     bool *result = va_arg(args, bool *);
     *result = false; // Not mountable
     break;

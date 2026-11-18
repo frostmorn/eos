@@ -17,8 +17,6 @@
 #include "esp_private/rtc_clk.h"
 #endif
 
-#define EOS_MAIN_TASK_STACK_SIZE 32768
-
 // To make Application context actually work, we've to be inside pthread
 void *eos_main(void *data) {
   (void)data;
@@ -39,7 +37,7 @@ void *eos_main(void *data) {
     if (system("init.sh") < 0) {
       system("ush");
     }
-    usleep(1000000);
+    usleep(EOS_US_PER_SEC);
   }
 }
 

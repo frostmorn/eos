@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include "ecore/bin.h"
+#include "ebin/fs_common.h"
+#include "emisc/fancymacro.h"
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
 
 // Simple utility designed to open file and write it's contents to stdout
-#define CAT_BUFFER_SIZE 512 // Standard size of sdcard sector
 
 int cat_main(int argc, char **argv){
 
@@ -14,7 +15,7 @@ int cat_main(int argc, char **argv){
     ssize_t count_read = 0;
     while ((count_read = read(STDIN_FILENO, buffer, CAT_BUFFER_SIZE)) > 0){
       fwrite(buffer, 1, (size_t)count_read, stdout);
-      usleep(10 * 1000);
+      usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
     }
     fflush(stdout);
     return (count_read < 0) ? -1 : 0;
@@ -28,7 +29,7 @@ int cat_main(int argc, char **argv){
       ssize_t count_read = 0;
       while ((count_read = read(STDIN_FILENO, buffer, CAT_BUFFER_SIZE)) > 0) {
         fwrite(buffer, 1, (size_t)count_read, stdout);
-        usleep(10 * 1000);
+        usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
       }
       continue;
     }
@@ -43,7 +44,7 @@ int cat_main(int argc, char **argv){
     size_t count_read = 0;
     while ((count_read = fread(buffer, 1, CAT_BUFFER_SIZE, fp)) > 0) {
       fwrite(buffer, 1, count_read, stdout);
-      usleep(10 * 1000);
+      usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
     }
 
     fclose(fp);

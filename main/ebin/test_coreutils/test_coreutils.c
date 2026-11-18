@@ -33,7 +33,7 @@ static bool helper_write_file(const char *path, const char *content) {
 static bool helper_read_matches(const char *path, const char *expected) {
   FILE *f = fopen(path, "rb");
   if (!f) return false;
-  char buf[256];
+  char buf[EOS_MID_STR_LEN];
   size_t n = fread(buf, 1, sizeof(buf) - 1, f);
   fclose(f);
   buf[n] = '\0';
@@ -157,7 +157,7 @@ static void test_rm_suite(test_ctx_t *ctx) {
   // Directory removal without -r fails
   {
     const char *dir = "/tmp/rm_nodir";
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
     char *argv[] = {"rm", (char *)dir, NULL};
     int ret = rm_main(2, argv);
     report_test(ctx, "rm: directory without -r returns error (Is a directory)", ret != 0);
@@ -171,8 +171,8 @@ static void test_rm_suite(test_ctx_t *ctx) {
     const char *subdir = "/tmp/rm_tree/sub";
     const char *file1 = "/tmp/rm_tree/f1.txt";
     const char *file2 = "/tmp/rm_tree/sub/f2.txt";
-    mkdir(dir, 0755);
-    mkdir(subdir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
+    mkdir(subdir, EOS_DEFAULT_DIR_MODE);
     helper_write_file(file1, "f1");
     helper_write_file(file2, "f2");
 
@@ -185,7 +185,7 @@ static void test_rm_suite(test_ctx_t *ctx) {
   // Combined -rf flags
   {
     const char *dir = "/tmp/rm_rf";
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
     char *argv[] = {"rm", "-rf", (char *)dir, NULL};
     int ret = rm_main(3, argv);
     report_test(ctx, "rm: -rf returns 0", ret == 0);
@@ -194,6 +194,66 @@ static void test_rm_suite(test_ctx_t *ctx) {
 }
 
 // ── 3. Cp Tests ────────────────────────────────────────────────
+
+static void test_cp_recursive(test_ctx_t *ctx) {
+  // Directory copy without -r fails
+  {
+    const char *src_dir = "/tmp/cp_sdir";
+    const char *dst_dir = "/tmp/cp_ddir";
+    mkdir(src_dir, EOS_DEFAULT_DIR_MODE);
+
+    char *argv[] = {"cp", (char *)src_dir, (char *)dst_dir, NULL};
+    int ret = cp_main(3, argv);
+    report_test(ctx, "cp: directory copy without -r returns error", ret != 0);
+
+    rmdir(src_dir);
+  }
+
+  // Recursive directory copy with -r
+  {
+    const char *src_dir = "/tmp/cp_tsrc";
+    const char *src_sub = "/tmp/cp_tsrc/sub";
+    const char *src_file = "/tmp/cp_tsrc/sub/deep.txt";
+    const char *dst_dir = "/tmp/cp_tdst";
+    const char *dst_file = "/tmp/cp_tdst/sub/deep.txt";
+    const char *deep_data = "Deep nested data payload 4096";
+
+    mkdir(src_dir, EOS_DEFAULT_DIR_MODE);
+    mkdir(src_sub, EOS_DEFAULT_DIR_MODE);
+    helper_write_file(src_file, deep_data);
+
+    char *argv[] = {"cp", "-r", (char *)src_dir, (char *)dst_dir, NULL};
+    int ret = cp_main(4, argv);
+    report_test(ctx, "cp: recursive directory copy -r returns 0", ret == 0);
+    report_test(ctx, "cp: destination directory created", helper_path_exists(dst_dir));
+    report_test(ctx, "cp: nested file copied properly", helper_path_exists(dst_file));
+    report_test(ctx, "cp: nested file content matches", helper_read_matches(dst_file, deep_data));
+
+    // Clean up
+    unlink(src_file);
+    rmdir(src_sub);
+    rmdir(src_dir);
+    unlink(dst_file);
+    rmdir("/tmp/cp_tdst/sub");
+    rmdir(dst_dir);
+  }
+
+  // Overwriting with -f
+  {
+    const char *src = "/tmp/cp_ovs.txt";
+    const char *dst = "/tmp/cp_ovd.txt";
+    helper_write_file(src, "NEW DATA");
+    helper_write_file(dst, "OLD DATA");
+
+    char *argv[] = {"cp", "-f", (char *)src, (char *)dst, NULL};
+    int ret = cp_main(4, argv);
+    report_test(ctx, "cp: overwrite with -f returns 0", ret == 0);
+    report_test(ctx, "cp: destination updated with new content", helper_read_matches(dst, "NEW DATA"));
+
+    unlink(src);
+    unlink(dst);
+  }
+}
 
 static void test_cp_suite(test_ctx_t *ctx) {
   printf("--- cp Tests ---\n");
@@ -251,7 +311,7 @@ static void test_cp_suite(test_ctx_t *ctx) {
     const char *expected_dst = "/tmp/cp_dir/cp_item.txt";
     const char *data = "Item in directory";
     helper_write_file(src, data);
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
 
     char *argv[] = {"cp", (char *)src, (char *)dir, NULL};
     int ret = cp_main(3, argv);
@@ -271,7 +331,7 @@ static void test_cp_suite(test_ctx_t *ctx) {
     const char *dir = "/tmp/cp_mdir";
     helper_write_file(f1, "multi 1");
     helper_write_file(f2, "multi 2");
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
 
     char *argv[] = {"cp", (char *)f1, (char *)f2, (char *)dir, NULL};
     int ret = cp_main(4, argv);
@@ -286,63 +346,7 @@ static void test_cp_suite(test_ctx_t *ctx) {
     rmdir(dir);
   }
 
-  // Directory copy without -r fails
-  {
-    const char *src_dir = "/tmp/cp_sdir";
-    const char *dst_dir = "/tmp/cp_ddir";
-    mkdir(src_dir, 0755);
-
-    char *argv[] = {"cp", (char *)src_dir, (char *)dst_dir, NULL};
-    int ret = cp_main(3, argv);
-    report_test(ctx, "cp: directory copy without -r returns error", ret != 0);
-
-    rmdir(src_dir);
-  }
-
-  // Recursive directory copy with -r
-  {
-    const char *src_dir = "/tmp/cp_tsrc";
-    const char *src_sub = "/tmp/cp_tsrc/sub";
-    const char *src_file = "/tmp/cp_tsrc/sub/deep.txt";
-    const char *dst_dir = "/tmp/cp_tdst";
-    const char *dst_file = "/tmp/cp_tdst/sub/deep.txt";
-    const char *deep_data = "Deep nested data payload 4096";
-
-    mkdir(src_dir, 0755);
-    mkdir(src_sub, 0755);
-    helper_write_file(src_file, deep_data);
-
-    char *argv[] = {"cp", "-r", (char *)src_dir, (char *)dst_dir, NULL};
-    int ret = cp_main(4, argv);
-    report_test(ctx, "cp: recursive directory copy -r returns 0", ret == 0);
-    report_test(ctx, "cp: destination directory created", helper_path_exists(dst_dir));
-    report_test(ctx, "cp: nested file copied properly", helper_path_exists(dst_file));
-    report_test(ctx, "cp: nested file content matches", helper_read_matches(dst_file, deep_data));
-
-    // Clean up
-    unlink(src_file);
-    rmdir(src_sub);
-    rmdir(src_dir);
-    unlink(dst_file);
-    rmdir("/tmp/cp_tdst/sub");
-    rmdir(dst_dir);
-  }
-
-  // Overwriting with -f
-  {
-    const char *src = "/tmp/cp_ovs.txt";
-    const char *dst = "/tmp/cp_ovd.txt";
-    helper_write_file(src, "NEW DATA");
-    helper_write_file(dst, "OLD DATA");
-
-    char *argv[] = {"cp", "-f", (char *)src, (char *)dst, NULL};
-    int ret = cp_main(4, argv);
-    report_test(ctx, "cp: overwrite with -f returns 0", ret == 0);
-    report_test(ctx, "cp: destination updated with new content", helper_read_matches(dst, "NEW DATA"));
-
-    unlink(src);
-    unlink(dst);
-  }
+  test_cp_recursive(ctx);
 }
 
 // ── 4. Mv Tests ────────────────────────────────────────────────
@@ -402,7 +406,7 @@ static void test_mv_suite(test_ctx_t *ctx) {
     const char *expected = "/tmp/mv_tdir/mv_f2d.txt";
     const char *payload = "Moving into dir";
     helper_write_file(src, payload);
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
 
     char *argv[] = {"mv", (char *)src, (char *)dir, NULL};
     int ret = mv_main(3, argv);
@@ -421,7 +425,7 @@ static void test_mv_suite(test_ctx_t *ctx) {
     const char *dst_dir = "/tmp/mv_ddst";
     const char *inner_file = "/tmp/mv_dsrc/child.txt";
     const char *expected_inner = "/tmp/mv_ddst/child.txt";
-    mkdir(src_dir, 0755);
+    mkdir(src_dir, EOS_DEFAULT_DIR_MODE);
     helper_write_file(inner_file, "child content");
 
     char *argv[] = {"mv", (char *)src_dir, (char *)dst_dir, NULL};
@@ -442,7 +446,7 @@ static void test_mv_suite(test_ctx_t *ctx) {
     const char *dir = "/tmp/mv_mdir";
     helper_write_file(f1, "1");
     helper_write_file(f2, "2");
-    mkdir(dir, 0755);
+    mkdir(dir, EOS_DEFAULT_DIR_MODE);
 
     char *argv[] = {"mv", (char *)f1, (char *)f2, (char *)dir, NULL};
     int ret = mv_main(4, argv);
@@ -477,8 +481,8 @@ static void test_tree_suite(test_ctx_t *ctx) {
     const char *f1 = "/tmp/tree_suite/file1.txt";
     const char *f2 = "/tmp/tree_suite/nested/file2.txt";
 
-    mkdir(base, 0755);
-    mkdir(sub, 0755);
+    mkdir(base, EOS_DEFAULT_DIR_MODE);
+    mkdir(sub, EOS_DEFAULT_DIR_MODE);
     helper_write_file(f1, "hello");
     helper_write_file(f2, "world");
 
@@ -495,7 +499,7 @@ static void test_tree_suite(test_ctx_t *ctx) {
   // tree on empty directory
   {
     const char *empty_dir = "/tmp/tree_empty";
-    mkdir(empty_dir, 0755);
+    mkdir(empty_dir, EOS_DEFAULT_DIR_MODE);
 
     char *argv[] = {"tree", (char *)empty_dir, NULL};
     int ret = tree_main(2, argv);
@@ -571,7 +575,7 @@ static void test_links_suite(test_ctx_t *ctx) {
     report_test(ctx, "ln -s: stat resolves target S_IFREG", r_stat == 0 && S_ISREG(st_stat.st_mode));
 
     // readlink test via C API
-    char rlink_buf[128];
+    char rlink_buf[EOS_BUFFER_128_LEN];
     ssize_t rlen = readlink(slink, rlink_buf, sizeof(rlink_buf) - 1);
     if (rlen >= 0) rlink_buf[rlen] = '\0';
     report_test(ctx, "readlink: returns correct target path", rlen > 0 && strcmp(rlink_buf, target) == 0);

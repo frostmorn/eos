@@ -14,9 +14,6 @@
 
 #include "esp_elf.h"
 
-#define ELF_MIN_HEADER_SIZE 52U
-#define ELF_MAX_FILE_SIZE   (16U * 1024U * 1024U)
-
 bool eos_is_elf_stream(FILE *f) {
   if (!f) return false;
 
@@ -56,7 +53,7 @@ bool eos_elf_get_manifest(const char *path, eos_bin_t *out_manifest) {
 
   // Scan file for EOS_BIN_MAGIC header
   uint32_t magic = EOS_BIN_MAGIC;
-  uint8_t chunk[512];
+  uint8_t chunk[EOS_SECTOR_SIZE];
   long offset = 0;
   bool found = false;
 

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "ecore/bin.h"
+#include "ecore/ioctl.h"
 #include "SDL2/SDL.h"
 
 static int test_sdl2_main(int argc, char **argv) {
@@ -46,7 +47,7 @@ static int test_sdl2_main(int argc, char **argv) {
   uint16_t *tex_pixels = malloc(w * h * 2);
   if (tex_pixels) {
     for (int i = 0; i < w * h; i++) {
-      tex_pixels[i] = 0xF800; // red
+      tex_pixels[i] = EOS_RGB565_RED_MASK; // red
     }
     SDL_UpdateTexture(texture, NULL, tex_pixels, w * 2);
     free(tex_pixels);
@@ -68,7 +69,7 @@ static int test_sdl2_main(int argc, char **argv) {
 EOS_BIN_ATTR eos_bin_t test_sdl2 = {
     EOS_BIN_INITIALIZER,
     .flags = EOS_BIN_FLAG_GUI,
-    .stack_size = 12288U,
+    .stack_size = EOS_BIN_LARGE_STACK_SIZE,
     .filename = "test_sdl2",
     .name = "SDL2 Test",
     .group = "Tests",

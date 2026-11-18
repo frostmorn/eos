@@ -6,6 +6,7 @@
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
+#include "emisc/strlimits.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -86,7 +87,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     if (*p == '}')
       p++;
 
-    char name_buf[64];
+    char name_buf[EOS_LINE_64_LEN];
     if (name_len < sizeof(name_buf)) {
       memcpy(name_buf, name_start, name_len);
       name_buf[name_len] = '\0';
@@ -107,7 +108,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     return;
   }
 
-  char name_buf[64];
+  char name_buf[EOS_LINE_64_LEN];
   int i = 0;
   while (*p && (isalnum((unsigned char)*p) || *p == '_') &&
          i < (int)sizeof(name_buf) - 1) {
@@ -133,6 +134,63 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
   *arena_ptr = w;
 }
 
+static const char *match_shell_operator(char **cursor) {
+  static const struct { const char *op; const char *ret; size_t len; } s_ops[] = {
+    {"2>&1", "2>&1", 4}, {"1>&2", "1>&2", 4},
+    {"&>>", "&>>", 3},   {"2>>", "2>>", 3},   {"1>>", ">>", 3},
+    {"&&", "&&", 2},     {"||", "||", 2},     {"&>", "&>", 2},
+    {"2>", "2>", 2},     {"1>", ">", 2},      {"0<", "<", 2},     {">>", ">>", 2},
+    {";", ";", 1},       {"&", "&", 1},       {"|", "|", 1},
+    {">", ">", 1},       {"<", "<", 1},
+  };
+  const char *p = *cursor;
+  for (size_t i = 0; i < sizeof(s_ops) / sizeof(s_ops[0]); i++) {
+    if (strncmp(p, s_ops[i].op, s_ops[i].len) == 0) {
+      if (s_ops[i].op[0] == '&' && s_ops[i].len == 1 && (p[1] == '>' || p[1] == '&')) {
+        continue;
+      }
+      *cursor = (char *)p + s_ops[i].len;
+      return s_ops[i].ret;
+    }
+  }
+  return NULL;
+}
+
+static inline bool is_shell_delim(const char *p) {
+  if (*p == '|' || *p == '<' || *p == '>' || *p == ';' || *p == '&')
+    return true;
+  if (strncmp(p, "&&", 2) == 0 || strncmp(p, "||", 2) == 0)
+    return true;
+  if ((p[0] == '1' || p[0] == '2') && p[1] == '>')
+    return true;
+  if (p[0] == '&' && p[1] == '>')
+    return true;
+  return false;
+}
+
+static void parse_quoted_token_segment(char **p_ptr, char **w_ptr, const char *arena_end) {
+  char *p = *p_ptr;
+  char *w = *w_ptr;
+  char quote = *p++;
+  while (*p && *p != quote) {
+    if (quote == '"' && *p == '$' && p[1]) {
+      p++;
+      expand_env_vars((const char **)&p, &w, arena_end, '"');
+      continue;
+    }
+    if (quote == '"' && *p == '\\' && p[1])
+      p++;
+    if (w < arena_end) {
+      *w++ = *p;
+    }
+    p++;
+  }
+  if (*p == quote)
+    p++;
+  *p_ptr = p;
+  *w_ptr = w;
+}
+
 // Reads the next shell token from *cursor, handling single/double quotes,
 // environment variable expansion, and operator tokens (&&, ||, ;, &, |, <, >, etc.).
 static char *next_shell_token(char **cursor, char **arena,
@@ -150,91 +208,11 @@ static char *next_shell_token(char **cursor, char **arena,
   *is_op = false;
   *has_wildcard = false;
 
-  // Check operators: &&, ||, ;, &, |, etc.
-  if (strncmp(p, "&&", 2) == 0) {
+  const char *op = match_shell_operator(&p);
+  if (op) {
     *is_op = true;
-    *cursor = p + 2;
-    return "&&";
-  }
-  if (strncmp(p, "||", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return "||";
-  }
-  if (*p == ';') {
-    *is_op = true;
-    *cursor = p + 1;
-    return ";";
-  }
-  if (*p == '&' && p[1] != '>' && p[1] != '>') {
-    *is_op = true;
-    *cursor = p + 1;
-    return "&";
-  }
-  if (*p == '|') {
-    *is_op = true;
-    *cursor = p + 1;
-    return "|";
-  }
-  if (strncmp(p, "2>&1", 4) == 0) {
-    *is_op = true;
-    *cursor = p + 4;
-    return "2>&1";
-  }
-  if (strncmp(p, "1>&2", 4) == 0) {
-    *is_op = true;
-    *cursor = p + 4;
-    return "1>&2";
-  }
-  if (strncmp(p, "&>>", 3) == 0) {
-    *is_op = true;
-    *cursor = p + 3;
-    return "&>>";
-  }
-  if (strncmp(p, "&>", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return "&>";
-  }
-  if (strncmp(p, "2>>", 3) == 0) {
-    *is_op = true;
-    *cursor = p + 3;
-    return "2>>";
-  }
-  if (strncmp(p, "2>", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return "2>";
-  }
-  if (strncmp(p, "1>>", 3) == 0) {
-    *is_op = true;
-    *cursor = p + 3;
-    return ">>";
-  }
-  if (strncmp(p, "1>", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return ">";
-  }
-  if (strncmp(p, "0<", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return "<";
-  }
-  if (strncmp(p, ">>", 2) == 0) {
-    *is_op = true;
-    *cursor = p + 2;
-    return ">>";
-  }
-  if (*p == '>') {
-    *is_op = true;
-    *cursor = p + 1;
-    return ">";
-  }
-  if (*p == '<') {
-    *is_op = true;
-    *cursor = p + 1;
-    return "<";
+    *cursor = p;
+    return (char *)op;
   }
 
   // Regular argument (supports quotes, escapes, and env expansion)
@@ -242,32 +220,11 @@ static char *next_shell_token(char **cursor, char **arena,
   char *w = out;
 
   while (*p && !isspace((unsigned char)*p)) {
-    if (*p == '|' || *p == '<' || *p == '>' || *p == ';' || *p == '&')
-      break;
-    if (strncmp(p, "&&", 2) == 0 || strncmp(p, "||", 2) == 0)
-      break;
-    if ((p[0] == '1' || p[0] == '2') && p[1] == '>')
-      break;
-    if (p[0] == '&' && p[1] == '>')
+    if (is_shell_delim(p))
       break;
 
     if (*p == '\'' || *p == '"') {
-      char quote = *p++;
-      while (*p && *p != quote) {
-        if (quote == '"' && *p == '$' && p[1]) {
-          p++;
-          expand_env_vars((const char **)&p, &w, arena_end, '"');
-          continue;
-        }
-        if (quote == '"' && *p == '\\' && p[1])
-          p++;
-        if (w < arena_end) {
-          *w++ = *p;
-        }
-        p++;
-      }
-      if (*p == quote)
-        p++;
+      parse_quoted_token_segment(&p, &w, arena_end);
     } else if (*p == '$' && p[1]) {
       p++;
       char *before = w;
@@ -351,6 +308,8 @@ typedef struct {
   kvec_psram_t(char *) paths;
 } glob_result_t;
 
+static void glob_recurse(const char *base_dir, const char *rem_pat, glob_result_t *res);
+
 static void glob_add_path(glob_result_t *res, const char *path) {
   char *copy = eos_psram_strdup(path);
   if (copy) {
@@ -364,50 +323,7 @@ static int glob_cmp(const void *a, const void *b) {
   return strcmp(sa, sb);
 }
 
-static void glob_recurse(const char *base_dir, const char *rem_pat, glob_result_t *res) {
-  while (rem_pat && *rem_pat == '/') {
-    rem_pat++;
-  }
-  if (!rem_pat || !*rem_pat) {
-    if (base_dir && *base_dir) {
-      glob_add_path(res, base_dir);
-    }
-    return;
-  }
-
-  char segment[128];
-  const char *slash = strchr(rem_pat, '/');
-  const char *next_rem = NULL;
-
-  if (slash) {
-    size_t seg_len = (size_t)(slash - rem_pat);
-    if (seg_len >= sizeof(segment)) return;
-    memcpy(segment, rem_pat, seg_len);
-    segment[seg_len] = '\0';
-    next_rem = slash + 1;
-    while (*next_rem == '/') next_rem++;
-  } else {
-    strncpy(segment, rem_pat, sizeof(segment) - 1);
-    segment[sizeof(segment) - 1] = '\0';
-    next_rem = NULL;
-  }
-
-  bool has_wildcard = (strchr(segment, '*') || strchr(segment, '?') || strchr(segment, '['));
-
-  if (!has_wildcard) {
-    char new_base[EOS_LARGE_STR_LEN];
-    if (!base_dir || !*base_dir) {
-      snprintf(new_base, sizeof(new_base), "%s", segment);
-    } else if (strcmp(base_dir, "/") == 0) {
-      snprintf(new_base, sizeof(new_base), "/%s", segment);
-    } else {
-      snprintf(new_base, sizeof(new_base), "%s/%s", base_dir, segment);
-    }
-    glob_recurse(new_base, next_rem, res);
-    return;
-  }
-
-  const char *dir_to_open = (base_dir && *base_dir) ? base_dir : ".";
+static void glob_match_dir(const char *base_dir, const char *dir_to_open, const char *segment, const char *next_rem, glob_result_t *res) {
   DIR *d = opendir((char *)dir_to_open);
   if (!d) return;
 
@@ -443,6 +359,53 @@ static void glob_recurse(const char *base_dir, const char *rem_pat, glob_result_
   closedir(d);
 }
 
+static void glob_recurse(const char *base_dir, const char *rem_pat, glob_result_t *res) {
+  while (rem_pat && *rem_pat == '/') {
+    rem_pat++;
+  }
+  if (!rem_pat || !*rem_pat) {
+    if (base_dir && *base_dir) {
+      glob_add_path(res, base_dir);
+    }
+    return;
+  }
+
+  char segment[EOS_BUFFER_128_LEN];
+  const char *slash = strchr(rem_pat, '/');
+  const char *next_rem = NULL;
+
+  if (slash) {
+    size_t seg_len = (size_t)(slash - rem_pat);
+    if (seg_len >= sizeof(segment)) return;
+    memcpy(segment, rem_pat, seg_len);
+    segment[seg_len] = '\0';
+    next_rem = slash + 1;
+    while (*next_rem == '/') next_rem++;
+  } else {
+    strncpy(segment, rem_pat, sizeof(segment) - 1);
+    segment[sizeof(segment) - 1] = '\0';
+    next_rem = NULL;
+  }
+
+  bool has_wildcard = (strchr(segment, '*') || strchr(segment, '?') || strchr(segment, '['));
+
+  if (!has_wildcard) {
+    char new_base[EOS_LARGE_STR_LEN];
+    if (!base_dir || !*base_dir) {
+      snprintf(new_base, sizeof(new_base), "%s", segment);
+    } else if (strcmp(base_dir, "/") == 0) {
+      snprintf(new_base, sizeof(new_base), "/%s", segment);
+    } else {
+      snprintf(new_base, sizeof(new_base), "%s/%s", base_dir, segment);
+    }
+    glob_recurse(new_base, next_rem, res);
+    return;
+  }
+
+  const char *dir_to_open = (base_dir && *base_dir) ? base_dir : ".";
+  glob_match_dir(base_dir, dir_to_open, segment, next_rem, res);
+}
+
 static bool get_op_bp(const char *op, int *bp) {
   if (strcmp(op, ";") == 0 || strcmp(op, "&") == 0) {
     *bp = 10;
@@ -453,6 +416,75 @@ static bool get_op_bp(const char *op, int *bp) {
     return true;
   }
   return false;
+}
+
+static bool parse_stage_redirection(eos_token_t *tokens, int num_tokens, int *idx,
+                                   eos_ast_node_t *node, eos_cmd_stage_t *cur_stage) {
+  char *op = tokens[*idx].text;
+  (*idx)++;
+  if (*idx >= num_tokens || tokens[*idx].is_op) {
+    EOS_LOGE("eos_system() syntax error: missing target for '%s'", op);
+    return false;
+  }
+  char *target = tokens[*idx].text;
+  if (tokens[*idx].has_wildcard) {
+    glob_result_t gres = {0};
+    kv_init(gres.paths);
+    const char *pat = target;
+    const char *base = NULL;
+    if (*pat == '/') {
+      base = "/";
+      while (*pat == '/') pat++;
+    }
+    glob_recurse(base, pat, &gres);
+    if (kv_size(gres.paths) == 1) {
+      target = kv_A(gres.paths, 0);
+      kv_push(char *, node->glob_strings, target);
+    } else {
+      for (size_t g = 0; g < kv_size(gres.paths); g++) {
+        free(kv_A(gres.paths, g));
+      }
+    }
+    kv_destroy(gres.paths);
+  }
+  (*idx)++;
+
+  if (strcmp(op, "<") == 0) {
+    cur_stage->in_file = target;
+  } else if (strcmp(op, ">") == 0) {
+    cur_stage->out_file = target;
+    cur_stage->out_append = false;
+  } else if (strcmp(op, ">>") == 0) {
+    cur_stage->out_file = target;
+    cur_stage->out_append = true;
+  }
+  return true;
+}
+
+static void expand_arg_wildcard(eos_token_t *tok, eos_ast_node_t *node, eos_cmd_stage_t *cur_stage) {
+  glob_result_t gres = {0};
+  kv_init(gres.paths);
+  const char *pat = tok->text;
+  const char *base = NULL;
+  if (*pat == '/') {
+    base = "/";
+    while (*pat == '/') pat++;
+  }
+  glob_recurse(base, pat, &gres);
+  if (kv_size(gres.paths) > 0) {
+    if (kv_size(gres.paths) > 1) {
+      qsort(gres.paths.a, kv_size(gres.paths), sizeof(char *), glob_cmp);
+    }
+    for (size_t g = 0; g < kv_size(gres.paths); g++) {
+      char *p = kv_A(gres.paths, g);
+      kv_push(char *, node->glob_strings, p);
+      kv_push(char *, cur_stage->argv, p);
+    }
+    kv_destroy(gres.paths);
+  } else {
+    kv_destroy(gres.paths);
+    kv_push(char *, cur_stage->argv, tok->text);
+  }
 }
 
 static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *idx) {
@@ -480,45 +512,10 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
         continue;
       } else if (strcmp(tok->text, "<") == 0 || strcmp(tok->text, ">") == 0 ||
                  strcmp(tok->text, ">>") == 0) {
-        char *op = tok->text;
-        (*idx)++;
-        if (*idx >= num_tokens || tokens[*idx].is_op) {
-          EOS_LOGE("eos_system() syntax error: missing target for '%s'", op);
+        if (!parse_stage_redirection(tokens, num_tokens, idx, node, &cur_stage)) {
           kv_destroy(cur_stage.argv);
           free_ast_node_single(node);
           return NULL;
-        }
-        char *target = tokens[*idx].text;
-        if (tokens[*idx].has_wildcard) {
-          glob_result_t gres = {0};
-          kv_init(gres.paths);
-          const char *pat = target;
-          const char *base = NULL;
-          if (*pat == '/') {
-            base = "/";
-            while (*pat == '/') pat++;
-          }
-          glob_recurse(base, pat, &gres);
-          if (kv_size(gres.paths) == 1) {
-            target = kv_A(gres.paths, 0);
-            kv_push(char *, node->glob_strings, target);
-          } else {
-            for (size_t g = 0; g < kv_size(gres.paths); g++) {
-              free(kv_A(gres.paths, g));
-            }
-          }
-          kv_destroy(gres.paths);
-        }
-        (*idx)++;
-
-        if (strcmp(op, "<") == 0) {
-          cur_stage.in_file = target;
-        } else if (strcmp(op, ">") == 0) {
-          cur_stage.out_file = target;
-          cur_stage.out_append = false;
-        } else if (strcmp(op, ">>") == 0) {
-          cur_stage.out_file = target;
-          cur_stage.out_append = true;
         }
         continue;
       } else {
@@ -526,29 +523,7 @@ static eos_ast_node_t *parse_command(eos_token_t *tokens, int num_tokens, int *i
       }
     } else {
       if (tok->has_wildcard) {
-        glob_result_t gres = {0};
-        kv_init(gres.paths);
-        const char *pat = tok->text;
-        const char *base = NULL;
-        if (*pat == '/') {
-          base = "/";
-          while (*pat == '/') pat++;
-        }
-        glob_recurse(base, pat, &gres);
-        if (kv_size(gres.paths) > 0) {
-          if (kv_size(gres.paths) > 1) {
-            qsort(gres.paths.a, kv_size(gres.paths), sizeof(char *), glob_cmp);
-          }
-          for (size_t g = 0; g < kv_size(gres.paths); g++) {
-            char *p = kv_A(gres.paths, g);
-            kv_push(char *, node->glob_strings, p);
-            kv_push(char *, cur_stage.argv, p);
-          }
-          kv_destroy(gres.paths);
-        } else {
-          kv_destroy(gres.paths);
-          kv_push(char *, cur_stage.argv, tok->text);
-        }
+        expand_arg_wildcard(tok, node, &cur_stage);
       } else {
         kv_push(char *, cur_stage.argv, tok->text);
       }
@@ -694,7 +669,7 @@ static int builtin_env_entry(int argc, char **argv) {
       char *eq = strchr(argv[i], '=');
       if (eq) {
         size_t klen = (size_t)(eq - argv[i]);
-        char key[64];
+        char key[EOS_LINE_64_LEN];
         if (klen > 0 && klen < sizeof(key)) {
           memcpy(key, argv[i], klen);
           key[klen] = '\0';
@@ -728,7 +703,7 @@ static int builtin_env_entry(int argc, char **argv) {
     char *eq = strchr(argv[i], '=');
     if (eq) {
       size_t klen = (size_t)(eq - argv[i]);
-      char key[64];
+      char key[EOS_LINE_64_LEN];
       if (klen > 0 && klen < sizeof(key)) {
         memcpy(key, argv[i], klen);
         key[klen] = '\0';
@@ -795,7 +770,7 @@ static int apply_stage_redirections(const eos_stage_exec_t *st,
   // 3. Explicit output redirection (> file or >> file)
   if (st->out_file) {
     int flags = O_WRONLY | O_CREAT | (st->out_append ? O_APPEND : O_TRUNC);
-    int fd = open(st->out_file, flags, 0644);
+    int fd = open(st->out_file, flags, EOS_DEFAULT_FILE_MODE);
     if (fd < 0) {
       EOS_LOGE("eos_system() failed to open output '%s': %s", st->out_file,
                strerror(errno));
@@ -953,7 +928,7 @@ static bool check_shebang_script(const char *cmd, char *interp_out, size_t inter
   int fd = open(path, O_RDONLY);
   if (fd < 0) return false;
 
-  char line[256];
+  char line[EOS_MID_STR_LEN];
   ssize_t n = read(fd, line, sizeof(line) - 1);
   close(fd);
   if (n <= 2) return false;
@@ -1076,19 +1051,8 @@ static bool ast_prefers_psram_stack(const eos_ast_node_t *node) {
          ast_prefers_psram_stack(node->right);
 }
 
-static int eval_command_node(eos_ast_node_t *node) {
-  size_t stage_count = kv_size(node->stages);
-  if (stage_count == 0) return 0;
-
-  eos_stage_exec_t *exec_stages = (eos_stage_exec_t *)eos_psram_calloc_prefer(stage_count, sizeof(eos_stage_exec_t));
-  if (!exec_stages) return -1;
-
-  bool *shebang = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
-  if (!shebang) {
-    free(exec_stages);
-    return -1;
-  }
-
+static bool prepare_exec_stages(eos_ast_node_t *node, size_t stage_count,
+                                eos_stage_exec_t *exec_stages, bool *shebang) {
   for (size_t i = 0; i < stage_count; i++) {
     char interp[EOS_SMALL_STR_LEN];
     char interp_arg[EOS_SMALL_STR_LEN];
@@ -1141,9 +1105,7 @@ static int eval_command_node(eos_ast_node_t *node) {
             free(exec_stages[j].argv);
           }
         }
-        free(shebang);
-        free(exec_stages);
-        return -1;
+        return false;
       }
     }
 
@@ -1155,192 +1117,219 @@ static int eval_command_node(eos_ast_node_t *node) {
     exec_stages[i].out_file = cmd_st->out_file;
     exec_stages[i].out_append = cmd_st->out_append;
   }
+  return true;
+}
+
+static int exec_single_stage_spawn(eos_stage_exec_t *stg) {
+  eos_proc_t *parent_proc = eos_proc_current();
+  pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
+  pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
+  const char *pname = stg->argv && stg->argv[0] ? stg->argv[0] : "psram_stage";
+  pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
+  stg->pid = spid;
+  stg->ppid = parent_pid;
+  stg->pgid = spid;
+  stg->sid = parent_sid;
+  if (spid > 0 && !stg->is_builtin) {
+    eos_proc_resolve_display_env(spid, stg->manifest.flags);
+  }
+
+  pthread_t thread;
+  int rc = eos_proc_spawn_thread(spid, pipeline_stage_thread, stg,
+                                 eos_bin_effective_stack_size(&stg->manifest),
+                                 true, &thread);
+
+  if (rc == 0) {
+    int raw_status = 0;
+    if (waitpid(spid, &raw_status, 0) == spid) {
+      return WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
+    }
+    return 0;
+  }
+
+  EOS_LOGE("eos_system() failed to spawn PSRAM thread for %s: %d",
+           stg->argv[0], rc);
+  if (spid > 0) {
+    eos_proc_exit(spid, -1);
+    int dummy = 0;
+    waitpid(spid, &dummy, WNOHANG);
+  }
+  return -1;
+}
+
+static int exec_single_stage_direct(eos_stage_exec_t *stg) {
+  eos_proc_t *proc = eos_proc_current();
+  eos_proc_fd_snapshot_t fd_snap = eos_proc_snapshot_fds();
+  int saved_map[EOS_XSMALL_STR_LEN];
+  for (int i = 0; i < EOS_XSMALL_STR_LEN; i++) {
+    saved_map[i] = proc ? eos_proc_fd_map_get(proc, i) : -1;
+  }
+
+  fflush(stdout);
+
+  char *saved_fb = NULL;
+  if (proc) {
+    const char *cur_fb = eos_proc_getenv_pid(proc->pid, "EOS_FB");
+    if (cur_fb) saved_fb = strdup(cur_fb);
+    if (!stg->is_builtin) {
+      eos_proc_resolve_display_env(proc->pid, stg->manifest.flags);
+    }
+  }
 
   int ret = 0;
+  bool redir = has_stage_redirections(stg);
+  int opened_fds[2] = {-1, -1};
+  if (apply_stage_redirections(stg, opened_fds) == 0) {
+    ret = stg->manifest.entry_point(stg->argc, stg->argv);
+  }
 
-  if (stage_count == 1) {
-    if (!exec_stages[0].is_builtin &&
-        eos_bin_prefers_psram_stack(&exec_stages[0].manifest) &&
-        (eos_proc_current() == NULL || eos_proc_current()->pid == 1)) {
-      eos_proc_t *parent_proc = eos_proc_current();
-      pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
-      pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
-      const char *pname = exec_stages[0].argv && exec_stages[0].argv[0] ? exec_stages[0].argv[0] : "psram_stage";
-      pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
-      exec_stages[0].pid = spid;
-      exec_stages[0].ppid = parent_pid;
-      exec_stages[0].pgid = spid;
-      exec_stages[0].sid = parent_sid;
-      if (spid > 0 && !exec_stages[0].is_builtin) {
-        eos_proc_resolve_display_env(spid, exec_stages[0].manifest.flags);
-      }
+  if (proc) {
+    if (saved_fb) {
+      eos_proc_setenv_pid(proc->pid, "EOS_FB", saved_fb, 1);
+      free(saved_fb);
+    } else {
+      eos_proc_unsetenv_pid(proc->pid, "EOS_FB");
+    }
+  }
 
-      pthread_t thread;
-      int rc = eos_proc_spawn_thread(spid, pipeline_stage_thread, &exec_stages[0],
-                                     eos_bin_effective_stack_size(&exec_stages[0].manifest),
-                                     true, &thread);
+  fflush(stdout);
+  fflush(stderr);
+  clearerr(stdin);
+  clearerr(stdout);
+  clearerr(stderr);
 
-      if (rc == 0) {
-        int raw_status = 0;
-        if (waitpid(spid, &raw_status, 0) == spid) {
-          ret = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
+  if (redir) {
+    if (proc) {
+      for (int i = 0; i < 16; i++)
+        eos_proc_fd_map_set(proc, i, saved_map[i]);
+    }
+    close_stage_fds(opened_fds, -1, -1);
+  }
+
+  eos_proc_cleanup_leaked_fds(&fd_snap);
+  return ret;
+}
+
+static int exec_single_stage(eos_stage_exec_t *stg) {
+  if (!stg->is_builtin &&
+      eos_bin_prefers_psram_stack(&stg->manifest) &&
+      (eos_proc_current() == NULL || eos_proc_current()->pid == 1)) {
+    return exec_single_stage_spawn(stg);
+  }
+  return exec_single_stage_direct(stg);
+}
+
+static int exec_pipeline(size_t stage_count, eos_stage_exec_t *exec_stages, bool *shebang) {
+  eos_proc_t *parent_proc = eos_proc_current();
+  pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
+  pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
+  pid_t pipeline_pgid = 0;
+
+  for (size_t i = 0; i < stage_count; i++) {
+    const char *pname = exec_stages[i].argv && exec_stages[i].argv[0] ? exec_stages[i].argv[0] : "stage";
+    pid_t spid = eos_proc_create(pname, NULL, parent_pid, pipeline_pgid);
+    if (i == 0 && spid > 0) {
+      pipeline_pgid = spid;
+    }
+    exec_stages[i].pid = spid;
+    exec_stages[i].ppid = parent_pid;
+    exec_stages[i].pgid = pipeline_pgid;
+    exec_stages[i].sid = parent_sid;
+    if (spid > 0 && !exec_stages[i].is_builtin) {
+      eos_proc_resolve_display_env(spid, exec_stages[i].manifest.flags);
+    }
+  }
+
+  for (size_t i = 0; i < stage_count - 1; i++) {
+    int pfd[2] = {-1, -1};
+    if (pipe(pfd) < 0) {
+      EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
+      for (size_t j = 0; j < stage_count; j++) {
+        if (exec_stages[j].pipe_in_fd >= 0) {
+          eos_proc_reg_fd(exec_stages[j].pipe_in_fd);
+          close(exec_stages[j].pipe_in_fd);
         }
-      } else {
-        EOS_LOGE("eos_system() failed to spawn PSRAM thread for %s: %d",
-                 exec_stages[0].argv[0], rc);
-        if (spid > 0) {
-          eos_proc_exit(spid, -1);
+        if (exec_stages[j].pipe_out_fd >= 0) {
+          eos_proc_reg_fd(exec_stages[j].pipe_out_fd);
+          close(exec_stages[j].pipe_out_fd);
+        }
+        if (exec_stages[j].pid > 0) {
+          eos_proc_exit(exec_stages[j].pid, -1);
           int dummy = 0;
-          waitpid(spid, &dummy, WNOHANG);
+          waitpid(exec_stages[j].pid, &dummy, WNOHANG);
         }
-        ret = -1;
+      }
+      return -1;
+    }
+    eos_proc_unreg_fd(pfd[0]);
+    eos_proc_unreg_fd(pfd[1]);
+    exec_stages[i].pipe_out_fd = pfd[1];
+    exec_stages[i + 1].pipe_in_fd = pfd[0];
+  }
+
+  fflush(stdout);
+  fflush(stderr);
+
+  pthread_t *threads = (pthread_t *)eos_psram_calloc_prefer(stage_count, sizeof(pthread_t));
+  bool *spawned = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
+
+  for (size_t i = 0; i < stage_count; i++) {
+    int rc = eos_proc_spawn_thread(exec_stages[i].pid, pipeline_stage_thread, &exec_stages[i],
+                                   eos_bin_effective_stack_size(&exec_stages[i].manifest),
+                                   eos_bin_prefers_psram_stack(&exec_stages[i].manifest),
+                                   &threads[i]);
+
+    if (rc != 0) {
+      EOS_LOGE("eos_system() failed to spawn thread for stage %u", (unsigned)i);
+      if (exec_stages[i].pid > 0) {
+        eos_proc_exit(exec_stages[i].pid, -1);
+        int dummy = 0;
+        waitpid(exec_stages[i].pid, &dummy, WNOHANG);
       }
     } else {
-      eos_proc_t *proc = eos_proc_current();
-      eos_proc_fd_snapshot_t fd_snap = eos_proc_snapshot_fds();
-      int saved_map[16];
-      for (int i = 0; i < 16; i++) {
-        saved_map[i] = proc ? eos_proc_fd_map_get(proc, i) : -1;
-      }
-
-      fflush(stdout);
-
-      char *saved_fb = NULL;
-      if (proc) {
-        const char *cur_fb = eos_proc_getenv_pid(proc->pid, "EOS_FB");
-        if (cur_fb) saved_fb = strdup(cur_fb);
-        if (!exec_stages[0].is_builtin) {
-          eos_proc_resolve_display_env(proc->pid, exec_stages[0].manifest.flags);
-        }
-      }
-
-      bool redir = has_stage_redirections(&exec_stages[0]);
-      int opened_fds[2] = {-1, -1};
-      if (apply_stage_redirections(&exec_stages[0], opened_fds) == 0) {
-        ret = exec_stages[0].manifest.entry_point(exec_stages[0].argc,
-                                                  exec_stages[0].argv);
-      }
-
-      if (proc) {
-        if (saved_fb) {
-          eos_proc_setenv_pid(proc->pid, "EOS_FB", saved_fb, 1);
-          free(saved_fb);
-        } else {
-          eos_proc_unsetenv_pid(proc->pid, "EOS_FB");
-        }
-      }
-
-      fflush(stdout);
-      fflush(stderr);
-      clearerr(stdin);
-      clearerr(stdout);
-      clearerr(stderr);
-
-      if (redir) {
-        if (proc) {
-          for (int i = 0; i < 16; i++)
-            eos_proc_fd_map_set(proc, i, saved_map[i]);
-        }
-
-        close_stage_fds(opened_fds, -1, -1);
-      }
-
-      // Clean up any leaked file descriptors or directory handles from the executed command
-      eos_proc_cleanup_leaked_fds(&fd_snap);
+      spawned[i] = true;
     }
+  }
+
+  int last_status = -1;
+  for (size_t i = 0; i < stage_count; i++) {
+    if (spawned[i]) {
+      int raw_status = 0;
+      pid_t w = waitpid(exec_stages[i].pid, &raw_status, 0);
+      if (w == exec_stages[i].pid) {
+        last_status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
+      }
+    }
+  }
+  free(threads);
+  free(spawned);
+  return last_status;
+}
+
+static int eval_command_node(eos_ast_node_t *node) {
+  size_t stage_count = kv_size(node->stages);
+  if (stage_count == 0) return 0;
+
+  eos_stage_exec_t *exec_stages = (eos_stage_exec_t *)eos_psram_calloc_prefer(stage_count, sizeof(eos_stage_exec_t));
+  if (!exec_stages) return -1;
+
+  bool *shebang = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
+  if (!shebang) {
+    free(exec_stages);
+    return -1;
+  }
+
+  if (!prepare_exec_stages(node, stage_count, exec_stages, shebang)) {
+    free(shebang);
+    free(exec_stages);
+    return -1;
+  }
+
+  int ret;
+  if (stage_count == 1) {
+    ret = exec_single_stage(&exec_stages[0]);
   } else {
-    eos_proc_t *parent_proc = eos_proc_current();
-    pid_t parent_pid = (parent_proc && parent_proc->pid > 0) ? parent_proc->pid : 1;
-    pid_t parent_sid = (parent_proc && parent_proc->sid > 0) ? parent_proc->sid : 1;
-    pid_t pipeline_pgid = 0;
-
-    for (size_t i = 0; i < stage_count; i++) {
-      const char *pname = exec_stages[i].argv && exec_stages[i].argv[0] ? exec_stages[i].argv[0] : "stage";
-      pid_t spid = eos_proc_create(pname, NULL, parent_pid, pipeline_pgid);
-      if (i == 0 && spid > 0) {
-        pipeline_pgid = spid;
-      }
-      exec_stages[i].pid = spid;
-      exec_stages[i].ppid = parent_pid;
-      exec_stages[i].pgid = pipeline_pgid;
-      exec_stages[i].sid = parent_sid;
-      if (spid > 0 && !exec_stages[i].is_builtin) {
-        eos_proc_resolve_display_env(spid, exec_stages[i].manifest.flags);
-      }
-    }
-
-    for (size_t i = 0; i < stage_count - 1; i++) {
-      int pfd[2] = {-1, -1};
-      if (pipe(pfd) < 0) {
-        EOS_LOGE("eos_system() pipe() failed: %s", strerror(errno));
-        for (size_t j = 0; j < stage_count; j++) {
-          if (exec_stages[j].pipe_in_fd >= 0) {
-            eos_proc_reg_fd(exec_stages[j].pipe_in_fd);
-            close(exec_stages[j].pipe_in_fd);
-          }
-          if (exec_stages[j].pipe_out_fd >= 0) {
-            eos_proc_reg_fd(exec_stages[j].pipe_out_fd);
-            close(exec_stages[j].pipe_out_fd);
-          }
-          if (exec_stages[j].pid > 0) {
-            eos_proc_exit(exec_stages[j].pid, -1);
-            int dummy = 0;
-            waitpid(exec_stages[j].pid, &dummy, WNOHANG);
-          }
-        }
-        for (size_t j = 0; j < stage_count; j++) {
-          if (shebang[j]) {
-            for (int k = 0; k < exec_stages[j].argc; k++) free(exec_stages[j].argv[k]);
-            free(exec_stages[j].argv);
-          }
-        }
-        free(shebang);
-        free(exec_stages);
-        return -1;
-      }
-      eos_proc_unreg_fd(pfd[0]);
-      eos_proc_unreg_fd(pfd[1]);
-      exec_stages[i].pipe_out_fd = pfd[1];
-      exec_stages[i + 1].pipe_in_fd = pfd[0];
-    }
-
-    fflush(stdout);
-    fflush(stderr);
-
-    pthread_t *threads = (pthread_t *)eos_psram_calloc_prefer(stage_count, sizeof(pthread_t));
-    bool *spawned = (bool *)eos_psram_calloc_prefer(stage_count, sizeof(bool));
-
-    for (size_t i = 0; i < stage_count; i++) {
-      int rc = eos_proc_spawn_thread(exec_stages[i].pid, pipeline_stage_thread, &exec_stages[i],
-                                     eos_bin_effective_stack_size(&exec_stages[i].manifest),
-                                     eos_bin_prefers_psram_stack(&exec_stages[i].manifest),
-                                     &threads[i]);
-
-      if (rc != 0) {
-        EOS_LOGE("eos_system() failed to spawn thread for stage %u", (unsigned)i);
-        if (exec_stages[i].pid > 0) {
-          eos_proc_exit(exec_stages[i].pid, -1);
-          int dummy = 0;
-          waitpid(exec_stages[i].pid, &dummy, WNOHANG);
-        }
-      } else {
-        spawned[i] = true;
-      }
-    }
-
-    int last_status = -1;
-    for (size_t i = 0; i < stage_count; i++) {
-      if (spawned[i]) {
-        int raw_status = 0;
-        pid_t w = waitpid(exec_stages[i].pid, &raw_status, 0);
-        if (w == exec_stages[i].pid) {
-          last_status = WIFEXITED(raw_status) ? WEXITSTATUS(raw_status) : raw_status;
-        }
-      }
-    }
-    ret = last_status;
-    free(threads);
-    free(spawned);
+    ret = exec_pipeline(stage_count, exec_stages, shebang);
   }
 
   for (size_t i = 0; i < stage_count; i++) {
@@ -1354,6 +1343,56 @@ static int eval_command_node(eos_ast_node_t *node) {
   free(shebang);
   free(exec_stages);
   return ret;
+}
+
+static void spawn_bg_node(eos_ast_node_t *sub_node) {
+  if (!sub_node || (sub_node->type == EOS_NODE_COMMAND && kv_size(sub_node->stages) == 0)) {
+    return;
+  }
+  uint32_t bg_stack = ast_required_stack_size(sub_node) + EOS_BIN_MIN_STACK_SIZE;
+  bool bg_psram = ast_prefers_psram_stack(sub_node);
+
+  const char *pname = "bg_proc";
+  if (sub_node->type == EOS_NODE_COMMAND && kv_size(sub_node->stages) > 0) {
+    const eos_cmd_stage_t *st0 = &kv_A(sub_node->stages, 0);
+    if (kv_size(st0->argv) > 0 && kv_A(st0->argv, 0)) {
+      pname = kv_A(st0->argv, 0);
+    }
+  }
+
+  eos_proc_t *cur = eos_proc_current();
+  pid_t parent_pid = (cur && cur->pid > 0) ? cur->pid : 1;
+  pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
+  if (spid <= 0) return;
+
+  eos_bin_t bin_m;
+  if (load_bin_manifest(pname, &bin_m) == 0) {
+    eos_proc_resolve_display_env(spid, bin_m.flags);
+  }
+  bool prev_h = eos_proc_heap_tracking_disable();
+  bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
+  if (!bg) {
+    eos_proc_heap_tracking_restore(prev_h);
+    return;
+  }
+  bg->node = clone_ast_node(sub_node);
+  bg->pid = spid;
+  eos_proc_heap_tracking_restore(prev_h);
+  if (!bg->node) {
+    bool prev_hd = eos_proc_heap_tracking_disable();
+    free(bg);
+    eos_proc_heap_tracking_restore(prev_hd);
+    eos_proc_exit(spid, -1);
+    return;
+  }
+  int rc = eos_proc_spawn_thread(spid, bg_thread_entry, bg, bg_stack, bg_psram, NULL);
+  if (rc != 0) {
+    bool prev_hd = eos_proc_heap_tracking_disable();
+    free_cloned_ast_node(bg->node);
+    free(bg);
+    eos_proc_heap_tracking_restore(prev_hd);
+    eos_proc_exit(spid, -1);
+  }
 }
 
 static int eval_ast(eos_ast_node_t *node) {
@@ -1382,53 +1421,7 @@ static int eval_ast(eos_ast_node_t *node) {
       }
       break;
     case EOS_NODE_BG: {
-      if (node->left &&
-          (node->left->type != EOS_NODE_COMMAND || kv_size(node->left->stages) > 0)) {
-        uint32_t bg_stack = ast_required_stack_size(node->left) + 4096;
-        bool bg_psram = ast_prefers_psram_stack(node->left);
-
-        const char *pname = "bg_proc";
-        if (node->left->type == EOS_NODE_COMMAND && kv_size(node->left->stages) > 0) {
-          const eos_cmd_stage_t *st0 = &kv_A(node->left->stages, 0);
-          if (kv_size(st0->argv) > 0 && kv_A(st0->argv, 0)) {
-            pname = kv_A(st0->argv, 0);
-          }
-        }
-
-        eos_proc_t *cur = eos_proc_current();
-        pid_t parent_pid = (cur && cur->pid > 0) ? cur->pid : 1;
-        pid_t spid = eos_proc_create(pname, NULL, parent_pid, 0);
-        if (spid > 0) {
-          eos_bin_t bin_m;
-          if (load_bin_manifest(pname, &bin_m) == 0) {
-            eos_proc_resolve_display_env(spid, bin_m.flags);
-          }
-          bool prev_h = eos_proc_heap_tracking_disable();
-          bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));
-          if (bg) {
-            bg->node = clone_ast_node(node->left);
-            bg->pid = spid;
-            eos_proc_heap_tracking_restore(prev_h);
-            if (bg->node) {
-              int rc = eos_proc_spawn_thread(spid, bg_thread_entry, bg, bg_stack, bg_psram, NULL);
-              if (rc != 0) {
-                bool prev_hd = eos_proc_heap_tracking_disable();
-                free_cloned_ast_node(bg->node);
-                free(bg);
-                eos_proc_heap_tracking_restore(prev_hd);
-                eos_proc_exit(spid, -1);
-              }
-            } else {
-              bool prev_hd = eos_proc_heap_tracking_disable();
-              free(bg);
-              eos_proc_heap_tracking_restore(prev_hd);
-              eos_proc_exit(spid, -1);
-            }
-          } else {
-            eos_proc_heap_tracking_restore(prev_h);
-          }
-        }
-      }
+      spawn_bg_node(node->left);
       if (node->right &&
           (node->right->type != EOS_NODE_COMMAND || kv_size(node->right->stages) > 0)) {
         status = eval_ast(node->right);

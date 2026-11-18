@@ -14,30 +14,6 @@
 #include "ecore/ioctl.h"
 #include "emisc/psram_alloc.h"
 
-// Color depth definition fallbacks if not provided by esp_lcd_qemu_rgb header
-#ifndef RGB_QEMU_BPP_16
-#define RGB_QEMU_BPP_16 16
-#endif
-#ifndef RGB_QEMU_BPP_32
-#define RGB_QEMU_BPP_32 32
-#endif
-
-// ST7789 display dimension fallbacks
-#ifndef EOS_DISPLAY_ST7789_WIDTH
-#define EOS_DISPLAY_ST7789_WIDTH 280
-#endif
-#ifndef EOS_DISPLAY_ST7789_HEIGHT
-#define EOS_DISPLAY_ST7789_HEIGHT 240
-#endif
-
-// QEMU RGB display dimension fallbacks
-#ifndef EOS_QEMU_DISPLAY_WIDTH
-#define EOS_QEMU_DISPLAY_WIDTH EOS_DISPLAY_ST7789_WIDTH
-#endif
-#ifndef EOS_QEMU_DISPLAY_HEIGHT
-#define EOS_QEMU_DISPLAY_HEIGHT EOS_DISPLAY_ST7789_HEIGHT
-#endif
-
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
@@ -47,11 +23,7 @@ typedef struct {
   int32_t height;
   uint8_t rotation;
   uint8_t bpp;
-  uint32_t clip_x;
-  uint32_t clip_y;
-  uint32_t clip_w;
-  uint32_t clip_h;
-  bool has_clip;
+  eos_clip_rect_t clip;
   SemaphoreHandle_t lock;
 } qemu_rgb_state_t;
 
@@ -128,7 +100,6 @@ bool driver_display_qemu_rgb_init(eos_dev_t *dev) {
   state->height = height;
   state->bpp = (bpp == 32) ? 32 : 16;
   state->rotation = (uint8_t)(rotation & 3);
-  state->has_clip = false;
   state->lock = xSemaphoreCreateRecursiveMutex();
 
   // Apply rotation if requested
@@ -172,39 +143,17 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
     xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
   }
 
-  uint32_t x = state->has_clip ? state->clip_x : 0;
-  uint32_t y = state->has_clip ? state->clip_y : 0;
-  uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
-  uint32_t h = state->has_clip ? state->clip_h : (uint32_t)state->height;
-  state->has_clip = false;
+  eos_rect_t r;
+  eos_clip_rect_consume(&state->clip, (uint32_t)state->width, (uint32_t)state->height, &r);
 
-  if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
-      y + h > (uint32_t)state->height) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  uint8_t bytes_per_pixel = (state->bpp == 32) ? 4 : 2;
-  size_t expected_len = (size_t)w * h * bytes_per_pixel;
-  if (len > expected_len)
-    len = expected_len;
-
-  size_t row_bytes = (size_t)w * bytes_per_pixel;
-  if (row_bytes == 0 || len < row_bytes) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  uint32_t total_rows = (uint32_t)(len / row_bytes);
+  uint8_t bytes_per_pixel = (state->bpp == RGB_QEMU_BPP_32) ? 4 : 2;
+  uint32_t total_rows = eos_rect_calc_rows(len, r.w, bytes_per_pixel, r.h);
   if (total_rows == 0) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    return 0;
+    errno = EINVAL;
+    return -1;
   }
-  if (total_rows > h)
-    total_rows = h;
-
+  size_t row_bytes = (size_t)r.w * bytes_per_pixel;
   size_t draw_bytes = (size_t)total_rows * row_bytes;
   const void *draw_buf = buf;
 
@@ -213,14 +162,14 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
   // If the caller passes a buffer located in external PSRAM/SPIRAM, copy through
   // dedicated VRAM so the DMA access check in QEMU's rgb_update succeeds.
   if (state->vram && buf != state->vram && !esp_ptr_internal(buf)) {
-    if (draw_bytes <= 0x1d4c00) {
+    if (draw_bytes <= EOS_QEMU_VRAM_MAX_BYTES) {
       memcpy(state->vram, buf, draw_bytes);
       draw_buf = state->vram;
     }
   }
 
-  esp_err_t err = esp_lcd_panel_draw_bitmap(state->panel, (int)x, (int)y,
-                                            (int)(x + w), (int)(y + total_rows), draw_buf);
+  esp_err_t err = esp_lcd_panel_draw_bitmap(state->panel, (int)r.x, (int)r.y,
+                                            (int)(r.x + r.w), (int)(r.y + total_rows), draw_buf);
   if (err != ESP_OK) {
     EOS_LOGE("qemu_rgb: draw_bitmap failed: %s", esp_err_to_name(err));
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
@@ -260,28 +209,14 @@ int driver_display_qemu_rgb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args)
     *height = (uint32_t)state->height;
     break;
   }
-  case EOS_DISPLAY_IOCTL_SET_WINDOW: {
-    const eos_display_rect_t *rect = va_arg(args, const eos_display_rect_t *);
-    if (rect) {
-      if (rect->w == 0 || rect->h == 0 ||
-          rect->x >= (uint32_t)state->width ||
-          rect->y >= (uint32_t)state->height ||
-          rect->x + rect->w > (uint32_t)state->width ||
-          rect->y + rect->h > (uint32_t)state->height) {
-        state->has_clip = false;
-        errno = EINVAL;
-        return -1;
-      }
-      state->clip_x = rect->x;
-      state->clip_y = rect->y;
-      state->clip_w = rect->w;
-      state->clip_h = rect->h;
-      state->has_clip = true;
-    } else {
-      state->has_clip = false;
-    }
+  case EOS_DISPLAY_IOCTL_SET_WINDOW:
+    ret = eos_clip_rect_set(&state->clip, va_arg(args, const eos_display_rect_t *),
+                            (uint32_t)state->width, (uint32_t)state->height);
     break;
-  }
+  case EOS_DISPLAY_IOCTL_GET_WINDOW:
+    ret = eos_clip_rect_get(&state->clip, (uint32_t)state->width, (uint32_t)state->height,
+                            va_arg(args, eos_display_rect_t *));
+    break;
   case EOS_DISPLAY_IOCTL_LOCK:
     if (state->lock) {
       xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);

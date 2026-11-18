@@ -1,4 +1,6 @@
 #include "ecore/bin.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -20,7 +22,7 @@ static void read_proc_times(uint64_t *out_user, uint64_t *out_sys, uint64_t *out
   FILE *f = fopen("/proc/self/status", "r");
   if (!f) return;
 
-  char line[128];
+  char line[EOS_BUFFER_128_LEN];
   while (fgets(line, sizeof(line), f)) {
     if (strncmp(line, "UserTime:\t", 10) == 0) {
       if (out_user) *out_user = (uint64_t)strtoull(line + 10, NULL, 10);
@@ -40,17 +42,70 @@ static void read_proc_times(uint64_t *out_user, uint64_t *out_sys, uint64_t *out
 }
 
 static void print_time_default(const char *label, uint64_t us) {
-  uint32_t total_sec = (uint32_t)(us / 1000000ULL);
-  uint32_t rem_ms = (uint32_t)((us % 1000000ULL) / 1000ULL);
-  uint32_t minutes = total_sec / 60;
-  uint32_t seconds = total_sec % 60;
+  uint32_t total_sec = (uint32_t)(us / (uint64_t)EOS_US_PER_SEC);
+  uint32_t rem_ms = (uint32_t)((us % (uint64_t)EOS_US_PER_SEC) / (uint64_t)EOS_MS_PER_SEC);
+  uint32_t minutes = total_sec / EOS_SECS_PER_MIN;
+  uint32_t seconds = total_sec % EOS_SECS_PER_MIN;
 
   printf("%-8s%um%u.%03us\n", label, (unsigned int)minutes, (unsigned int)seconds, (unsigned int)rem_ms);
 }
 
 static void print_time_posix(const char *label, uint64_t us) {
-  double sec = (double)us / 1000000.0;
+  double sec = (double)us / (double)EOS_US_PER_SEC;
   printf("%s %.2f\n", label, sec);
+}
+
+static int build_cmd_buf(int argc, char **argv, int cmd_idx, char *cmd_buf, size_t buf_sz) {
+  cmd_buf[0] = '\0';
+  size_t cur_len = 0;
+
+  for (int i = cmd_idx; i < argc; i++) {
+    size_t arg_len = strlen(argv[i]);
+    if (cur_len + arg_len + 2 >= buf_sz) {
+      printf("time: command arguments too long\n");
+      return -1;
+    }
+    if (cur_len > 0) {
+      cmd_buf[cur_len++] = ' ';
+      cmd_buf[cur_len] = '\0';
+    }
+    memcpy(&cmd_buf[cur_len], argv[i], arg_len + 1);
+    cur_len += arg_len;
+  }
+  return 0;
+}
+
+static int execute_timed_cmd(int argc, char **argv, int cmd_idx, const char *cmd_buf) {
+  bool has_meta = false;
+  for (int i = cmd_idx; i < argc; i++) {
+    if (strpbrk(argv[i], "|><&;")) {
+      has_meta = true;
+      break;
+    }
+  }
+
+  if (!has_meta) {
+    int sub_argc = argc - cmd_idx;
+    char **sub_argv = malloc((sub_argc + 1) * sizeof(char *));
+    if (sub_argv) {
+      for (int i = 0; i < sub_argc; i++) {
+        sub_argv[i] = argv[cmd_idx + i];
+      }
+      sub_argv[sub_argc] = NULL;
+      if (execve(argv[cmd_idx], sub_argv, NULL) == 0) {
+        int status = 0;
+        int ret = 0;
+        if (waitpid(-1, &status, 0) > 0) {
+          ret = WIFEXITED(status) ? WEXITSTATUS(status) : status;
+        }
+        free(sub_argv);
+        return ret;
+      }
+      free(sub_argv);
+    }
+  }
+
+  return system(cmd_buf);
 }
 
 int time_main(int argc, char **argv) {
@@ -86,22 +141,9 @@ int time_main(int argc, char **argv) {
     return 1;
   }
 
-  char cmd_buf[1024];
-  cmd_buf[0] = '\0';
-  size_t cur_len = 0;
-
-  for (int i = cmd_idx; i < argc; i++) {
-    size_t arg_len = strlen(argv[i]);
-    if (cur_len + arg_len + 2 >= sizeof(cmd_buf)) {
-      printf("time: command arguments too long\n");
-      return 1;
-    }
-    if (cur_len > 0) {
-      cmd_buf[cur_len++] = ' ';
-      cmd_buf[cur_len] = '\0';
-    }
-    memcpy(&cmd_buf[cur_len], argv[i], arg_len + 1);
-    cur_len += arg_len;
+  char cmd_buf[EOS_LARGE_STR_LEN];
+  if (build_cmd_buf(argc, argv, cmd_idx, cmd_buf, sizeof(cmd_buf)) != 0) {
+    return 1;
   }
 
   uint64_t user_before = 0, sys_before = 0, wait_before = 0, cutime_before = 0, cstime_before = 0, cwait_before = 0;
@@ -110,38 +152,7 @@ int time_main(int argc, char **argv) {
   struct timeval t0, t1;
   gettimeofday(&t0, NULL);
 
-  int ret = 0;
-  bool use_execve = false;
-  bool has_meta = false;
-  for (int i = cmd_idx; i < argc; i++) {
-    if (strpbrk(argv[i], "|><&;")) {
-      has_meta = true;
-      break;
-    }
-  }
-
-  if (!has_meta) {
-    int sub_argc = argc - cmd_idx;
-    char **sub_argv = malloc((sub_argc + 1) * sizeof(char *));
-    if (sub_argv) {
-      for (int i = 0; i < sub_argc; i++) {
-        sub_argv[i] = argv[cmd_idx + i];
-      }
-      sub_argv[sub_argc] = NULL;
-      if (execve(argv[cmd_idx], sub_argv, NULL) == 0) {
-        use_execve = true;
-        int status = 0;
-        if (waitpid(-1, &status, 0) > 0) {
-          ret = WIFEXITED(status) ? WEXITSTATUS(status) : status;
-        }
-      }
-      free(sub_argv);
-    }
-  }
-
-  if (!use_execve) {
-    ret = system(cmd_buf);
-  }
+  int ret = execute_timed_cmd(argc, argv, cmd_idx, cmd_buf);
 
   gettimeofday(&t1, NULL);
 
@@ -150,7 +161,7 @@ int time_main(int argc, char **argv) {
 
   int64_t sec_diff = (int64_t)t1.tv_sec - (int64_t)t0.tv_sec;
   int64_t usec_diff = (int64_t)t1.tv_usec - (int64_t)t0.tv_usec;
-  int64_t total_real = sec_diff * 1000000LL + usec_diff;
+  int64_t total_real = sec_diff * (int64_t)EOS_US_PER_SEC + usec_diff;
   if (total_real < 0) total_real = 0;
 
   uint64_t real_us = (uint64_t)total_real;

@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/lvgl.h"
+#include "ebin/test_lvgl/test_lvgl.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,20 +30,20 @@ static void update_test_ui(test_lvgl_ui_t *ui, const char *last_key_name) {
   if (!ctx)
     return;
 
-  char mode_buf[64];
+  char mode_buf[EOS_LINE_64_LEN];
   snprintf(mode_buf, sizeof(mode_buf), "Mode: %s (%ux%u, strip=%u)",
            ctx->fallback_full ? "FULL FALLBACK" : "PARTIAL DRAW",
            (unsigned)ctx->width, (unsigned)ctx->height,
            (unsigned)ctx->partial_lines);
   lv_label_set_text(ui->mode_label, mode_buf);
 
-  char stats_buf[64];
+  char stats_buf[EOS_LINE_64_LEN];
   snprintf(stats_buf, sizeof(stats_buf), "Flushes: partial=%u  full=%u",
            (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes);
   lv_label_set_text(ui->stats_label, stats_buf);
 
   if (last_key_name) {
-    char kbuf[64];
+    char kbuf[EOS_LINE_64_LEN];
     snprintf(kbuf, sizeof(kbuf), "Last key: %s | Pos:(%d,%d)", last_key_name,
              (int)ui->box_x, (int)ui->box_y);
     lv_label_set_text(ui->key_label, kbuf);
@@ -76,6 +77,128 @@ static void test_lvgl_back_btn_cb(lv_event_t *e) {
   }
 }
 
+static void test_lvgl_setup_ui(test_lvgl_ui_t *ui, uint32_t width, uint32_t height) {
+  (void)height;
+  ui->running = true;
+  ui->progress = 50;
+  ui->box_x = ((int32_t)width - TEST_LVGL_SPRITE_SIZE) / 2;
+  ui->box_y = 110;
+
+  lv_obj_t *scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+
+  lv_obj_t *title = lv_label_create(scr);
+  lv_label_set_text(title, "EOS + LVGL FB Test");
+  lv_obj_set_style_text_color(title, lv_color_hex(EOS_THEME_TEXT_WHITE), 0);
+  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
+
+  ui->mode_label = lv_label_create(scr);
+  lv_obj_set_style_text_color(ui->mode_label, lv_color_hex(EOS_THEME_ACCENT_GREEN), 0);
+  lv_obj_align(ui->mode_label, LV_ALIGN_TOP_MID, 0, 26);
+
+  ui->stats_label = lv_label_create(scr);
+  lv_obj_set_style_text_color(ui->stats_label, lv_color_hex(0x93C5FD), 0);
+  lv_obj_align(ui->stats_label, LV_ALIGN_TOP_MID, 0, 44);
+
+  ui->key_label = lv_label_create(scr);
+  lv_label_set_text(ui->key_label, "Keys: Arrows=Move A=Color C=Mode B=Exit");
+  lv_obj_set_style_text_color(ui->key_label, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
+  lv_obj_align(ui->key_label, LV_ALIGN_TOP_MID, 0, 62);
+
+  ui->bar = lv_bar_create(scr);
+  lv_obj_set_size(ui->bar, (int32_t)width - 24, 14);
+  lv_bar_set_range(ui->bar, 0, 100);
+  lv_obj_align(ui->bar, LV_ALIGN_TOP_MID, 0, 84);
+
+  ui->sprite = lv_obj_create(scr);
+  lv_obj_set_size(ui->sprite, TEST_LVGL_SPRITE_SIZE, TEST_LVGL_SPRITE_SIZE);
+  lv_obj_set_style_radius(ui->sprite, TEST_LVGL_SPRITE_RADIUS, 0);
+  lv_obj_set_style_border_color(ui->sprite, lv_color_hex(EOS_THEME_TEXT_WHITE), 0);
+  lv_obj_set_style_border_width(ui->sprite, TEST_LVGL_BORDER_WIDTH, 0);
+
+  lv_obj_t *hint = lv_label_create(scr);
+  lv_label_set_text(hint, "C: Partial/Full  D: FullRedraw  B/ESC: Quit");
+  lv_obj_set_style_text_color(hint, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
+
+  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSED, ui);
+  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSING, ui);
+
+  eos_lvgl_create_back_btn(scr, test_lvgl_back_btn_cb, ui);
+  update_test_ui(ui, NULL);
+}
+
+static void test_lvgl_run_auto(test_lvgl_ui_t *ui) {
+  printf("Running automated LVGL partial and full fallback test...\n");
+  eos_lvgl_set_full_fallback(false);
+  ui->progress = 25;
+  update_test_ui(ui, "AUTO_PARTIAL");
+  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  uint32_t p_flushes1 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
+
+  eos_lvgl_set_full_fallback(true);
+  ui->progress = 75;
+  update_test_ui(ui, "AUTO_FULL");
+  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  uint32_t f_flushes = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->full_flushes : 0;
+
+  eos_lvgl_set_full_fallback(false);
+  ui->progress = 100;
+  update_test_ui(ui, "AUTO_DONE");
+  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  uint32_t p_flushes2 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
+
+  printf("Automated test flushes: partial=%u->%u, full=%u\n",
+         (unsigned)p_flushes1, (unsigned)p_flushes2, (unsigned)f_flushes);
+  printf("LVGL Framebuffer Test PASSED\n");
+  ui->running = false;
+}
+
+static void test_lvgl_handle_key(test_lvgl_ui_t *ui, uint16_t key, uint32_t width, uint32_t height) {
+  switch (key) {
+  case KEY_LEFT:
+    ui->box_x -= 10;
+    if (ui->box_x < 4) ui->box_x = 4;
+    if (ui->progress >= 5) ui->progress -= 5;
+    break;
+  case KEY_RIGHT:
+    ui->box_x += 10;
+    if (ui->box_x > (int32_t)width - TEST_LVGL_BOX_MARGIN)
+      ui->box_x = (int32_t)width - TEST_LVGL_BOX_MARGIN;
+    if (ui->progress <= 95) ui->progress += 5;
+    break;
+  case KEY_UP:
+    ui->box_y -= 10;
+    if (ui->box_y < 104) ui->box_y = 104;
+    break;
+  case KEY_DOWN:
+    ui->box_y += 10;
+    if (ui->box_y > (int32_t)height - TEST_LVGL_BOTTOM_MARGIN)
+      ui->box_y = (int32_t)height - TEST_LVGL_BOTTOM_MARGIN;
+    break;
+  case KEY_A:
+  case KEY_ENTER:
+  case KEY_SPACE:
+    ui->color_idx++;
+    break;
+  case KEY_C:
+    eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
+    break;
+  case KEY_D:
+    eos_lvgl_flush_full_frame();
+    break;
+  case KEY_B:
+  case KEY_BACKSPACE:
+  case KEY_ESC:
+    ui->running = false;
+    break;
+  default:
+    break;
+  }
+  update_test_ui(ui, eos_lvgl_key_name(key));
+}
+
 static int test_lvgl_main(int argc, char **argv) {
   const char *fb_path = NULL;
   const char *kbd_path = NULL;
@@ -106,141 +229,23 @@ static int test_lvgl_main(int argc, char **argv) {
 
   test_lvgl_ui_t ui;
   memset(&ui, 0, sizeof(ui));
-  ui.running = true;
-  ui.progress = 50;
-  ui.box_x = ((int32_t)width - 36) / 2;
-  ui.box_y = 110;
-
-  lv_obj_t *scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0F172A), 0);
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-  lv_obj_t *title = lv_label_create(scr);
-  lv_label_set_text(title, "EOS + LVGL FB Test");
-  lv_obj_set_style_text_color(title, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
-
-  ui.mode_label = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.mode_label, lv_color_hex(0x34D399), 0);
-  lv_obj_align(ui.mode_label, LV_ALIGN_TOP_MID, 0, 26);
-
-  ui.stats_label = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.stats_label, lv_color_hex(0x93C5FD), 0);
-  lv_obj_align(ui.stats_label, LV_ALIGN_TOP_MID, 0, 44);
-
-  ui.key_label = lv_label_create(scr);
-  lv_label_set_text(ui.key_label, "Keys: Arrows=Move A=Color C=Mode B=Exit");
-  lv_obj_set_style_text_color(ui.key_label, lv_color_hex(0xFDE047), 0);
-  lv_obj_align(ui.key_label, LV_ALIGN_TOP_MID, 0, 62);
-
-  ui.bar = lv_bar_create(scr);
-  lv_obj_set_size(ui.bar, (int32_t)width - 24, 14);
-  lv_bar_set_range(ui.bar, 0, 100);
-  lv_obj_align(ui.bar, LV_ALIGN_TOP_MID, 0, 84);
-
-  ui.sprite = lv_obj_create(scr);
-  lv_obj_set_size(ui.sprite, 36, 36);
-  lv_obj_set_style_radius(ui.sprite, 6, 0);
-  lv_obj_set_style_border_color(ui.sprite, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_style_border_width(ui.sprite, 2, 0);
-
-  lv_obj_t *hint = lv_label_create(scr);
-  lv_label_set_text(hint, "C: Partial/Full  D: FullRedraw  B/ESC: Quit");
-  lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -6);
-
-  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSED, &ui);
-  lv_obj_add_event_cb(scr, scr_touch_event_cb, LV_EVENT_PRESSING, &ui);
-
-  // Standard touch exit/back button
-  eos_lvgl_create_back_btn(scr, test_lvgl_back_btn_cb, &ui);
-
-  update_test_ui(&ui, NULL);
+  test_lvgl_setup_ui(&ui, width, height);
 
   if (auto_mode) {
-    printf("Running automated LVGL partial and full fallback test...\n");
-    // 1. Partial mode test
-    eos_lvgl_set_full_fallback(false);
-    ui.progress = 25;
-    update_test_ui(&ui, "AUTO_PARTIAL");
-    eos_lvgl_step(50);
-    uint32_t p_flushes1 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
-
-    // 2. Full-frame fallback test
-    eos_lvgl_set_full_fallback(true);
-    ui.progress = 75;
-    update_test_ui(&ui, "AUTO_FULL");
-    eos_lvgl_step(50);
-    uint32_t f_flushes = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->full_flushes : 0;
-
-    // 3. Switch back to partial mode
-    eos_lvgl_set_full_fallback(false);
-    ui.progress = 100;
-    update_test_ui(&ui, "AUTO_DONE");
-    eos_lvgl_step(50);
-    uint32_t p_flushes2 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
-
-    printf("Automated test flushes: partial=%u->%u, full=%u\n",
-           (unsigned)p_flushes1, (unsigned)p_flushes2, (unsigned)f_flushes);
-    printf("LVGL Framebuffer Test PASSED\n");
-    ui.running = false;
+    test_lvgl_run_auto(&ui);
   }
 
   uint64_t start_ms = 0;
   if (timeout_ms > 0) {
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    start_ms = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+    start_ms = (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
   }
 
   while (ui.running) {
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
-      switch (key) {
-      case KEY_LEFT:
-        ui.box_x -= 10;
-        if (ui.box_x < 4)
-          ui.box_x = 4;
-        if (ui.progress >= 5)
-          ui.progress -= 5;
-        break;
-      case KEY_RIGHT:
-        ui.box_x += 10;
-        if (ui.box_x > (int32_t)width - 40)
-          ui.box_x = (int32_t)width - 40;
-        if (ui.progress <= 95)
-          ui.progress += 5;
-        break;
-      case KEY_UP:
-        ui.box_y -= 10;
-        if (ui.box_y < 104)
-          ui.box_y = 104;
-        break;
-      case KEY_DOWN:
-        ui.box_y += 10;
-        if (ui.box_y > (int32_t)height - 60)
-          ui.box_y = (int32_t)height - 60;
-        break;
-      case KEY_A:
-      case KEY_ENTER:
-      case KEY_SPACE:
-        ui.color_idx++;
-        break;
-      case KEY_C:
-        eos_lvgl_set_full_fallback(!eos_lvgl_is_full_fallback());
-        break;
-      case KEY_D:
-        eos_lvgl_flush_full_frame();
-        break;
-      case KEY_B:
-      case KEY_BACKSPACE:
-      case KEY_ESC:
-        ui.running = false;
-        break;
-      default:
-        break;
-      }
-      update_test_ui(&ui, eos_lvgl_key_name(key));
+      test_lvgl_handle_key(&ui, key, width, height);
     }
 
     eos_lvgl_step(10);
@@ -249,7 +254,7 @@ static int test_lvgl_main(int argc, char **argv) {
     if (timeout_ms > 0) {
       struct timeval tv;
       gettimeofday(&tv, NULL);
-      uint64_t now = (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+      uint64_t now = (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
       if (now - start_ms >= (uint64_t)timeout_ms) {
         ui.running = false;
       }

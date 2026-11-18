@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ebin/membench/membench.h"
 #include "emisc/fancymacro.h"
 
 #include <esp_heap_caps.h>
@@ -24,9 +25,6 @@ static const struct {
     {"DRAM DMA", MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA},
 };
 
-#define BENCH_DURATION_US 500000
-#define MB (1024.0f * 1024.0f)
-
 // ── Table formatting ──────────────────────────────────────────
 
 static void print_table_line(void) {
@@ -50,10 +48,10 @@ static void print_copy_table_header(void) {
 }
 
 static void print_block(size_t block) {
-  if (block < 1024)
+  if (block < EOS_LARGE_STR_LEN)
     printf("| %6u B ", (unsigned)block);
   else
-    printf("| %5u KB ", (unsigned)(block / 1024));
+    printf("| %5u KB ", (unsigned)(block / EOS_LARGE_STR_LEN));
 }
 
 // ── Benchmark routines ────────────────────────────────────────
@@ -79,7 +77,7 @@ static float bench_write(void *buf, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  usleep(100 * 1000);
+  usleep(MEMBENCH_COOLDOWN_US);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }
@@ -124,7 +122,7 @@ static float bench_read(void *buf, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  usleep(100 * 1000);
+  usleep(MEMBENCH_COOLDOWN_US);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }
@@ -150,42 +148,28 @@ static float bench_copy(void *dst, void *src, size_t block) {
 
   int64_t elapsed = esp_timer_get_time() - start;
 
-  usleep(100 * 1000);
+  usleep(MEMBENCH_COOLDOWN_US);
 
   return (float)bytes / (elapsed / 1e6f) / MB;
 }
 
 // ── Main ──────────────────────────────────────────────────────
 
-static int membench_main(int argc, char **argv) {
-  printf("\n");
-  printf("===========================================================\n");
-  printf("*                 EOS Memory Benchmark                    *\n");
-  printf("===========================================================\n\n");
-
-  size_t min_block = block_sizes[0];
-
+static void bench_type_matrix(size_t min_block) {
   for (size_t t = 0; t < EOS_ARR_COUNT(mem_types); t++) {
-
     uint32_t caps = mem_types[t].caps;
 
     if (heap_caps_get_free_size(caps) < min_block * 2) {
-
       printf("[ %-8s ] - not available or insufficient memory\n\n",
              mem_types[t].name);
-
       continue;
     }
 
     printf("** %s\n\n", mem_types[t].name);
-
     print_table_header();
 
     for (size_t b = 0; b < EOS_ARR_COUNT(block_sizes); b++) {
-
       size_t block = block_sizes[b];
-
-      // Check if largest free contiguous block can satisfy this benchmark block
       size_t largest = heap_caps_get_largest_free_block(caps);
       if (largest < block) {
         print_block(block);
@@ -197,13 +181,10 @@ static int membench_main(int argc, char **argv) {
       void *buf2 = heap_caps_malloc(block, caps);
 
       if (!buf1 || !buf2) {
-
         print_block(block);
         printf("| %12s | %12s | %12s |\n", "oom", "oom", "oom");
-
         heap_caps_free(buf1);
         heap_caps_free(buf2);
-
         continue;
       }
 
@@ -224,62 +205,52 @@ static int membench_main(int argc, char **argv) {
     print_table_line();
     printf("\n");
   }
+}
 
-  // ── DRAM → PSRAM copy test ──────────────────────────────────
-
-  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) >= min_block &&
-      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) >= min_block) {
-
-    printf("** DRAM -> PSRAM copy\n\n");
-
-    print_copy_table_header();
-
-    for (size_t b = 0; b < EOS_ARR_COUNT(block_sizes); b++) {
-
-      size_t block = block_sizes[b];
-
-      size_t largest_dram = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-      size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      if (largest_dram < block || largest_psram < block) {
-        print_block(block);
-        printf("| %12s |\n", "skip (frag)");
-        continue;
-      }
-
-      void *dram =
-          heap_caps_malloc(block, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-
-      void *psram =
-          heap_caps_malloc(block, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-
-      if (!dram || !psram) {
-
-        print_block(block);
-        printf("| %12s |\n", "oom");
-
-        heap_caps_free(dram);
-        heap_caps_free(psram);
-
-        continue;
-      }
-
-      memset(dram, 0xAA, block);
-
-      float c = bench_copy(psram, dram, block);
-
-      print_block(block);
-      printf("| %12.2f |\n", c);
-
-      heap_caps_free(dram);
-      heap_caps_free(psram);
-    }
-
-    print_copy_table_line();
-
-    printf("\n");
+static void bench_dram_psram_copy(size_t min_block) {
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < min_block ||
+      heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) < min_block) {
+    return;
   }
 
-  // ── Allocation Registry Overhead Benchmark (F02) ───────────
+  printf("** DRAM -> PSRAM copy\n\n");
+  print_copy_table_header();
+
+  for (size_t b = 0; b < EOS_ARR_COUNT(block_sizes); b++) {
+    size_t block = block_sizes[b];
+    size_t largest_dram = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t largest_psram = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (largest_dram < block || largest_psram < block) {
+      print_block(block);
+      printf("| %12s |\n", "skip (frag)");
+      continue;
+    }
+
+    void *dram = heap_caps_malloc(block, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    void *psram = heap_caps_malloc(block, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    if (!dram || !psram) {
+      print_block(block);
+      printf("| %12s |\n", "oom");
+      heap_caps_free(dram);
+      heap_caps_free(psram);
+      continue;
+    }
+
+    memset(dram, 0xAA, block);
+    float c = bench_copy(psram, dram, block);
+    print_block(block);
+    printf("| %12.2f |\n", c);
+
+    heap_caps_free(dram);
+    heap_caps_free(psram);
+  }
+
+  print_copy_table_line();
+  printf("\n");
+}
+
+static void bench_registry_overhead(void) {
   printf("** Allocation Registry Overhead (F02 Tracking & Scalability)\n\n");
   printf("+----------+--------------+--------------+--------------+\n");
   printf("|  blocks  | alloc us/op  |  free us/op  | total us/op  |\n");
@@ -291,10 +262,10 @@ static int membench_main(int argc, char **argv) {
     void **ptrs = (void **)malloc(count * sizeof(void *));
     if (!ptrs) continue;
 
-    const int iterations = (count >= 1000) ? 5 : 20;
+    const int iterations = (count >= MEMBENCH_THRESHOLD_COUNT) ? 5 : 20;
     int64_t total_alloc_time = 0;
     int64_t total_free_time = 0;
-    size_t blk_size = (count >= 1000) ? 32 : 64;
+    size_t blk_size = (count >= MEMBENCH_THRESHOLD_COUNT) ? EOS_SMALL_STR_LEN : EOS_LINE_64_LEN;
 
     for (int it = 0; it < iterations; it++) {
       int64_t t0 = esp_timer_get_time();
@@ -323,18 +294,16 @@ static int membench_main(int argc, char **argv) {
   }
   printf("+----------+--------------+--------------+--------------+\n\n");
 
-  // ── Unregistered Pointer Miss-Path Benchmark ───────────────
   printf("** Unregistered Pointer Free (Miss-Path Fast-Exit Benchmark)\n\n");
   printf("+----------+--------------+--------------+--------------+\n");
   printf("|  blocks  | alloc us/op  |  free us/op  | total us/op  |\n");
   printf("+----------+--------------+--------------+--------------+\n");
   {
-    const size_t miss_count = 500;
+    const size_t miss_count = MEMBENCH_MISS_COUNT;
     void **unregistered = (void **)malloc(miss_count * sizeof(void *));
     if (unregistered) {
-      // Allocate raw memory bypassing tracking
       for (size_t i = 0; i < miss_count; i++) {
-        unregistered[i] = heap_caps_malloc(32, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        unregistered[i] = heap_caps_malloc(EOS_SMALL_STR_LEN, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
       }
       int64_t t_free_start = esp_timer_get_time();
       for (size_t i = 0; i < miss_count; i++) {
@@ -348,9 +317,20 @@ static int membench_main(int argc, char **argv) {
       free(unregistered);
     }
   }
+}
+
+static int membench_main(int argc, char **argv) {
+  printf("\n");
+  printf("===========================================================\n");
+  printf("*                 EOS Memory Benchmark                    *\n");
+  printf("===========================================================\n\n");
+
+  size_t min_block = block_sizes[0];
+  bench_type_matrix(min_block);
+  bench_dram_psram_copy(min_block);
+  bench_registry_overhead();
 
   printf("Benchmark complete.\n\n");
-
   return 0;
 }
 

@@ -13,6 +13,7 @@
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 #include <dirent.h>
 #include <driver/gpio.h>
@@ -21,7 +22,9 @@
 #include <freertos/FreeRTOS.h>
 #include <soc/soc_caps.h>
 
-#define IS_VALID_FD(FD) (!((FD < 0) || (FD >= SOC_GPIO_PIN_COUNT)))
+static inline bool is_valid_fd(int fd) {
+  return fd >= 0 && fd < SOC_GPIO_PIN_COUNT;
+}
 
 // Controls read/write ops
 typedef enum{
@@ -126,7 +129,7 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
   }
 
   // Ensure GPIO range and validity
-  if (!IS_VALID_FD(gpioNum) || !GPIO_IS_VALID_GPIO(gpioNum)) {
+  if (!is_valid_fd(gpioNum) || !GPIO_IS_VALID_GPIO(gpioNum)) {
     errno = EINVAL;
     return -1;
   }
@@ -158,7 +161,7 @@ int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,
 //=====================================================================
 int driver_bus_gpio_close(eos_dev_t *dev, int fd) {
   // Ensure GPIO range
-  if (!IS_VALID_FD(fd)) {
+  if (!is_valid_fd(fd)) {
     errno = EINVAL;
     return -1;
   }
@@ -174,7 +177,7 @@ int driver_bus_gpio_close(eos_dev_t *dev, int fd) {
 }
 //=====================================================================
 ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
-  if (!IS_VALID_FD(fd)) {
+  if (!is_valid_fd(fd)) {
     errno = EINVAL;
     return -1;
   }
@@ -199,7 +202,7 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
 
     if (elapsed < pin->sample_period_us) {
       int64_t remaining = pin->sample_period_us - elapsed;
-      TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
+      TickType_t ticks = pdMS_TO_TICKS((remaining + EOS_US_PER_MS - 1) / EOS_US_PER_MS);
 
       if (ticks > 0)
         vTaskDelay(ticks);
@@ -224,7 +227,7 @@ ssize_t driver_bus_gpio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
 //=====================================================================
 ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
                               size_t size) {
-  if (!IS_VALID_FD(fd)) {
+  if (!is_valid_fd(fd)) {
     errno = EINVAL;
     return -1;
   }
@@ -257,7 +260,7 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
 
     if (elapsed < pin->sample_period_us) {
       int64_t remaining = pin->sample_period_us - elapsed;
-      TickType_t ticks = pdMS_TO_TICKS((remaining + 999) / 1000);
+      TickType_t ticks = pdMS_TO_TICKS((remaining + EOS_US_PER_MS - 1) / EOS_US_PER_MS);
 
       if (ticks > 0)
         vTaskDelay(ticks);
@@ -296,7 +299,7 @@ ssize_t driver_bus_gpio_write(eos_dev_t *dev, int fd, const void *data,
 }
 //=====================================================================
 int driver_bus_gpio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
-  if (!IS_VALID_FD(fd)) {
+  if (!is_valid_fd(fd)) {
     errno = EINVAL;
     return -1;
   }
@@ -386,7 +389,7 @@ struct dirent *driver_bus_gpio_readdir(eos_dev_t *dev, DIR *pdir) {
   }
 
   for (;;) {
-    if (!IS_VALID_FD(gpdir->idx))
+    if (!is_valid_fd(gpdir->idx))
       return NULL;
 
     int pin = gpdir->idx;

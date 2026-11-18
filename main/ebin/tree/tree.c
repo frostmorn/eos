@@ -110,7 +110,7 @@ int tree_main(int argc, char **argv) {
 
 EOS_BIN_ATTR eos_bin_t tree_app = {
     EOS_BIN_INITIALIZER,
-    .stack_size = 12288U,
+    .stack_size = EOS_BIN_LARGE_STACK_SIZE,
     .filename = "tree",
     .name = "Directory Tree",
     .group = "Utils",

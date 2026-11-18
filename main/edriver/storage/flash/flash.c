@@ -9,8 +9,6 @@
 
 #include <errno.h>
 
-#define BAD_OFFSET -1
-
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {

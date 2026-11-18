@@ -17,6 +17,8 @@ typedef int (*eos_b64_emit_fn)(void *arg, const void *data, size_t len);
 #define EOS_B64_OK        0
 #define EOS_B64_INVALID  (-1)   // malformed input while decoding
 #define EOS_B64_IO       (-2)   // emit callback reported a failure
+#define EOS_B64_OUT_CHUNK 192
+#define B64_OUT_CHUNK     EOS_B64_OUT_CHUNK
 
 typedef struct {
   uint8_t rem[3];

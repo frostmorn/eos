@@ -1,14 +1,12 @@
 #include "ecore/log.h"
 #include "ecore/fapi.h"
 #include "ecore/proc.h"
+#include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
 
 #include <esp_log.h>
 #include <fcntl.h>
 #include <sys/reent.h>
-#ifndef _REENT
-#define _REENT (__getreent())
-#endif
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -25,7 +23,6 @@
 #if defined(CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG) && CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
 #if !defined(__has_include) || __has_include(<driver/usb_serial_jtag.h>)
 #include <driver/usb_serial_jtag.h>
-#define EOS_HAS_USJ_DRIVER 1
 #endif
 #endif
 
@@ -159,7 +156,7 @@ static void write_log_to_file(const char *path, const char *buf, size_t len) {
   }
 
   struct _reent *r = _REENT;
-  int fd = __real__open_r(r, resolved, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  int fd = __real__open_r(r, resolved, O_WRONLY | O_CREAT | O_APPEND, EOS_DEFAULT_FILE_MODE);
   if (fd < 0)
     return;
 
@@ -167,7 +164,7 @@ static void write_log_to_file(const char *path, const char *buf, size_t len) {
   if (__real__fstat_r(r, fd, &st) == 0 &&
       (size_t)st.st_size + len > EOS_LOG_MAX_BYTES) {
     __real__close_r(r, fd);
-    fd = __real__open_r(r, resolved, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd = __real__open_r(r, resolved, O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
     if (fd < 0)
       return;
   }
@@ -198,7 +195,7 @@ static int eos_log_vprintf(const char *fmt, va_list ap) {
   xSemaphoreTake(s_log_mutex, portMAX_DELAY);
   s_log_owner = cur_task;
 
-  char buf[512];
+  char buf[EOS_SECTOR_SIZE];
   va_list ap_copy;
   va_copy(ap_copy, ap);
   int len = vsnprintf(buf, sizeof(buf), fmt, ap_copy);

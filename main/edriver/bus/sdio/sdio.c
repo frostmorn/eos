@@ -31,6 +31,7 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
 typedef struct {
@@ -64,13 +65,6 @@ typedef struct {
 } sdio_state_t;
 
 #if SOC_SDMMC_HOST_SUPPORTED
-static esp_err_t sdio_get_host(eos_dev_t *dev, sdmmc_host_t *out_host) {
-  if (!dev || !dev->state || !out_host) return ESP_ERR_INVALID_ARG;
-  sdio_state_t *st = (sdio_state_t *)dev->state;
-  *out_host = st->host_cfg;
-  return ESP_OK;
-}
-
 static esp_err_t sdio_get_card(eos_dev_t *dev, sdmmc_card_t **out_card) {
   if (!dev || !dev->state || !out_card) return ESP_ERR_INVALID_ARG;
   sdio_state_t *st = (sdio_state_t *)dev->state;
@@ -84,7 +78,7 @@ static esp_err_t sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
   sdio_state_t *st = (sdio_state_t *)dev->state;
   if (!st->slot_initialized) return ESP_ERR_INVALID_STATE;
 
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     return ESP_ERR_TIMEOUT;
   }
 
@@ -110,25 +104,11 @@ static esp_err_t sdio_reset_slave(eos_dev_t *dev) {
   gpio_set_level((gpio_num_t)st->rst_pin, 0);
   vTaskDelay(pdMS_TO_TICKS(20));
   gpio_set_level((gpio_num_t)st->rst_pin, 1);
-  vTaskDelay(pdMS_TO_TICKS(50));
+  vTaskDelay(pdMS_TO_TICKS(EOS_MS_PER_TICK_50));
   return ESP_OK;
 }
 
-bool driver_bus_sdio_init(eos_dev_t *dev) {
-  sdio_state_t *st = eos_psram_calloc_prefer(1, sizeof(sdio_state_t));
-  if (!st) return false;
-
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
-    free(st);
-    return false;
-  }
-
-  st->slot = eos_cfg_get_i(dev->cfg, "slot", 0);
-  st->width = eos_cfg_get_i(dev->cfg, "width", 4);
-  st->freq_khz = eos_cfg_get_i(dev->cfg, "freq_khz", 20000);
-  st->ldo_chan = eos_cfg_get_i(dev->cfg, "ldo_chan", -1);
-
+static void sdio_init_pins(eos_dev_t *dev, sdio_state_t *st) {
   st->clk_pin = eos_pin_get_no(dev->pins, "clk");
   st->cmd_pin = eos_pin_get_no(dev->pins, "cmd");
   st->d0_pin = eos_pin_get_no(dev->pins, "d0");
@@ -139,7 +119,6 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   st->wp_pin = eos_pin_get_no(dev->pins, "wp");
   st->rst_pin = eos_pin_get_no(dev->pins, "rst");
 
-  // Claim GPIO resources
   if (st->clk_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->clk_pin, dev);
   if (st->cmd_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->cmd_pin, dev);
   if (st->d0_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->d0_pin, dev);
@@ -149,27 +128,10 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   if (st->cd_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->cd_pin, dev);
   if (st->wp_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->wp_pin, dev);
   if (st->rst_pin >= 0) eos_cap_claim(EOS_CAPS_GPIO, st->rst_pin, dev);
-
-  bool lazy_slot = (bool)eos_cfg_get_i(dev->cfg, "lazy_slot", 0);
-
-  // If reset pin is present and slot is not lazy/external, pulse reset
-  if (!lazy_slot && st->rst_pin >= 0) {
-    gpio_config_t rst_conf = {
-        .pin_bit_mask = (1ULL << st->rst_pin),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&rst_conf);
-    gpio_set_level((gpio_num_t)st->rst_pin, 0);
-    vTaskDelay(pdMS_TO_TICKS(20));
-    gpio_set_level((gpio_num_t)st->rst_pin, 1);
-    vTaskDelay(pdMS_TO_TICKS(50));
-    EOS_LOGI("sdio: reset pulsed on GPIO %d (slot %d)", st->rst_pin, st->slot);
-  }
+}
 
 #if SOC_SDMMC_HOST_SUPPORTED
+static void sdio_init_host_slot(sdio_state_t *st, bool lazy_slot) {
 #if defined(SOC_SDMMC_IO_POWER_EXTERNAL) && SOC_SDMMC_IO_POWER_EXTERNAL
   if (st->ldo_chan >= 0) {
     sd_pwr_ctrl_ldo_config_t ldo_config = {
@@ -230,6 +192,46 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   } else {
     EOS_LOGI("sdio: slot %d configured (lazy/coprocessor mode)", st->slot);
   }
+}
+#endif
+
+bool driver_bus_sdio_init(eos_dev_t *dev) {
+  sdio_state_t *st = eos_psram_calloc_prefer(1, sizeof(sdio_state_t));
+  if (!st) return false;
+
+  st->mutex = xSemaphoreCreateMutex();
+  if (!st->mutex) {
+    free(st);
+    return false;
+  }
+
+  st->slot = eos_cfg_get_i(dev->cfg, "slot", 0);
+  st->width = eos_cfg_get_i(dev->cfg, "width", 4);
+  st->freq_khz = eos_cfg_get_i(dev->cfg, "freq_khz", 20000);
+  st->ldo_chan = eos_cfg_get_i(dev->cfg, "ldo_chan", -1);
+
+  sdio_init_pins(dev, st);
+
+  bool lazy_slot = (bool)eos_cfg_get_i(dev->cfg, "lazy_slot", 0);
+
+  if (!lazy_slot && st->rst_pin >= 0) {
+    gpio_config_t rst_conf = {
+        .pin_bit_mask = (1ULL << st->rst_pin),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&rst_conf);
+    gpio_set_level((gpio_num_t)st->rst_pin, 0);
+    vTaskDelay(pdMS_TO_TICKS(20));
+    gpio_set_level((gpio_num_t)st->rst_pin, 1);
+    vTaskDelay(pdMS_TO_TICKS(EOS_MS_PER_TICK_50));
+    EOS_LOGI("sdio: reset pulsed on GPIO %d (slot %d)", st->rst_pin, st->slot);
+  }
+
+#if SOC_SDMMC_HOST_SUPPORTED
+  sdio_init_host_slot(st, lazy_slot);
 #endif
 
   dev->state = st;
@@ -317,7 +319,7 @@ int driver_bus_sdio_fstat(eos_dev_t *dev, int fd, struct stat *st) {
   (void)fd;
   if (!st) return -1;
   memset(st, 0, sizeof(*st));
-  st->st_mode = S_IFCHR | 0666;
+  st->st_mode = S_IFCHR | EOS_DEFAULT_DEV_MODE;
   return 0;
 }
 
@@ -336,7 +338,7 @@ ssize_t driver_bus_sdio_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   }
 
   if (st->card.is_mem) {
-    size_t sector_size = st->card.csd.sector_size ? st->card.csd.sector_size : 512;
+    size_t sector_size = st->card.csd.sector_size ? st->card.csd.sector_size : EOS_SECTOR_SIZE;
     size_t cnt = size / sector_size;
     if (cnt == 0) return 0;
     if (sdmmc_read_sectors(&st->card, dst, st->offset, cnt) != ESP_OK) {
@@ -357,7 +359,7 @@ ssize_t driver_bus_sdio_write(eos_dev_t *dev, int fd, const void *data, size_t s
 #if SOC_SDMMC_HOST_SUPPORTED
   if (!st->card_probed) return -1;
   if (st->card.is_mem) {
-    size_t sector_size = st->card.csd.sector_size ? st->card.csd.sector_size : 512;
+    size_t sector_size = st->card.csd.sector_size ? st->card.csd.sector_size : EOS_SECTOR_SIZE;
     size_t cnt = size / sector_size;
     if (cnt == 0) return 0;
     if (sdmmc_write_sectors(&st->card, data, st->offset, cnt) != ESP_OK) {
@@ -402,6 +404,61 @@ off_t driver_bus_sdio_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
   return -1;
 }
 
+#if SOC_SDMMC_HOST_SUPPORTED
+static int sdio_ioctl_cmd(sdio_state_t *st, int cmd, va_list args) {
+  if (!st->card_probed) return -1;
+  switch (cmd) {
+    case EOS_SDIO_IOCTL_IO_READ_BYTE: {
+      eos_sdio_cmd52_t *c = va_arg(args, eos_sdio_cmd52_t *);
+      if (!c) { errno = EINVAL; return -1; }
+      return (sdmmc_io_read_byte(&st->card, c->function, c->reg, &c->read_val) == ESP_OK) ? 0 : -1;
+    }
+    case EOS_SDIO_IOCTL_IO_WRITE_BYTE: {
+      eos_sdio_cmd52_t *c = va_arg(args, eos_sdio_cmd52_t *);
+      if (!c) { errno = EINVAL; return -1; }
+      return (sdmmc_io_write_byte(&st->card, c->function, c->reg, c->write_val, &c->read_val) == ESP_OK) ? 0 : -1;
+    }
+    case EOS_SDIO_IOCTL_IO_READ_BYTES: {
+      eos_sdio_cmd53_t *c = va_arg(args, eos_sdio_cmd53_t *);
+      if (!c || !c->buf) { errno = EINVAL; return -1; }
+      uint32_t addr = c->addr | (c->fixed_addr ? SDMMC_IO_FIXED_ADDR : 0);
+      return (sdmmc_io_read_bytes(&st->card, c->function, addr, c->buf, c->len) == ESP_OK) ? 0 : -1;
+    }
+    case EOS_SDIO_IOCTL_IO_WRITE_BYTES: {
+      eos_sdio_cmd53_t *c = va_arg(args, eos_sdio_cmd53_t *);
+      if (!c || !c->buf) { errno = EINVAL; return -1; }
+      uint32_t addr = c->addr | (c->fixed_addr ? SDMMC_IO_FIXED_ADDR : 0);
+      return (sdmmc_io_write_bytes(&st->card, c->function, addr, c->buf, c->len) == ESP_OK) ? 0 : -1;
+    }
+    default:
+      errno = EINVAL;
+      return -1;
+  }
+}
+
+static int sdio_ioctl_host_cfg(sdio_state_t *st, int cmd, va_list args) {
+  switch (cmd) {
+    case EOS_SDIO_IOCTL_GET_HOST: {
+      sdmmc_host_t *out = va_arg(args, sdmmc_host_t *);
+      if (!out) { errno = EINVAL; return -1; }
+      *out = st->host_cfg;
+      return 0;
+    }
+    case EOS_SDIO_IOCTL_SET_CLOCK_HZ: {
+      uint32_t freq_hz = va_arg(args, uint32_t);
+      return (sdmmc_host_set_card_clk(st->slot, freq_hz / EOS_MS_PER_SEC) == ESP_OK) ? 0 : -1;
+    }
+    case EOS_SDIO_IOCTL_SET_BUS_WIDTH: {
+      uint32_t width = va_arg(args, uint32_t);
+      return (sdmmc_host_set_bus_width(st->slot, width) == ESP_OK) ? 0 : -1;
+    }
+    default:
+      errno = EINVAL;
+      return -1;
+  }
+}
+#endif
+
 int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   (void)fd;
   if (!dev || !dev->state) {
@@ -411,48 +468,26 @@ int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   sdio_state_t *st = (sdio_state_t *)dev->state;
 
   switch (cmd) {
-    case EOS_SDIO_IOCTL_GET_HOST: {
+    case EOS_SDIO_IOCTL_GET_HOST:
+    case EOS_SDIO_IOCTL_SET_CLOCK_HZ:
+    case EOS_SDIO_IOCTL_SET_BUS_WIDTH:
 #if SOC_SDMMC_HOST_SUPPORTED
-      sdmmc_host_t *out = va_arg(args, sdmmc_host_t *);
-      if (!out) { errno = EINVAL; return -1; }
-      *out = st->host_cfg;
-      return 0;
+      return sdio_ioctl_host_cfg(st, cmd, args);
 #else
       errno = ENOTSUP;
       return -1;
 #endif
-    }
+
     case EOS_SDIO_IOCTL_GET_SLOT: {
       int *slot = va_arg(args, int *);
       if (!slot) { errno = EINVAL; return -1; }
       *slot = st->slot;
       return 0;
     }
-    case EOS_SDIO_IOCTL_SET_CLOCK_HZ: {
-      uint32_t freq_hz = va_arg(args, uint32_t);
-#if SOC_SDMMC_HOST_SUPPORTED
-      esp_err_t err = sdmmc_host_set_card_clk(st->slot, freq_hz / 1000);
-      return (err == ESP_OK) ? 0 : -1;
-#else
-      (void)freq_hz;
-      errno = ENOTSUP;
-      return -1;
-#endif
-    }
-    case EOS_SDIO_IOCTL_SET_BUS_WIDTH: {
-      uint32_t width = va_arg(args, uint32_t);
-#if SOC_SDMMC_HOST_SUPPORTED
-      esp_err_t err = sdmmc_host_set_bus_width(st->slot, width);
-      return (err == ESP_OK) ? 0 : -1;
-#else
-      (void)width;
-      errno = ENOTSUP;
-      return -1;
-#endif
-    }
-    case EOS_SDIO_IOCTL_RESET: {
+
+    case EOS_SDIO_IOCTL_RESET:
       return (sdio_reset_slave(dev) == ESP_OK) ? 0 : -1;
-    }
+
     case EOS_SDIO_IOCTL_GET_CARD: {
 #if SOC_SDMMC_HOST_SUPPORTED
       sdmmc_card_t **out = va_arg(args, sdmmc_card_t **);
@@ -463,6 +498,7 @@ int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return -1;
 #endif
     }
+
     case EOS_SDIO_IOCTL_PROBE_CARD: {
 #if SOC_SDMMC_HOST_SUPPORTED
       sdmmc_card_t *out = va_arg(args, sdmmc_card_t *);
@@ -472,56 +508,18 @@ int driver_bus_sdio_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return -1;
 #endif
     }
-    case EOS_SDIO_IOCTL_IO_READ_BYTE: {
+
+    case EOS_SDIO_IOCTL_IO_READ_BYTE:
+    case EOS_SDIO_IOCTL_IO_WRITE_BYTE:
+    case EOS_SDIO_IOCTL_IO_READ_BYTES:
+    case EOS_SDIO_IOCTL_IO_WRITE_BYTES:
 #if SOC_SDMMC_HOST_SUPPORTED
-      eos_sdio_cmd52_t *c = va_arg(args, eos_sdio_cmd52_t *);
-      if (!c) { errno = EINVAL; return -1; }
-      if (!st->card_probed) return -1;
-      esp_err_t err = sdmmc_io_read_byte(&st->card, c->function, c->reg, &c->read_val);
-      return (err == ESP_OK) ? 0 : -1;
+      return sdio_ioctl_cmd(st, cmd, args);
 #else
       errno = ENOTSUP;
       return -1;
 #endif
-    }
-    case EOS_SDIO_IOCTL_IO_WRITE_BYTE: {
-#if SOC_SDMMC_HOST_SUPPORTED
-      eos_sdio_cmd52_t *c = va_arg(args, eos_sdio_cmd52_t *);
-      if (!c) { errno = EINVAL; return -1; }
-      if (!st->card_probed) return -1;
-      esp_err_t err = sdmmc_io_write_byte(&st->card, c->function, c->reg, c->write_val, &c->read_val);
-      return (err == ESP_OK) ? 0 : -1;
-#else
-      errno = ENOTSUP;
-      return -1;
-#endif
-    }
-    case EOS_SDIO_IOCTL_IO_READ_BYTES: {
-#if SOC_SDMMC_HOST_SUPPORTED
-      eos_sdio_cmd53_t *c = va_arg(args, eos_sdio_cmd53_t *);
-      if (!c || !c->buf) { errno = EINVAL; return -1; }
-      if (!st->card_probed) return -1;
-      uint32_t addr = c->addr | (c->fixed_addr ? SDMMC_IO_FIXED_ADDR : 0);
-      esp_err_t err = sdmmc_io_read_bytes(&st->card, c->function, addr, c->buf, c->len);
-      return (err == ESP_OK) ? 0 : -1;
-#else
-      errno = ENOTSUP;
-      return -1;
-#endif
-    }
-    case EOS_SDIO_IOCTL_IO_WRITE_BYTES: {
-#if SOC_SDMMC_HOST_SUPPORTED
-      eos_sdio_cmd53_t *c = va_arg(args, eos_sdio_cmd53_t *);
-      if (!c || !c->buf) { errno = EINVAL; return -1; }
-      if (!st->card_probed) return -1;
-      uint32_t addr = c->addr | (c->fixed_addr ? SDMMC_IO_FIXED_ADDR : 0);
-      esp_err_t err = sdmmc_io_write_bytes(&st->card, c->function, addr, c->buf, c->len);
-      return (err == ESP_OK) ? 0 : -1;
-#else
-      errno = ENOTSUP;
-      return -1;
-#endif
-    }
+
     default:
       errno = EINVAL;
       return -1;

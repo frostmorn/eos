@@ -8,6 +8,17 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#define CAT_BUFFER_SIZE 512
+#define CP_BUFFER_SIZE 1024
+#define MV_BUFFER_SIZE 1024
+#define MKDIR_MODE 0755
+#ifndef EOS_DEFAULT_DIR_MODE
+#define EOS_DEFAULT_DIR_MODE 0755
+#endif
+#ifndef EOS_DEFAULT_FILE_MODE
+#define EOS_DEFAULT_FILE_MODE 0644
+#endif
+
 static inline const char *fs_get_basename(const char *path) {
   if (!path || !path[0]) return "";
   const char *p = path + strlen(path) - 1;
@@ -38,6 +49,11 @@ static inline bool fs_is_same_file(const char *src, const char *dst) {
   }
   return false;
 }
+
+static inline const char *get_basename(const char *path) { return fs_get_basename(path); }
+static inline void join_path(char *dst, size_t dst_size, const char *dir, const char *name) { fs_join_path(dst, dst_size, dir, name); }
+static inline bool is_directory(const char *path) { return fs_is_directory(path); }
+static inline bool is_same_file(const char *src, const char *dst) { return fs_is_same_file(src, dst); }
 
 typedef struct {
   char *src;

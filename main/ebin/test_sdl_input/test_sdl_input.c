@@ -4,6 +4,8 @@
 
 #include "SDL.h"
 #include "ecore/bin.h"
+#include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 
 int test_sdl_input_main(int argc, char **argv) {
   int max_events = 20;
@@ -17,7 +19,7 @@ int test_sdl_input_main(int argc, char **argv) {
     return -1;
   }
 
-  SDL_Surface *screen = SDL_SetVideoMode(240, 280, 16, 0);
+  SDL_Surface *screen = SDL_SetVideoMode(EOS_DISPLAY_DEFAULT_HEIGHT, EOS_DISPLAY_DEFAULT_WIDTH, 16, 0);
   if (!screen) {
     printf("SDL_SetVideoMode failed: %s\n", SDL_GetError());
     SDL_Quit();
@@ -54,7 +56,7 @@ int test_sdl_input_main(int argc, char **argv) {
         printf("[%d] SDL Event type=%lu\n", count, (unsigned long)e.type);
       }
     } else {
-      SDL_Delay(50);
+      SDL_Delay(EOS_MS_PER_TICK_50);
     }
   }
 
@@ -66,7 +68,7 @@ int test_sdl_input_main(int argc, char **argv) {
 EOS_BIN_ATTR eos_bin_t test_sdl_input = {
     EOS_BIN_INITIALIZER,
     .flags = EOS_BIN_FLAG_GUI,
-    .stack_size = 12288U,
+    .stack_size = EOS_BIN_LARGE_STACK_SIZE,
     .filename = "test_sdl_input",
     .name = "SDL Input Test",
     .group = "Tests",

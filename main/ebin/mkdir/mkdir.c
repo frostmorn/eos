@@ -1,11 +1,10 @@
 #include "ecore/bin.h"
+#include "ebin/fs_common.h"
 #include <dirent.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <errno.h>
 #include <string.h>
-
-#define MKDIR_MODE 0777
 
 int mkdir_main(int argc, char **argv){
   if (argc < 2) {

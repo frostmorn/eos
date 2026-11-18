@@ -10,6 +10,8 @@
 
 #define EOS_ELF_MAGIC 0x464C457FU // '\x7f' 'E' 'L' 'F' (Little Endian)
 #define EOS_ELF_DEFAULT_STACK_SIZE 16384U
+#define ELF_MIN_HEADER_SIZE 52U
+#define ELF_MAX_FILE_SIZE   (16U * 1024U * 1024U)
 
 #include "ecore/bin.h"
 

@@ -27,6 +27,7 @@
 // Default, minimum, and GUI thread stack sizes for ebin execution
 #define EOS_BIN_DEFAULT_STACK_SIZE 8192U
 #define EOS_BIN_MIN_STACK_SIZE     4096U
+#define EOS_BIN_LARGE_STACK_SIZE   12288U
 #define EOS_BIN_GUI_STACK_SIZE     16384U
 
 // Bin manifest

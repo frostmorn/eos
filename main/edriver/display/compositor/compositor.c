@@ -30,8 +30,8 @@ bool driver_display_compositor_init(eos_dev_t *dev) {
   uint32_t parent_w = 0, parent_h = 0;
   eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_GET_WIDTH, &parent_w);
   eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_GET_HEIGHT, &parent_h);
-  if (parent_w == 0) parent_w = 280;
-  if (parent_h == 0) parent_h = 240;
+  if (parent_w == 0) parent_w = EOS_DISPLAY_DEFAULT_WIDTH;
+  if (parent_h == 0) parent_h = EOS_DISPLAY_DEFAULT_HEIGHT;
 
   int32_t x = eos_cfg_get_i(dev->cfg, "x", 0);
   int32_t y = eos_cfg_get_i(dev->cfg, "y", 0);

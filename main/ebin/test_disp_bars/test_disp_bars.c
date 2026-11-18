@@ -9,6 +9,7 @@
 
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
 static void draw_bars(int fd) {
@@ -31,11 +32,11 @@ static void draw_bars(int fd) {
       uint16_t c;
 
       if (x < w / 6)
-        c = 0xF800; // red
+        c = EOS_RGB565_RED_MASK; // red
       else if (x < w * 2 / 6)
-        c = 0x07E0; // green
+        c = EOS_RGB565_GREEN_MASK; // green
       else if (x < w * 3 / 6)
-        c = 0x001F; // blue
+        c = EOS_RGB565_BLUE_MASK; // blue
       else if (x < w * 4 / 6)
         c = 0xFFE0; // yellow
       else if (x < w * 5 / 6)
@@ -61,7 +62,7 @@ static void draw_bars(int fd) {
   }
 
   // Keep frame visible briefly before exiting
-  usleep(2000 * 1000);
+  usleep(2 * EOS_US_PER_SEC);
 
   free(buf);
 }

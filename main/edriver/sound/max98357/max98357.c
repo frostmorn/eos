@@ -19,6 +19,8 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include "emisc/types.h"
 #include "emisc/psram_alloc.h"
 
@@ -75,10 +77,10 @@ static void max98357_calc_dma_config(uint32_t sample_rate, uint32_t delay_ms,
   // Coarse frame count rounded to multiple of 64 frames
   uint32_t target_frames = (sample_rate * delay_ms) / 4000;
   uint32_t frame_num = (target_frames + 63) & ~63;
-  if (frame_num < 128)
-    frame_num = 128;
-  if (frame_num > 1024)
-    frame_num = 1024;
+  if (frame_num < EOS_BUFFER_128_LEN)
+    frame_num = EOS_BUFFER_128_LEN;
+  if (frame_num > EOS_LARGE_STR_LEN)
+    frame_num = EOS_LARGE_STR_LEN;
 
   *out_frame_num = frame_num;
 }
@@ -224,6 +226,83 @@ static bool max98357_apply_format(max98357_state_t *st, uint32_t rate,
 
 // ── Init / Shutdown ───────────────────────────────────────────
 
+static bool max98357_init_pins(eos_dev_t *dev, max98357_state_t *st) {
+  st->bclk_pin = eos_pin_get_no(dev->pins, "bclk");
+  if (st->bclk_pin < 0) st->bclk_pin = eos_pin_get_no(dev->pins, "sck");
+  if (st->bclk_pin < 0) st->bclk_pin = 42;
+
+  st->ws_pin = eos_pin_get_no(dev->pins, "ws");
+  if (st->ws_pin < 0) st->ws_pin = eos_pin_get_no(dev->pins, "lrck");
+  if (st->ws_pin < 0) st->ws_pin = 1;
+
+  st->dout_pin = eos_pin_get_no(dev->pins, "dout");
+  if (st->dout_pin < 0) st->dout_pin = eos_pin_get_no(dev->pins, "data");
+  if (st->dout_pin < 0) st->dout_pin = eos_pin_get_no(dev->pins, "din");
+  if (st->dout_pin < 0) st->dout_pin = 2;
+
+  if (!eos_cap_claim(EOS_CAPS_GPIO, st->bclk_pin, dev)) {
+    EOS_LOGE("max98357: failed to claim bclk pin %" PRId32, st->bclk_pin);
+    return false;
+  }
+  if (!eos_cap_claim(EOS_CAPS_GPIO, st->ws_pin, dev)) {
+    EOS_LOGE("max98357: failed to claim ws pin %" PRId32, st->ws_pin);
+    eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
+    return false;
+  }
+  if (!eos_cap_claim(EOS_CAPS_GPIO, st->dout_pin, dev)) {
+    EOS_LOGE("max98357: failed to claim dout pin %" PRId32, st->dout_pin);
+    eos_cap_release(EOS_CAPS_GPIO, st->ws_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
+    return false;
+  }
+  return true;
+}
+
+static void max98357_parse_mult_delay(eos_dev_t *dev, max98357_state_t *st) {
+  uint32_t mult = 10;
+  int32_t cfg_mult = eos_cfg_get_i(dev->cfg, "mult", -1);
+  if (cfg_mult < 0) cfg_mult = eos_cfg_get_i(dev->cfg, "multiplier", -1);
+
+  if (cfg_mult >= 0) {
+    mult = (uint32_t)cfg_mult;
+  } else {
+    int32_t ep = eos_cfg_get_i(dev->cfg, "earplugs", -1);
+    if (ep == 0) {
+      mult = 100;
+    } else {
+      char *mode = eos_cfg_get_s(dev->cfg, "mode", NULL);
+      if (mode && (strcasecmp(mode, "speaker") == 0 ||
+                   strcasecmp(mode, "full") == 0 ||
+                   strcasecmp(mode, "loud") == 0)) {
+        mult = 100;
+      } else {
+        mult = 10;
+      }
+    }
+  }
+  if (mult > 100) mult = 100;
+  st->mult = mult;
+
+  int32_t delay_ms = eos_cfg_get_i(dev->cfg, "delay", -1);
+  if (delay_ms < 0) delay_ms = eos_cfg_get_i(dev->cfg, "delay_ms", -1);
+  if (delay_ms < 0) delay_ms = eos_cfg_get_i(dev->cfg, "latency", -1);
+  if (delay_ms < 0) delay_ms = eos_cfg_get_i(dev->cfg, "latency_ms", -1);
+  if (delay_ms <= 0) delay_ms = 90;
+  st->delay_ms = (uint32_t)delay_ms;
+
+  uint32_t dma_desc_num = 0;
+  uint32_t dma_frame_num = 0;
+  max98357_calc_dma_config(st->sample_rate, st->delay_ms, &dma_desc_num, &dma_frame_num);
+
+  int32_t cfg_desc = eos_cfg_get_i(dev->cfg, "dma_desc", -1);
+  if (cfg_desc > 0) dma_desc_num = (uint32_t)cfg_desc;
+  int32_t cfg_frame = eos_cfg_get_i(dev->cfg, "dma_frame", -1);
+  if (cfg_frame > 0) dma_frame_num = (uint32_t)cfg_frame;
+
+  st->dma_desc_num = dma_desc_num;
+  st->dma_frame_num = dma_frame_num;
+}
+
 static bool driver_sound_max98357_init(eos_dev_t *dev) {
   if (!dev)
     return false;
@@ -240,54 +319,13 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
     return false;
   }
 
-  // Pin resolution with fallback to Lilka v2.3 defaults (bclk=42, ws=1, dout=2)
-  st->bclk_pin = eos_pin_get_no(dev->pins, "bclk");
-  if (st->bclk_pin < 0)
-    st->bclk_pin = eos_pin_get_no(dev->pins, "sck");
-  if (st->bclk_pin < 0)
-    st->bclk_pin = 42;
-
-  st->ws_pin = eos_pin_get_no(dev->pins, "ws");
-  if (st->ws_pin < 0)
-    st->ws_pin = eos_pin_get_no(dev->pins, "lrck");
-  if (st->ws_pin < 0)
-    st->ws_pin = 1;
-
-  st->dout_pin = eos_pin_get_no(dev->pins, "dout");
-  if (st->dout_pin < 0)
-    st->dout_pin = eos_pin_get_no(dev->pins, "data");
-  if (st->dout_pin < 0)
-    st->dout_pin = eos_pin_get_no(dev->pins, "din");
-  if (st->dout_pin < 0)
-    st->dout_pin = 2;
-
-  // Claim GPIO capabilities
-  if (!eos_cap_claim(EOS_CAPS_GPIO, st->bclk_pin, dev)) {
-    EOS_LOGE("max98357: failed to claim bclk pin %" PRId32, st->bclk_pin);
-    vSemaphoreDelete(st->lock);
-    free(st);
-    dev->state = NULL;
-    return false;
-  }
-  if (!eos_cap_claim(EOS_CAPS_GPIO, st->ws_pin, dev)) {
-    EOS_LOGE("max98357: failed to claim ws pin %" PRId32, st->ws_pin);
-    eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
-    vSemaphoreDelete(st->lock);
-    free(st);
-    dev->state = NULL;
-    return false;
-  }
-  if (!eos_cap_claim(EOS_CAPS_GPIO, st->dout_pin, dev)) {
-    EOS_LOGE("max98357: failed to claim dout pin %" PRId32, st->dout_pin);
-    eos_cap_release(EOS_CAPS_GPIO, st->ws_pin, dev);
-    eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
+  if (!max98357_init_pins(dev, st)) {
     vSemaphoreDelete(st->lock);
     free(st);
     dev->state = NULL;
     return false;
   }
 
-  // Parse configurations
   st->sample_rate = (uint32_t)eos_cfg_get_i(dev->cfg, "rate", 22050);
   if (st->sample_rate == 0)
     st->sample_rate = 22050;
@@ -306,59 +344,7 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
   if (st->volume > 100)
     st->volume = 100;
 
-  // Multiplier setting: default 10% (earplugs mode, protecting ears from 3W amp)
-  uint32_t mult = 10;
-  int32_t cfg_mult = eos_cfg_get_i(dev->cfg, "mult", -1);
-  if (cfg_mult < 0)
-    cfg_mult = eos_cfg_get_i(dev->cfg, "multiplier", -1);
-
-  if (cfg_mult >= 0) {
-    mult = (uint32_t)cfg_mult;
-  } else {
-    int32_t ep = eos_cfg_get_i(dev->cfg, "earplugs", -1);
-    if (ep == 0) {
-      mult = 100; // full power if earplugs mode explicitly disabled
-    } else {
-      char *mode = eos_cfg_get_s(dev->cfg, "mode", NULL);
-      if (mode && (strcasecmp(mode, "speaker") == 0 ||
-                   strcasecmp(mode, "full") == 0 ||
-                   strcasecmp(mode, "loud") == 0)) {
-        mult = 100;
-      } else {
-        mult = 10; // Default earplugs mode: 10% multiplier
-      }
-    }
-  }
-  if (mult > 100)
-    mult = 100;
-  st->mult = mult;
-
-  // Delay / latency configuration in milliseconds (default 90 ms: 4x1024)
-  int32_t delay_ms = eos_cfg_get_i(dev->cfg, "delay", -1);
-  if (delay_ms < 0)
-    delay_ms = eos_cfg_get_i(dev->cfg, "delay_ms", -1);
-  if (delay_ms < 0)
-    delay_ms = eos_cfg_get_i(dev->cfg, "latency", -1);
-  if (delay_ms < 0)
-    delay_ms = eos_cfg_get_i(dev->cfg, "latency_ms", -1);
-  if (delay_ms <= 0)
-    delay_ms = 90;
-  st->delay_ms = (uint32_t)delay_ms;
-
-  uint32_t dma_desc_num = 0;
-  uint32_t dma_frame_num = 0;
-  max98357_calc_dma_config(st->sample_rate, st->delay_ms, &dma_desc_num,
-                           &dma_frame_num);
-
-  int32_t cfg_desc = eos_cfg_get_i(dev->cfg, "dma_desc", -1);
-  if (cfg_desc > 0)
-    dma_desc_num = (uint32_t)cfg_desc;
-  int32_t cfg_frame = eos_cfg_get_i(dev->cfg, "dma_frame", -1);
-  if (cfg_frame > 0)
-    dma_frame_num = (uint32_t)cfg_frame;
-
-  st->dma_desc_num = dma_desc_num;
-  st->dma_frame_num = dma_frame_num;
+  max98357_parse_mult_delay(dev, st);
 
   if (!max98357_setup_channel(st)) {
     eos_cap_release(EOS_CAPS_GPIO, st->dout_pin, dev);
@@ -371,7 +357,7 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
   }
 
   uint32_t actual_delay =
-      (st->dma_desc_num * st->dma_frame_num * 1000) / st->sample_rate;
+      (st->dma_desc_num * st->dma_frame_num * (uint32_t)EOS_MS_PER_SEC) / st->sample_rate;
   EOS_LOGI("max98357: ready (bclk=%" PRId32 ", ws=%" PRId32 ", dout=%" PRId32
            ", rate=%" PRIu32 ", bits=%" PRIu32 ", ch=%" PRIu32 ", vol=%" PRIu32
            ", mult=%" PRIu32 "%%, delay=%" PRIu32 "ms [%" PRIu32 "ms actual], dma=[%" PRIu32 "x%" PRIu32 "], bclk_actual=%" PRIu32 " Hz)",
@@ -436,8 +422,8 @@ static int driver_sound_max98357_close(eos_dev_t *dev, int fd) {
       int64_t avg_wait = st->stats.total_writes ? (st->stats.total_i2s_wait_us / st->stats.total_writes) : 0;
       int64_t avg_proc = st->stats.total_writes ? (st->stats.total_proc_us / st->stats.total_writes) : 0;
       EOS_LOGI("max98357: stream completed: writes=%" PRIu32 ", bytes=%" PRIu64 " (%" PRId64 "ms audio), wall=%" PRId64 "ms, lead=%+" PRId32 "ms, i2s_wait[min=%" PRId32 "us, avg=%" PRId64 "us, max=%" PRId32 "us], proc_avg=%" PRId64 "us, underruns=%" PRIu32,
-               st->stats.total_writes, st->stats.total_bytes, st->stats.stream_audio_us / 1000,
-               stream_dur / 1000, st->stats.last_lead_us / 1000,
+               st->stats.total_writes, st->stats.total_bytes, st->stats.stream_audio_us / (int64_t)EOS_US_PER_MS,
+               stream_dur / (int64_t)EOS_US_PER_MS, st->stats.last_lead_us / (int64_t)EOS_US_PER_MS,
                st->stats.min_i2s_wait_us == INT32_MAX ? 0 : st->stats.min_i2s_wait_us,
                avg_wait, st->stats.max_i2s_wait_us,
                avg_proc, st->stats.underruns);
@@ -445,6 +431,132 @@ static int driver_sound_max98357_close(eos_dev_t *dev, int fd) {
     xSemaphoreGive(st->lock);
   }
   return 0;
+}
+
+static void max98357_check_stream_burst(max98357_state_t *st, int64_t t0) {
+  if (st->stats.stream_start_us != 0 && (t0 - st->stats.last_write_us <= (int64_t)EOS_DEFAULT_POLL_TIMEOUT_US * 10)) {
+    return;
+  }
+  if (st->stats.total_writes > 0) {
+    int64_t stream_dur = st->stats.last_write_us - st->stats.stream_start_us;
+    int64_t avg_wait = st->stats.total_writes ? (st->stats.total_i2s_wait_us / st->stats.total_writes) : 0;
+    int64_t avg_proc = st->stats.total_writes ? (st->stats.total_proc_us / st->stats.total_writes) : 0;
+    EOS_LOGI("max98357: stream completed: writes=%" PRIu32 ", bytes=%" PRIu64 " (%" PRId64 "ms audio), wall=%" PRId64 "ms, lead=%+" PRId32 "ms, i2s_wait[min=%" PRId32 "us, avg=%" PRId64 "us, max=%" PRId32 "us], proc_avg=%" PRId64 "us, underruns=%" PRIu32,
+             st->stats.total_writes, st->stats.total_bytes, st->stats.stream_audio_us / (int64_t)EOS_US_PER_MS,
+             stream_dur / (int64_t)EOS_US_PER_MS, st->stats.last_lead_us / (int64_t)EOS_US_PER_MS,
+             st->stats.min_i2s_wait_us == INT32_MAX ? 0 : st->stats.min_i2s_wait_us,
+             avg_wait, st->stats.max_i2s_wait_us,
+             avg_proc, st->stats.underruns);
+  }
+  st->stats.stream_start_us = t0;
+  st->stats.stream_audio_us = 0;
+  st->stats.stream_wall_us = 0;
+  st->stats.total_writes = 0;
+  st->stats.total_bytes = 0;
+  st->stats.total_samples = 0;
+  st->stats.total_lock_us = 0;
+  st->stats.total_proc_us = 0;
+  st->stats.total_i2s_wait_us = 0;
+  st->stats.min_i2s_wait_us = INT32_MAX;
+  st->stats.max_i2s_wait_us = 0;
+  st->stats.underruns = 0;
+  st->stats.last_lead_us = 0;
+
+  uint32_t buf_ms = (st->dma_desc_num * st->dma_frame_num * (uint32_t)EOS_MS_PER_SEC) / (st->sample_rate ? st->sample_rate : 22050);
+  EOS_LOGI("max98357: stream start: rate=%" PRIu32 ", bits=%" PRIu32 ", ch=%" PRIu32 ", vol=%" PRIu32 ", mult=%" PRIu32 "%%, delay=%" PRIu32 "ms [%" PRIu32 "ms buf, dma=%" PRIu32 "x%" PRIu32 ", bclk=%" PRIu32 " Hz]",
+           st->sample_rate, st->bits_per_sample, st->channels, st->volume, st->mult,
+           st->delay_ms, buf_ms, st->dma_desc_num, st->dma_frame_num, st->bclk_actual_hz);
+}
+
+static esp_err_t max98357_write_silence(max98357_state_t *st, size_t size, size_t *out_written, int64_t *out_wait_us) {
+  uint8_t silence[EOS_MID_STR_LEN] = {0};
+  size_t remaining = size;
+  size_t total = 0;
+  esp_err_t err = ESP_OK;
+  while (remaining > 0) {
+    size_t chunk = (remaining > sizeof(silence)) ? sizeof(silence) : remaining;
+    size_t written = 0;
+    int64_t t_w0 = esp_timer_get_time();
+    err = i2s_channel_write(st->tx_chan, silence, chunk, &written, pdMS_TO_TICKS(EOS_TIMEOUT_500_MS));
+    int64_t t_w1 = esp_timer_get_time();
+    *out_wait_us += (t_w1 - t_w0);
+    if (err != ESP_OK) break;
+    total += written;
+    remaining -= written;
+    if (written == 0) break;
+  }
+  *out_written = total;
+  return err;
+}
+
+static esp_err_t max98357_write_attenuated(max98357_state_t *st, const void *data, size_t size, uint8_t shift, size_t *out_written, int64_t *out_wait_us, int64_t *out_proc_us) {
+  int16_t chunk_buf[EOS_SECTOR_SIZE];
+  const uint8_t *src_bytes = (const uint8_t *)data;
+  size_t remaining = size;
+  size_t total = 0;
+  esp_err_t err = ESP_OK;
+
+  while (remaining > 0) {
+    size_t chunk_bytes = (remaining > sizeof(chunk_buf)) ? sizeof(chunk_buf) : remaining;
+    size_t samples = chunk_bytes / sizeof(int16_t);
+    const int16_t *src16 = (const int16_t *)src_bytes;
+
+    int64_t t_p0 = esp_timer_get_time();
+    for (size_t i = 0; i < samples; i++) {
+      chunk_buf[i] = src16[i] >> shift;
+    }
+    int64_t t_p1 = esp_timer_get_time();
+    *out_proc_us += (t_p1 - t_p0);
+
+    size_t written = 0;
+    int64_t t_w0 = esp_timer_get_time();
+    err = i2s_channel_write(st->tx_chan, chunk_buf, samples * sizeof(int16_t), &written, pdMS_TO_TICKS(EOS_MS_PER_SEC));
+    int64_t t_w1 = esp_timer_get_time();
+    *out_wait_us += (t_w1 - t_w0);
+
+    if (err != ESP_OK) break;
+    total += written;
+    src_bytes += written;
+    remaining -= written;
+    if (written == 0) break;
+  }
+  *out_written = total;
+  return err;
+}
+
+static void max98357_update_write_stats(max98357_state_t *st, size_t total_written, int64_t lock_us, int64_t proc_us, int64_t i2s_wait_us, int64_t t_done, size_t size) {
+  uint32_t bytes_per_frame = (st->bits_per_sample / 8) * (st->channels ? st->channels : 1);
+  if (bytes_per_frame == 0) bytes_per_frame = 2;
+  size_t samples_written = total_written / bytes_per_frame;
+  int64_t chunk_audio_us = (st->sample_rate > 0) ? ((int64_t)samples_written * (int64_t)EOS_US_PER_SEC / st->sample_rate) : 0;
+
+  st->stats.total_writes++;
+  st->stats.total_bytes += total_written;
+  st->stats.total_samples += samples_written;
+  st->stats.total_lock_us += lock_us;
+  st->stats.total_proc_us += proc_us;
+  st->stats.total_i2s_wait_us += i2s_wait_us;
+  if ((int32_t)i2s_wait_us < st->stats.min_i2s_wait_us) st->stats.min_i2s_wait_us = (int32_t)i2s_wait_us;
+  if ((int32_t)i2s_wait_us > st->stats.max_i2s_wait_us) st->stats.max_i2s_wait_us = (int32_t)i2s_wait_us;
+
+  st->stats.stream_audio_us += chunk_audio_us;
+  st->stats.stream_wall_us = t_done - st->stats.stream_start_us;
+  int32_t lead_us = (int32_t)(st->stats.stream_audio_us - st->stats.stream_wall_us);
+  st->stats.last_lead_us = lead_us;
+
+  if (st->stats.total_writes > 4 && lead_us < -5000) {
+    st->stats.underruns++;
+  }
+
+  if (st->stats.total_writes == 1 || st->stats.total_writes == 10 ||
+      (st->stats.total_writes % EOS_MS_PER_TICK_50 == 0)) {
+    EOS_LOGI("max98357: wr#%" PRIu32 ": size=%zu, lock=%" PRId64 "us, proc=%" PRId64 "us, wait=%" PRId64 "us (chunk=%" PRId64 "us), wall=%" PRId64 "ms, audio=%" PRId64 "ms, shift/lead=%+" PRId32 "ms",
+             st->stats.total_writes, size, lock_us, proc_us, i2s_wait_us,
+             chunk_audio_us, st->stats.stream_wall_us / (int64_t)EOS_US_PER_MS,
+             st->stats.stream_audio_us / (int64_t)EOS_US_PER_MS, lead_us / (int64_t)EOS_US_PER_MS);
+  }
+
+  st->stats.last_write_us = t_done;
 }
 
 static ssize_t driver_sound_max98357_write(eos_dev_t *dev, int fd,
@@ -456,173 +568,41 @@ static ssize_t driver_sound_max98357_write(eos_dev_t *dev, int fd,
   }
 
   int64_t t0 = esp_timer_get_time();
-
   max98357_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
 
   int64_t t_lock = esp_timer_get_time();
-
   if (!st->enabled || !st->tx_chan) {
     xSemaphoreGive(st->lock);
     errno = EIO;
     return -1;
   }
 
-  // Detect new stream burst if idle for > 100ms or first write
-  if (st->stats.stream_start_us == 0 || (t0 - st->stats.last_write_us > 100000)) {
-    if (st->stats.total_writes > 0) {
-      int64_t stream_dur = st->stats.last_write_us - st->stats.stream_start_us;
-      int64_t avg_wait = st->stats.total_writes ? (st->stats.total_i2s_wait_us / st->stats.total_writes) : 0;
-      int64_t avg_proc = st->stats.total_writes ? (st->stats.total_proc_us / st->stats.total_writes) : 0;
-      EOS_LOGI("max98357: stream completed: writes=%" PRIu32 ", bytes=%" PRIu64 " (%" PRId64 "ms audio), wall=%" PRId64 "ms, lead=%+" PRId32 "ms, i2s_wait[min=%" PRId32 "us, avg=%" PRId64 "us, max=%" PRId32 "us], proc_avg=%" PRId64 "us, underruns=%" PRIu32,
-               st->stats.total_writes, st->stats.total_bytes, st->stats.stream_audio_us / 1000,
-               stream_dur / 1000, st->stats.last_lead_us / 1000,
-               st->stats.min_i2s_wait_us == INT32_MAX ? 0 : st->stats.min_i2s_wait_us,
-               avg_wait, st->stats.max_i2s_wait_us,
-               avg_proc, st->stats.underruns);
-    }
-    st->stats.stream_start_us = t0;
-    st->stats.stream_audio_us = 0;
-    st->stats.stream_wall_us = 0;
-    st->stats.total_writes = 0;
-    st->stats.total_bytes = 0;
-    st->stats.total_samples = 0;
-    st->stats.total_lock_us = 0;
-    st->stats.total_proc_us = 0;
-    st->stats.total_i2s_wait_us = 0;
-    st->stats.min_i2s_wait_us = INT32_MAX;
-    st->stats.max_i2s_wait_us = 0;
-    st->stats.underruns = 0;
-    st->stats.last_lead_us = 0;
-
-    uint32_t buf_ms = (st->dma_desc_num * st->dma_frame_num * 1000) / (st->sample_rate ? st->sample_rate : 22050);
-    EOS_LOGI("max98357: stream start: rate=%" PRIu32 ", bits=%" PRIu32 ", ch=%" PRIu32 ", vol=%" PRIu32 ", mult=%" PRIu32 "%%, delay=%" PRIu32 "ms [%" PRIu32 "ms buf, dma=%" PRIu32 "x%" PRIu32 ", bclk=%" PRIu32 " Hz]",
-             st->sample_rate, st->bits_per_sample, st->channels, st->volume, st->mult,
-             st->delay_ms, buf_ms, st->dma_desc_num, st->dma_frame_num, st->bclk_actual_hz);
-  }
+  max98357_check_stream_burst(st, t0);
 
   size_t total_written = 0;
   esp_err_t err = ESP_OK;
   int64_t proc_us = 0;
   int64_t i2s_wait_us = 0;
-
   uint8_t shift = max98357_calc_vol_shift(st->volume, st->mult);
 
   if (shift >= 16) {
-    // Muted / silence
-    uint8_t silence[256] = {0};
-    size_t remaining = size;
-    while (remaining > 0) {
-      size_t chunk = (remaining > sizeof(silence)) ? sizeof(silence) : remaining;
-      size_t written = 0;
-      int64_t t_w0 = esp_timer_get_time();
-      err = i2s_channel_write(st->tx_chan, silence, chunk, &written,
-                              pdMS_TO_TICKS(500));
-      int64_t t_w1 = esp_timer_get_time();
-      i2s_wait_us += (t_w1 - t_w0);
-      if (err != ESP_OK)
-        break;
-      total_written += written;
-      remaining -= written;
-      if (written == 0)
-        break;
-    }
-  } else if (shift == 0) {
-    // 100% full scale output: zero-copy passthrough
+    err = max98357_write_silence(st, size, &total_written, &i2s_wait_us);
+  } else if (shift == 0 || st->bits_per_sample != 16) {
     int64_t t_w0 = esp_timer_get_time();
-    err = i2s_channel_write(st->tx_chan, data, size, &total_written,
-                            pdMS_TO_TICKS(2000));
+    err = i2s_channel_write(st->tx_chan, data, size, &total_written, pdMS_TO_TICKS(2000));
     int64_t t_w1 = esp_timer_get_time();
     i2s_wait_us = (t_w1 - t_w0);
   } else {
-    // Fast power-of-2 bit-shift volume attenuation (-6 dB steps)
-    int16_t chunk_buf[512];
-    const uint8_t *src_bytes = (const uint8_t *)data;
-    size_t remaining = size;
-
-    if (st->bits_per_sample == 16) {
-      while (remaining > 0) {
-        size_t chunk_bytes =
-            (remaining > sizeof(chunk_buf)) ? sizeof(chunk_buf) : remaining;
-        size_t samples = chunk_bytes / sizeof(int16_t);
-        const int16_t *src16 = (const int16_t *)src_bytes;
-
-        int64_t t_p0 = esp_timer_get_time();
-        for (size_t i = 0; i < samples; i++) {
-          chunk_buf[i] = src16[i] >> shift;
-        }
-        int64_t t_p1 = esp_timer_get_time();
-        proc_us += (t_p1 - t_p0);
-
-        size_t written = 0;
-        int64_t t_w0 = esp_timer_get_time();
-        err = i2s_channel_write(st->tx_chan, chunk_buf,
-                                samples * sizeof(int16_t), &written,
-                                pdMS_TO_TICKS(1000));
-        int64_t t_w1 = esp_timer_get_time();
-        i2s_wait_us += (t_w1 - t_w0);
-
-        if (err != ESP_OK)
-          break;
-        total_written += written;
-        src_bytes += written;
-        remaining -= written;
-        if (written == 0)
-          break;
-      }
-    } else {
-      int64_t t_w0 = esp_timer_get_time();
-      err = i2s_channel_write(st->tx_chan, data, size, &total_written,
-                              pdMS_TO_TICKS(2000));
-      int64_t t_w1 = esp_timer_get_time();
-      i2s_wait_us = (t_w1 - t_w0);
-    }
+    err = max98357_write_attenuated(st, data, size, shift, &total_written, &i2s_wait_us, &proc_us);
   }
 
   int64_t t_done = esp_timer_get_time();
   int64_t lock_us = t_lock - t0;
-
-  // Track statistics and time shifts
-  uint32_t bytes_per_frame = (st->bits_per_sample / 8) * (st->channels ? st->channels : 1);
-  if (bytes_per_frame == 0)
-    bytes_per_frame = 2;
-  size_t samples_written = total_written / bytes_per_frame;
-  int64_t chunk_audio_us = (st->sample_rate > 0) ? ((int64_t)samples_written * 1000000LL / st->sample_rate) : 0;
-
-  st->stats.total_writes++;
-  st->stats.total_bytes += total_written;
-  st->stats.total_samples += samples_written;
-  st->stats.total_lock_us += lock_us;
-  st->stats.total_proc_us += proc_us;
-  st->stats.total_i2s_wait_us += i2s_wait_us;
-  if ((int32_t)i2s_wait_us < st->stats.min_i2s_wait_us)
-    st->stats.min_i2s_wait_us = (int32_t)i2s_wait_us;
-  if ((int32_t)i2s_wait_us > st->stats.max_i2s_wait_us)
-    st->stats.max_i2s_wait_us = (int32_t)i2s_wait_us;
-
-  st->stats.stream_audio_us += chunk_audio_us;
-  st->stats.stream_wall_us = t_done - st->stats.stream_start_us;
-  int32_t lead_us = (int32_t)(st->stats.stream_audio_us - st->stats.stream_wall_us);
-  st->stats.last_lead_us = lead_us;
-
-  // Underrun check: after stream has buffered (writes > 4), if lead drops negative
-  if (st->stats.total_writes > 4 && lead_us < -5000) {
-    st->stats.underruns++;
-  }
-
-  // Periodic structured logging: write #1, write #10, and every 50 writes
-  if (st->stats.total_writes == 1 || st->stats.total_writes == 10 ||
-      (st->stats.total_writes % 50 == 0)) {
-    EOS_LOGI("max98357: wr#%" PRIu32 ": size=%zu, lock=%" PRId64 "us, proc=%" PRId64 "us, wait=%" PRId64 "us (chunk=%" PRId64 "us), wall=%" PRId64 "ms, audio=%" PRId64 "ms, shift/lead=%+" PRId32 "ms",
-             st->stats.total_writes, size, lock_us, proc_us, i2s_wait_us,
-             chunk_audio_us, st->stats.stream_wall_us / 1000,
-             st->stats.stream_audio_us / 1000, lead_us / 1000);
-  }
-
-  st->stats.last_write_us = t_done;
+  max98357_update_write_stats(st, total_written, lock_us, proc_us, i2s_wait_us, t_done, size);
 
   xSemaphoreGive(st->lock);
 
@@ -634,6 +614,203 @@ static ssize_t driver_sound_max98357_write(eos_dev_t *dev, int fd,
   return (ssize_t)total_written;
 }
 
+static int sound_ioctl_format(max98357_state_t *st, int cmd, va_list args) {
+  switch (cmd) {
+  case EOS_SOUND_IOCTL_SET_SAMPLE_RATE: {
+    uint32_t rate = va_arg(args, uint32_t);
+    if (!max98357_apply_format(st, rate, st->bits_per_sample, st->channels)) {
+      errno = EINVAL;
+      return -1;
+    }
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_SAMPLE_RATE: {
+    uint32_t *rate = va_arg(args, uint32_t *);
+    if (!rate) {
+      errno = EINVAL;
+      return -1;
+    }
+    *rate = st->sample_rate;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_SET_BITS_PER_SAMPLE: {
+    uint32_t bits = va_arg(args, uint32_t);
+    if (!max98357_apply_format(st, st->sample_rate, bits, st->channels)) {
+      errno = EINVAL;
+      return -1;
+    }
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_BITS_PER_SAMPLE: {
+    uint32_t *bits = va_arg(args, uint32_t *);
+    if (!bits) {
+      errno = EINVAL;
+      return -1;
+    }
+    *bits = st->bits_per_sample;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_SET_CHANNELS: {
+    uint32_t ch = va_arg(args, uint32_t);
+    if (!max98357_apply_format(st, st->sample_rate, st->bits_per_sample, ch)) {
+      errno = EINVAL;
+      return -1;
+    }
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_CHANNELS: {
+    uint32_t *ch = va_arg(args, uint32_t *);
+    if (!ch) {
+      errno = EINVAL;
+      return -1;
+    }
+    *ch = st->channels;
+    return 0;
+  }
+  default:
+    return -2;
+  }
+}
+
+static int sound_ioctl_vol_delay(max98357_state_t *st, int cmd, va_list args) {
+  switch (cmd) {
+  case EOS_SOUND_IOCTL_SET_VOLUME: {
+    uint32_t vol = va_arg(args, uint32_t);
+    if (vol > 100)
+      vol = 100;
+    st->volume = vol;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_VOLUME: {
+    uint32_t *vol = va_arg(args, uint32_t *);
+    if (!vol) {
+      errno = EINVAL;
+      return -1;
+    }
+    *vol = st->volume;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_SET_MULT: {
+    uint32_t m = va_arg(args, uint32_t);
+    if (m > 100)
+      m = 100;
+    st->mult = m;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_MULT: {
+    uint32_t *m = va_arg(args, uint32_t *);
+    if (!m) {
+      errno = EINVAL;
+      return -1;
+    }
+    *m = st->mult;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_GET_DELAY: {
+    uint32_t *out_delay = va_arg(args, uint32_t *);
+    if (!out_delay) {
+      errno = EINVAL;
+      return -1;
+    }
+    *out_delay = st->delay_ms;
+    return 0;
+  }
+  case EOS_SOUND_IOCTL_SET_DELAY: {
+    uint32_t d = va_arg(args, uint32_t);
+    if (d == 0 || d > EOS_MS_PER_SEC) {
+      errno = EINVAL;
+      return -1;
+    }
+    st->delay_ms = d;
+    max98357_calc_dma_config(st->sample_rate, st->delay_ms,
+                             &st->dma_desc_num, &st->dma_frame_num);
+    if (!max98357_setup_channel(st)) {
+      errno = EIO;
+      return -1;
+    }
+    return 0;
+  }
+  default:
+    return -2;
+  }
+}
+
+static int sound_ioctl_state_stats(max98357_state_t *st, int cmd, va_list args) {
+  switch (cmd) {
+  case EOS_SOUND_IOCTL_START:
+    if (!st->enabled && st->tx_chan) {
+      esp_err_t err = i2s_channel_enable(st->tx_chan);
+      if (err == ESP_OK) {
+        st->enabled = true;
+      } else {
+        errno = EIO;
+        return -1;
+      }
+    }
+    return 0;
+  case EOS_SOUND_IOCTL_STOP:
+    if (st->enabled && st->tx_chan) {
+      esp_err_t err = i2s_channel_disable(st->tx_chan);
+      if (err == ESP_OK) {
+        st->enabled = false;
+      } else {
+        errno = EIO;
+        return -1;
+      }
+    }
+    return 0;
+  case EOS_SOUND_IOCTL_GET_STATS: {
+    eos_sound_stats_t *out = va_arg(args, eos_sound_stats_t *);
+    if (!out) {
+      errno = EINVAL;
+      return -1;
+    }
+    *out = st->stats;
+    out->bclk_actual_hz = st->bclk_actual_hz;
+    out->dma_desc_num = st->dma_desc_num;
+    out->dma_frame_num = st->dma_frame_num;
+    return 0;
+  }
+  default:
+    return -2;
+  }
+}
+
+static int sound_ioctl_set_config(max98357_state_t *st, const eos_sound_config_t *cfg) {
+  if (!cfg || cfg->volume > 100 || cfg->mult > 100) {
+    errno = EINVAL;
+    return -1;
+  }
+  st->volume = cfg->volume;
+  st->mult = cfg->mult;
+  bool need_reinit = false;
+  if (cfg->delay_ms > 0 && cfg->delay_ms != st->delay_ms) {
+    st->delay_ms = cfg->delay_ms;
+    need_reinit = true;
+  }
+  if (need_reinit) {
+    if (cfg->sample_rate)
+      st->sample_rate = cfg->sample_rate;
+    if (cfg->bits_per_sample)
+      st->bits_per_sample = cfg->bits_per_sample;
+    if (cfg->channels)
+      st->channels = cfg->channels;
+    max98357_calc_dma_config(st->sample_rate, st->delay_ms,
+                             &st->dma_desc_num, &st->dma_frame_num);
+    if (!max98357_setup_channel(st)) {
+      errno = EIO;
+      return -1;
+    }
+  } else {
+    if (!max98357_apply_format(st, cfg->sample_rate, cfg->bits_per_sample,
+                               cfg->channels)) {
+      errno = EINVAL;
+      return -1;
+    }
+  }
+  return 0;
+}
+
 static int driver_sound_max98357_ioctl(eos_dev_t *dev, int fd, int cmd,
                                        va_list args) {
   (void)fd;
@@ -643,7 +820,7 @@ static int driver_sound_max98357_ioctl(eos_dev_t *dev, int fd, int cmd,
   }
 
   max98357_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -667,191 +844,30 @@ static int driver_sound_max98357_ioctl(eos_dev_t *dev, int fd, int cmd,
   }
   case EOS_SOUND_IOCTL_SET_CONFIG: {
     const eos_sound_config_t *cfg = va_arg(args, const eos_sound_config_t *);
-    if (!cfg || cfg->volume > 100 || cfg->mult > 100) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      st->volume = cfg->volume;
-      st->mult = cfg->mult;
-      bool need_reinit = false;
-      if (cfg->delay_ms > 0 && cfg->delay_ms != st->delay_ms) {
-        st->delay_ms = cfg->delay_ms;
-        need_reinit = true;
-      }
-      if (need_reinit) {
-        if (cfg->sample_rate)
-          st->sample_rate = cfg->sample_rate;
-        if (cfg->bits_per_sample)
-          st->bits_per_sample = cfg->bits_per_sample;
-        if (cfg->channels)
-          st->channels = cfg->channels;
-        max98357_calc_dma_config(st->sample_rate, st->delay_ms,
-                                 &st->dma_desc_num, &st->dma_frame_num);
-        if (!max98357_setup_channel(st)) {
-          errno = EIO;
-          ret = -1;
-        }
-      } else {
-        if (!max98357_apply_format(st, cfg->sample_rate, cfg->bits_per_sample,
-                                  cfg->channels)) {
-          errno = EINVAL;
-          ret = -1;
-        }
-      }
-    }
+    ret = sound_ioctl_set_config(st, cfg);
     break;
   }
-  case EOS_SOUND_IOCTL_SET_SAMPLE_RATE: {
-    uint32_t rate = va_arg(args, uint32_t);
-    if (!max98357_apply_format(st, rate, st->bits_per_sample, st->channels)) {
-      errno = EINVAL;
-      ret = -1;
-    }
+  case EOS_SOUND_IOCTL_SET_SAMPLE_RATE:
+  case EOS_SOUND_IOCTL_GET_SAMPLE_RATE:
+  case EOS_SOUND_IOCTL_SET_BITS_PER_SAMPLE:
+  case EOS_SOUND_IOCTL_GET_BITS_PER_SAMPLE:
+  case EOS_SOUND_IOCTL_SET_CHANNELS:
+  case EOS_SOUND_IOCTL_GET_CHANNELS:
+    ret = sound_ioctl_format(st, cmd, args);
     break;
-  }
-  case EOS_SOUND_IOCTL_GET_SAMPLE_RATE: {
-    uint32_t *rate = va_arg(args, uint32_t *);
-    if (!rate) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *rate = st->sample_rate;
-    }
+  case EOS_SOUND_IOCTL_SET_VOLUME:
+  case EOS_SOUND_IOCTL_GET_VOLUME:
+  case EOS_SOUND_IOCTL_SET_MULT:
+  case EOS_SOUND_IOCTL_GET_MULT:
+  case EOS_SOUND_IOCTL_GET_DELAY:
+  case EOS_SOUND_IOCTL_SET_DELAY:
+    ret = sound_ioctl_vol_delay(st, cmd, args);
     break;
-  }
-  case EOS_SOUND_IOCTL_SET_BITS_PER_SAMPLE: {
-    uint32_t bits = va_arg(args, uint32_t);
-    if (!max98357_apply_format(st, st->sample_rate, bits, st->channels)) {
-      errno = EINVAL;
-      ret = -1;
-    }
+  case EOS_SOUND_IOCTL_START:
+  case EOS_SOUND_IOCTL_STOP:
+  case EOS_SOUND_IOCTL_GET_STATS:
+    ret = sound_ioctl_state_stats(st, cmd, args);
     break;
-  }
-  case EOS_SOUND_IOCTL_GET_BITS_PER_SAMPLE: {
-    uint32_t *bits = va_arg(args, uint32_t *);
-    if (!bits) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *bits = st->bits_per_sample;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_SET_CHANNELS: {
-    uint32_t ch = va_arg(args, uint32_t);
-    if (!max98357_apply_format(st, st->sample_rate, st->bits_per_sample, ch)) {
-      errno = EINVAL;
-      ret = -1;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_GET_CHANNELS: {
-    uint32_t *ch = va_arg(args, uint32_t *);
-    if (!ch) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *ch = st->channels;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_SET_VOLUME: {
-    uint32_t vol = va_arg(args, uint32_t);
-    if (vol > 100)
-      vol = 100;
-    st->volume = vol;
-    break;
-  }
-  case EOS_SOUND_IOCTL_GET_VOLUME: {
-    uint32_t *vol = va_arg(args, uint32_t *);
-    if (!vol) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *vol = st->volume;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_SET_MULT: {
-    uint32_t m = va_arg(args, uint32_t);
-    if (m > 100)
-      m = 100;
-    st->mult = m;
-    break;
-  }
-  case EOS_SOUND_IOCTL_GET_MULT: {
-    uint32_t *m = va_arg(args, uint32_t *);
-    if (!m) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *m = st->mult;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_START: {
-    if (!st->enabled && st->tx_chan) {
-      esp_err_t err = i2s_channel_enable(st->tx_chan);
-      if (err == ESP_OK) {
-        st->enabled = true;
-      } else {
-        errno = EIO;
-        ret = -1;
-      }
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_STOP: {
-    if (st->enabled && st->tx_chan) {
-      esp_err_t err = i2s_channel_disable(st->tx_chan);
-      if (err == ESP_OK) {
-        st->enabled = false;
-      } else {
-        errno = EIO;
-        ret = -1;
-      }
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_GET_DELAY: {
-    uint32_t *out_delay = va_arg(args, uint32_t *);
-    if (!out_delay) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *out_delay = st->delay_ms;
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_SET_DELAY: {
-    uint32_t d = va_arg(args, uint32_t);
-    if (d == 0 || d > 1000) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      st->delay_ms = d;
-      max98357_calc_dma_config(st->sample_rate, st->delay_ms,
-                               &st->dma_desc_num, &st->dma_frame_num);
-      if (!max98357_setup_channel(st)) {
-        errno = EIO;
-        ret = -1;
-      }
-    }
-    break;
-  }
-  case EOS_SOUND_IOCTL_GET_STATS: {
-    eos_sound_stats_t *out = va_arg(args, eos_sound_stats_t *);
-    if (!out) {
-      errno = EINVAL;
-      ret = -1;
-    } else {
-      *out = st->stats;
-      out->bclk_actual_hz = st->bclk_actual_hz;
-      out->dma_desc_num = st->dma_desc_num;
-      out->dma_frame_num = st->dma_frame_num;
-    }
-    break;
-  }
   default:
     errno = ENOTTY;
     ret = -1;

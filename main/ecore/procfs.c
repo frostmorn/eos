@@ -5,6 +5,7 @@
 #include "ecore/proc.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
+#include "emisc/strlimits.h"
 #include <ctype.h>
 #include <dirent.h>
 #include <driver/gpio.h>
@@ -89,7 +90,9 @@ static const char *s_proc_entries[] = {
     "pipes",
     "self",
 };
-#define PROC_ENTRY_COUNT (sizeof(s_proc_entries) / sizeof(s_proc_entries[0]))
+static inline size_t proc_entry_count(void) {
+  return sizeof(s_proc_entries) / sizeof(s_proc_entries[0]);
+}
 
 static const char *s_pid_entries[] = {
     ".",
@@ -101,7 +104,10 @@ static const char *s_pid_entries[] = {
     "environ",
     "fd",
 };
-#define PID_ENTRY_COUNT (sizeof(s_pid_entries) / sizeof(s_pid_entries[0]))
+
+static inline size_t pid_entry_count(void) {
+  return sizeof(s_pid_entries) / sizeof(s_pid_entries[0]);
+}
 
 // Dynamic string accumulator
 typedef struct {
@@ -135,7 +141,7 @@ static void sbuf_printf(sbuf_t *s, const char *fmt, ...) {
   if (s->len + (size_t)needed + 1 > s->cap) {
     size_t new_cap = s->cap * 2;
     if (new_cap < s->len + (size_t)needed + 1)
-      new_cap = s->len + (size_t)needed + 64;
+      new_cap = s->len + (size_t)needed + EOS_LINE_64_LEN;
     char *new_buf = eos_psram_realloc_prefer(s->buf, new_cap);
     if (!new_buf) {
       new_buf = realloc(s->buf, new_cap);
@@ -159,7 +165,7 @@ static char *procfs_gen_scopes(void) {
   sbuf_init(&sb);
   if (!sb.buf) return NULL;
 
-  char seen[32][EOS_XSMALL_STR_LEN];
+  char seen[EOS_SMALL_STR_LEN][EOS_XSMALL_STR_LEN];
   size_t seen_count = 0;
 
   for (const eos_drv_t *drv = _eos_drivers_start; drv < _eos_drivers_end; ++drv) {
@@ -221,7 +227,7 @@ static char *procfs_gen_devices(void) {
     eos_dev_t *dev = eos_dev_get(i);
     if (!dev || !dev->in_use) continue;
 
-    char drv_str[48];
+    char drv_str[EOS_STR_48_LEN];
     if (dev->driver) {
       snprintf(drv_str, sizeof(drv_str), "%s/%s", dev->driver->scope, dev->driver->name);
     } else {
@@ -248,10 +254,10 @@ static char *procfs_gen_meminfo(void) {
   uint32_t int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   uint32_t spi_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 
-  sbuf_printf(&sb, "MemFree:         %8" PRIu32 " kB\n", free_heap / 1024);
-  sbuf_printf(&sb, "MemMinimum:      %8" PRIu32 " kB\n", min_free / 1024);
-  sbuf_printf(&sb, "InternalFree:    %8" PRIu32 " kB\n", int_free / 1024);
-  sbuf_printf(&sb, "SPIRAMFree:      %8" PRIu32 " kB\n", spi_free / 1024);
+  sbuf_printf(&sb, "MemFree:         %8" PRIu32 " kB\n", free_heap / EOS_LARGE_STR_LEN);
+  sbuf_printf(&sb, "MemMinimum:      %8" PRIu32 " kB\n", min_free / EOS_LARGE_STR_LEN);
+  sbuf_printf(&sb, "InternalFree:    %8" PRIu32 " kB\n", int_free / EOS_LARGE_STR_LEN);
+  sbuf_printf(&sb, "SPIRAMFree:      %8" PRIu32 " kB\n", spi_free / EOS_LARGE_STR_LEN);
 
   return sb.buf;
 }
@@ -452,10 +458,10 @@ static void update_loadavg(void) {
     return;
   }
   uint64_t elapsed_us = now - s_last_load_sample;
-  if (elapsed_us < 1000000) return; // Sample at most once every second
+  if (elapsed_us < EOS_US_PER_SEC) return; // Sample at most once every second
   s_last_load_sample = now;
 
-  double dt = (double)elapsed_us / 1000000.0;
+  double dt = (double)elapsed_us / (double)EOS_US_PER_SEC;
   double active = 1.0;
 #if CONFIG_FREERTOS_USE_TRACE_FACILITY
   UBaseType_t task_count = uxTaskGetNumberOfTasks();
@@ -503,7 +509,7 @@ static char *procfs_gen_stat(void) {
   if (!sb.buf) return NULL;
 
   uint64_t total_runtime = esp_timer_get_time();
-  unsigned long total_ticks = (unsigned long)(total_runtime / 10000);
+  unsigned long total_ticks = (unsigned long)(total_runtime / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US);
   unsigned long idle_ticks = 0;
   unsigned long user_ticks = 0;
   unsigned long sys_ticks = 0;
@@ -516,9 +522,9 @@ static char *procfs_gen_stat(void) {
     UBaseType_t actual = uxTaskGetSystemState(status_arr, task_count, &total_run);
     for (UBaseType_t i = 0; i < actual; i++) {
       if (strncmp(status_arr[i].pcTaskName, "IDLE", 4) == 0) {
-        idle_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / 10000);
+        idle_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US);
       } else {
-        user_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / 10000);
+        user_ticks += (unsigned long)(status_arr[i].ulRunTimeCounter / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US);
       }
     }
     eos_psram_free(status_arr);
@@ -531,7 +537,7 @@ static char *procfs_gen_stat(void) {
     if (procs) {
       size_t count = eos_proc_snapshot(procs, act);
       for (size_t i = 0; i < count; i++) {
-        sys_ticks += (unsigned long)(procs[i].sys_us / 10000);
+        sys_ticks += (unsigned long)(procs[i].sys_us / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US);
       }
       eos_psram_free(procs);
     }
@@ -572,7 +578,7 @@ static bool procfs_parse_path(const char *path, procfs_parsed_path_t *out) {
   }
 
   // Check static files and special dirs at root level
-  for (size_t i = 2; i < PROC_ENTRY_COUNT; i++) {
+  for (size_t i = 2; i < proc_entry_count(); i++) {
     if (strcmp(p, s_proc_entries[i]) == 0) {
       if (strcmp(p, "pipes") == 0) {
         out->type = PROCFS_NODE_PIPES_DIR;
@@ -691,7 +697,7 @@ static char *procfs_gen_pid_status(eos_proc_t *p) {
   sbuf_printf(&sb, "ChildrenWaitTime:\t%llu\n", (unsigned long long)p->cwait_us);
   sbuf_printf(&sb, "StartTime:\t%llu\n", (unsigned long long)p->start_time);
   sbuf_printf(&sb, "FDSize:\t%zu\n", kv_size(p->fds));
-  sbuf_printf(&sb, "VmData:\t%zu kB\n", (p->heap_sram + p->heap_psram) / 1024);
+  sbuf_printf(&sb, "VmData:\t%zu kB\n", (p->heap_sram + p->heap_psram) / EOS_LARGE_STR_LEN);
   sbuf_printf(&sb, "HeapSRAM:\t%zu\n", p->heap_sram);
   sbuf_printf(&sb, "HeapPSRAM:\t%zu\n", p->heap_psram);
 
@@ -708,14 +714,14 @@ static char *procfs_gen_pid_stat(eos_proc_t *p) {
 
   uint64_t u_us = 0, s_us = 0, w_us = 0;
   eos_proc_get_cpu_times(p, &u_us, &s_us, &w_us);
-  unsigned long utime = (unsigned long)(u_us / 10000); // 100Hz clock ticks
-  unsigned long stime = (unsigned long)(s_us / 10000); // 100Hz clock ticks
+  unsigned long utime = (unsigned long)(u_us / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US); // 100Hz clock ticks
+  unsigned long stime = (unsigned long)(s_us / (uint64_t)EOS_DEFAULT_POLL_TIMEOUT_US); // 100Hz clock ticks
 
   sbuf_printf(&sb, "%d (%s) %c %d %d %d 0 0 0 0 0 0 0 %lu %lu 0 0 0 0 %zu 0 %llu 0 0\n",
               (int)p->pid, p->name, st_c, (int)p->ppid, (int)p->pgid, (int)p->sid,
               utime, stime,
               kv_size(p->threads) ? kv_size(p->threads) : (size_t)1,
-              (unsigned long long)(p->start_time / 1000));
+              (unsigned long long)(p->start_time / (uint64_t)EOS_US_PER_MS));
 
   return sb.buf;
 }
@@ -776,6 +782,40 @@ static char *procfs_gen_pid_fd_info(eos_proc_t *p, int fd) {
   return sb.buf;
 }
 
+static char *procfs_gen_static_file(const char *p) {
+  if (strcmp(p, "scopes") == 0) return procfs_gen_scopes();
+  if (strcmp(p, "drivers") == 0) return procfs_gen_drivers();
+  if (strcmp(p, "devices") == 0) return procfs_gen_devices();
+  if (strcmp(p, "meminfo") == 0) return procfs_gen_meminfo();
+  if (strcmp(p, "version") == 0) return procfs_gen_version();
+  if (strcmp(p, "mounts") == 0) return procfs_gen_mounts();
+  if (strcmp(p, "interrupts") == 0) return procfs_gen_interrupts();
+  if (strcmp(p, "fds") == 0) return procfs_gen_fds();
+  if (strcmp(p, "gpio") == 0) return procfs_gen_gpio();
+  if (strcmp(p, "heapinfo") == 0) return procfs_gen_heapinfo();
+  if (strcmp(p, "cpuinfo") == 0) return procfs_gen_cpuinfo();
+  if (strcmp(p, "uptime") == 0) return procfs_gen_uptime();
+  if (strcmp(p, "loadavg") == 0) return procfs_gen_loadavg();
+  if (strcmp(p, "stat") == 0) return procfs_gen_stat();
+  return NULL;
+}
+
+static char *procfs_gen_proc_file(const procfs_parsed_path_t *parsed) {
+  eos_proc_t p;
+  if (!eos_proc_get_copy(parsed->pid, &p)) {
+    return NULL;
+  }
+  switch (parsed->type) {
+    case PROCFS_NODE_PID_STATUS: return procfs_gen_pid_status(&p);
+    case PROCFS_NODE_PID_STAT: return procfs_gen_pid_stat(&p);
+    case PROCFS_NODE_PID_CMDLINE: return procfs_gen_pid_cmdline(&p);
+    case PROCFS_NODE_PID_CWD: return procfs_gen_pid_cwd(&p);
+    case PROCFS_NODE_PID_ENVIRON: return procfs_gen_pid_environ(&p);
+    case PROCFS_NODE_PID_FD_ENTRY: return procfs_gen_pid_fd_info(&p, parsed->fd_num);
+    default: return NULL;
+  }
+}
+
 static int procfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_file_t **out_file) {
   (void)ctx;
   (void)mode;
@@ -806,76 +846,14 @@ static int procfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs
   }
 
   char *content = NULL;
-
   if (parsed.type == PROCFS_NODE_STATIC_FILE) {
-    const char *p = parsed.static_name;
-    if (strcmp(p, "scopes") == 0) {
-      content = procfs_gen_scopes();
-    } else if (strcmp(p, "drivers") == 0) {
-      content = procfs_gen_drivers();
-    } else if (strcmp(p, "devices") == 0) {
-      content = procfs_gen_devices();
-    } else if (strcmp(p, "meminfo") == 0) {
-      content = procfs_gen_meminfo();
-    } else if (strcmp(p, "version") == 0) {
-      content = procfs_gen_version();
-    } else if (strcmp(p, "mounts") == 0) {
-      content = procfs_gen_mounts();
-    } else if (strcmp(p, "interrupts") == 0) {
-      content = procfs_gen_interrupts();
-    } else if (strcmp(p, "fds") == 0) {
-      content = procfs_gen_fds();
-    } else if (strcmp(p, "gpio") == 0) {
-      content = procfs_gen_gpio();
-    } else if (strcmp(p, "heapinfo") == 0) {
-      content = procfs_gen_heapinfo();
-    } else if (strcmp(p, "cpuinfo") == 0) {
-      content = procfs_gen_cpuinfo();
-    } else if (strcmp(p, "uptime") == 0) {
-      content = procfs_gen_uptime();
-    } else if (strcmp(p, "loadavg") == 0) {
-      content = procfs_gen_loadavg();
-    } else if (strcmp(p, "stat") == 0) {
-      content = procfs_gen_stat();
-    } else {
-      errno = ENOENT;
-      return -1;
-    }
+    content = procfs_gen_static_file(parsed.static_name);
   } else {
-    // Dynamic process file
-    eos_proc_t p;
-    if (!eos_proc_get_copy(parsed.pid, &p)) {
-      errno = ENOENT;
-      return -1;
-    }
-
-    switch (parsed.type) {
-      case PROCFS_NODE_PID_STATUS:
-        content = procfs_gen_pid_status(&p);
-        break;
-      case PROCFS_NODE_PID_STAT:
-        content = procfs_gen_pid_stat(&p);
-        break;
-      case PROCFS_NODE_PID_CMDLINE:
-        content = procfs_gen_pid_cmdline(&p);
-        break;
-      case PROCFS_NODE_PID_CWD:
-        content = procfs_gen_pid_cwd(&p);
-        break;
-      case PROCFS_NODE_PID_ENVIRON:
-        content = procfs_gen_pid_environ(&p);
-        break;
-      case PROCFS_NODE_PID_FD_ENTRY:
-        content = procfs_gen_pid_fd_info(&p, parsed.fd_num);
-        break;
-      default:
-        errno = ENOENT;
-        return -1;
-    }
+    content = procfs_gen_proc_file(&parsed);
   }
 
   if (!content) {
-    errno = ENOMEM;
+    errno = ENOENT;
     return -1;
   }
 
@@ -1117,7 +1095,7 @@ static struct dirent *procfs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
   memset(&dir->entry, 0, sizeof(dir->entry));
 
   if (dir->dir_type == PROCFS_NODE_ROOT) {
-    if (dir->index < PROC_ENTRY_COUNT) {
+    if (dir->index < proc_entry_count()) {
       const char *name = s_proc_entries[dir->index];
       strncpy(dir->entry.d_name, name, sizeof(dir->entry.d_name) - 1);
       if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0 ||
@@ -1130,7 +1108,7 @@ static struct dirent *procfs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
       return &dir->entry;
     }
 
-    size_t pid_idx = dir->index - PROC_ENTRY_COUNT;
+    size_t pid_idx = dir->index - proc_entry_count();
     if (pid_idx < kv_size(dir->pids)) {
       snprintf(dir->entry.d_name, sizeof(dir->entry.d_name), "%d", (int)kv_A(dir->pids, pid_idx));
       dir->entry.d_type = DT_DIR;
@@ -1142,7 +1120,7 @@ static struct dirent *procfs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
   }
 
   if (dir->dir_type == PROCFS_NODE_PID_DIR) {
-    if (dir->index >= PID_ENTRY_COUNT) {
+    if (dir->index >= pid_entry_count()) {
       return NULL;
     }
     const char *name = s_pid_entries[dir->index];
@@ -1223,7 +1201,7 @@ void eos_procfs_init(void) {
       .telldir = procfs_telldir,
   };
 
-  mkdir(EOS_PROCFS_ROOT, 0755);
+  mkdir(EOS_PROCFS_ROOT, EOS_DEFAULT_DIR_MODE);
   eos_vfs_register_ops(EOS_PROCFS_ROOT, &ops, NULL);
   EOS_LOGI("procfs mounted at %s", EOS_PROCFS_ROOT);
 }

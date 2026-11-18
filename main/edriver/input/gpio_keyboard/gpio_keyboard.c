@@ -15,8 +15,6 @@
 #include "ecore/ioctl.h"
 #include "emisc/psram_alloc.h"
 
-#define GPIO_KEYBOARD_QUEUE_SIZE 32
-
 typedef struct {
   int gpio_num;
   uint16_t key_code;
@@ -213,7 +211,7 @@ ssize_t driver_input_gpio_keyboard_write(eos_dev_t *dev, int fd, const void *src
     return (ssize_t)size;
   }
 
-  char buf[128];
+  char buf[EOS_BUFFER_128_LEN];
   size_t copy_len = size < (sizeof(buf) - 1) ? size : (sizeof(buf) - 1);
   memcpy(buf, src, copy_len);
   buf[copy_len] = '\0';
@@ -226,7 +224,7 @@ ssize_t driver_input_gpio_keyboard_write(eos_dev_t *dev, int fd, const void *src
     if (code == KEY_RESERVED) {
       if (tok[0] >= '0' && tok[0] <= '9') {
         int val = atoi(tok);
-        if (val > 0 && val < 512) {
+        if (val > 0 && val < EOS_SECTOR_SIZE) {
           code = (uint16_t)val;
         }
       } else if (strlen(tok) == 1) {

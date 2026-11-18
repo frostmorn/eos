@@ -179,7 +179,7 @@ static bool helper_write_file(const char *path, const void *buf, size_t len) {
 static bool helper_file_contains(const char *path, const char *substr) {
   FILE *f = fopen(path, "rb");
   if (!f) return false;
-  char buf[512];
+  char buf[EOS_SECTOR_SIZE];
   size_t n = fread(buf, 1, sizeof(buf) - 1, f);
   fclose(f);
   buf[n] = 0;
@@ -226,7 +226,7 @@ int test_elf_loader_main(int argc, char **argv) {
               helper_file_contains(out_path, "argv[2] = beta"));
 
   // 4. Relative path execution (./hello.elf) from cwd
-  char orig_cwd[256];
+  char orig_cwd[EOS_MID_STR_LEN];
   if (getcwd(orig_cwd, sizeof(orig_cwd)) != NULL) {
     chdir("/tmp");
     unlink(out_rel_path);
@@ -238,7 +238,7 @@ int test_elf_loader_main(int argc, char **argv) {
   }
 
   // 5. Environment $PATH resolution
-  char old_path[64];
+  char old_path[EOS_LINE_64_LEN];
   const char *cur_p = getenv("PATH");
   strlcpy(old_path, cur_p ? cur_p : "/bin", sizeof(old_path));
 

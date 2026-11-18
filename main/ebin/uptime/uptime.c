@@ -1,4 +1,6 @@
 #include "ecore/bin.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,7 +25,7 @@ int uptime_main(int argc, char **argv) {
     fclose(f);
   }
 
-  char load_str[64] = "0.00, 0.00, 0.00";
+  char load_str[EOS_LINE_64_LEN] = "0.00, 0.00, 0.00";
   f = fopen("/proc/loadavg", "r");
   if (f) {
     double l1 = 0, l5 = 0, l15 = 0;
@@ -34,9 +36,9 @@ int uptime_main(int argc, char **argv) {
   }
 
   unsigned long sec = (unsigned long)up_sec;
-  unsigned int days = (unsigned int)(sec / 86400);
-  unsigned int hours = (unsigned int)((sec % 86400) / 3600);
-  unsigned int mins = (unsigned int)((sec % 3600) / 60);
+  unsigned int days = (unsigned int)(sec / EOS_SECS_PER_DAY);
+  unsigned int hours = (unsigned int)((sec % EOS_SECS_PER_DAY) / EOS_SECS_PER_HOUR);
+  unsigned int mins = (unsigned int)((sec % EOS_SECS_PER_HOUR) / EOS_SECS_PER_MIN);
 
   if (days > 0) {
     printf("up %u day%s, %02u:%02u, load average: %s\n",

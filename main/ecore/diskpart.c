@@ -23,11 +23,6 @@ const char *eos_part_scheme_str(eos_part_scheme_t scheme) {
 
 // ── MBR structures ────────────────────────────────────────────
 
-#define MBR_SIGNATURE 0xAA55
-#define MBR_SIG_OFFSET 510
-#define GPT_PROTECTIVE 0xEE
-#define SECTOR_SIZE 512
-
 typedef struct __attribute__((packed)) {
   uint8_t status;
   uint8_t chs_first[3];
@@ -38,15 +33,12 @@ typedef struct __attribute__((packed)) {
 } mbr_entry_t;
 
 typedef struct __attribute__((packed)) {
-  uint8_t bootstrap[446];
+  uint8_t bootstrap[MBR_BOOTSTRAP_SIZE];
   mbr_entry_t entries[4];
   uint16_t signature;
 } mbr_t;
 
 // ── GPT structures ────────────────────────────────────────────
-
-#define GPT_HEADER_LBA 1
-#define GPT_SIGNATURE 0x5452415020494645ULL // "EFI PART"
 
 typedef struct __attribute__((packed)) {
   uint64_t signature;
@@ -58,7 +50,7 @@ typedef struct __attribute__((packed)) {
   uint64_t alt_lba;
   uint64_t first_usable_lba;
   uint64_t last_usable_lba;
-  uint8_t disk_guid[16];
+  uint8_t disk_guid[GPT_GUID_SIZE];
   uint64_t part_entry_lba;
   uint32_t num_part_entries;
   uint32_t part_entry_size;
@@ -66,16 +58,16 @@ typedef struct __attribute__((packed)) {
 } gpt_header_t;
 
 typedef struct __attribute__((packed)) {
-  uint8_t type_guid[16];
-  uint8_t unique_guid[16];
+  uint8_t type_guid[GPT_GUID_SIZE];
+  uint8_t unique_guid[GPT_GUID_SIZE];
   uint64_t first_lba;
   uint64_t last_lba;
   uint64_t attributes;
-  uint16_t name[36]; // UTF-16LE
+  uint16_t name[GPT_NAME_CHARS]; // UTF-16LE
 } gpt_entry_t;
 
 // GPT type GUIDs that indicate used partitions (non-empty)
-static const uint8_t GPT_UNUSED_GUID[16] = {0};
+static const uint8_t GPT_UNUSED_GUID[GPT_GUID_SIZE] = {0};
 
 typedef struct {
   eos_part_type_t type;
@@ -215,15 +207,15 @@ static int parse_mbr(eos_part_table_t *dp) {
     p->lba_start = e->lba_start;
     p->lba_size = e->lba_size;
     p->part_type = e->part_type;
-    p->bootable = (e->status == 0x80);
+    p->bootable = (e->status == EOS_HEX_BYTE_MSB);
   }
 
   return 0;
 }
 
-static eos_part_type_t gpt_guid_to_part_type(const uint8_t guid[16]) {
+static eos_part_type_t gpt_guid_to_part_type(const uint8_t guid[GPT_GUID_SIZE]) {
   // Unused entry
-  if (memcmp(guid, (const uint8_t[16]){0}, 16) == 0)
+  if (memcmp(guid, (const uint8_t[GPT_GUID_SIZE]){0}, GPT_GUID_SIZE) == 0)
     return EOS_PART_EMPTY;
 
   // EFI System
@@ -538,7 +530,7 @@ int eos_diskpart_commit(eos_part_table_t *dp) {
   *(uint16_t *)(sector + MBR_SIG_OFFSET) = MBR_SIGNATURE;
 
   for (uint32_t i = 0; i < dp->count && i < 4; i++) {
-    mbr->entries[i].status = dp->parts[i].bootable ? 0x80 : 0x00;
+    mbr->entries[i].status = dp->parts[i].bootable ? EOS_HEX_BYTE_MSB : 0x00;
     mbr->entries[i].part_type = dp->parts[i].part_type;
     mbr->entries[i].lba_start = dp->parts[i].lba_start;
     mbr->entries[i].lba_size = dp->parts[i].lba_size;

@@ -11,8 +11,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define MV_BUFFER_SIZE 1024
-
 static void print_usage(void) {
   printf("Usage: mv [-f] [-v] SOURCE... DEST\n"
          "Rename SOURCE to DEST, or move SOURCE(s) to DIRECTORY.\n\n"
@@ -21,11 +19,6 @@ static void print_usage(void) {
          "  -v, --verbose        Explain what is being done\n"
          "  -h, --help           Display this help and exit\n");
 }
-
-#define get_basename fs_get_basename
-#define join_path fs_join_path
-#define is_directory fs_is_directory
-#define is_same_file fs_is_same_file
 
 static int remove_path_recursive(const char *path) {
   struct stat st;
@@ -114,7 +107,7 @@ static int mv_fallback_walk_entry(const char *src, const char *dst, bool is_dir,
 }
 
 static int fallback_copy_dir(const char *src, const char *dst, bool force) {
-  if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
+  if (mkdir(dst, EOS_DEFAULT_DIR_MODE) != 0 && errno != EEXIST) {
     return -1;
   }
 

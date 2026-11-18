@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ebin/test_common.h"
 #include "emisc/eos_base64.h"
 #include "emisc/eos_hash.h"
 #include <errno.h>
@@ -18,28 +19,10 @@ extern int sha512sum_main(int argc, char **argv);
 extern int cksum_main(int argc, char **argv);
 extern int base64_main(int argc, char **argv);
 
-#define TEST_DATA_PATH "/tmp/h_test.dat"
-#define TEST_LIST_PATH "/tmp/h_test.lst"
-
 typedef struct {
-  int passed;
-  int failed;
-} test_ctx_t;
-
-typedef struct {
-  char buf[512];
+  char buf[EOS_SECTOR_SIZE];
   size_t len;
 } sink_t;
-
-static void report_test(test_ctx_t *ctx, const char *name, bool ok) {
-  if (ok) {
-    printf("  [PASS] %s\n", name);
-    ctx->passed++;
-  } else {
-    printf("  [FAIL] %s\n", name);
-    ctx->failed++;
-  }
-}
 
 static int sink_emit(void *arg, const void *data, size_t len) {
   sink_t *s = (sink_t *)arg;
@@ -114,7 +97,7 @@ static void test_known_answers(test_ctx_t *ctx) {
 
 static void test_padding_boundaries(test_ctx_t *ctx) {
   printf("--- padding boundaries ---\n");
-  uint8_t buf[1000];
+  uint8_t buf[TEST_HASH_PATTERN_LEN];
   fill_pattern(buf, sizeof(buf));
   const struct {
     unsigned len;
@@ -135,9 +118,9 @@ static void test_padding_boundaries(test_ctx_t *ctx) {
     { 119u, "9ce7368e4daf32341631b492e80359dc9f594b48453cd0dd5bf0b19279cc177e", "236bdd7f38a611b5014b239245c381ae5d20a96f1e5b3178227c00056b7fa8c44ef54880085d82b7e20cd65f2bfda1326696c3f94a6a5bad0cb5ce289aa46167" },
     { 120u, "7836b787757e95e58b3ca5aec90b1b004e8deba1e50e9675af9cabf1a13a04b5", "4bd16fefaa35cc2df9fbb8ff379ec04a4070ffd5d4992574af239fa175534df87cbedceeb96be08e15090a78b83a328a2900c5411683ab47bab914591048548f" },
     { 127u, "a8d23e75d936f303d248888d9b165ee543f4cbafcad3c9dd2a79bd84faa11d07", "e0b6a20f1c0c88970a9340152cd5a1c1ecf3d3b8de55102741879438079473540133b812706e5dbec322c8c9523b6fc8c6d16ee626e87ad5fe3d2916afedc369" },
-    { 128u, "d2742f1f4ac6bb7ca2b239ee18402ba8b3f9f8e652d2a72973c2b9ba11c08cf6", "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1" },
+    { EOS_BUFFER_128_LEN, "d2742f1f4ac6bb7ca2b239ee18402ba8b3f9f8e652d2a72973c2b9ba11c08cf6", "99b16f17aa0b969a5b8f08f367719d516e330ccd2660b6f0688ec031dbc783de50a1cd185a2568dba75070a2403d17d4741d163578515dfd2ff756ddfe4d47b1" },
     { 129u, "307f8fc2c1622b92762e818d39a185d4d667ad49a4b07ceae1f4afa008a93ec4", "a1556e29185778aa5991e34b8884c840d589f0fbb4b8ed590e51e9ac4eb03a008125000db2671f8fe7f485b59a77b518670078ecb41a54b4cd02a7f1d2ca4c6d" },
-    { 1000u, "1e9bc38cbf860b9ec31918b065f9b52476c549a782e0e7990bed8ce3868d2371", "00e36fccf193e59697a92b5ab24666ce6326d7fa16bf10832d0991ddc591112e9dfa6a636950ed9c4d67344a760654c2ff7785e1d60094d651038735b5dccabd" },
+    { TEST_HASH_PATTERN_LEN, "1e9bc38cbf860b9ec31918b065f9b52476c549a782e0e7990bed8ce3868d2371", "00e36fccf193e59697a92b5ab24666ce6326d7fa16bf10832d0991ddc591112e9dfa6a636950ed9c4d67344a760654c2ff7785e1d60094d651038735b5dccabd" },
   };
   bool ok256 = true, ok512 = true;
   for (size_t i = 0; i < sizeof(rows) / sizeof(rows[0]); i++) {
@@ -146,16 +129,16 @@ static void test_padding_boundaries(test_ctx_t *ctx) {
   }
   report_test(ctx, "sha256 at block/padding boundary lengths", ok256);
   report_test(ctx, "sha512 at block/padding boundary lengths", ok512);
-  report_test(ctx, "md5 of 1000-byte pattern", hex_matches(EOS_HASH_MD5, buf, 1000, "10046f077f2082ac19676b8079f1cb1a"));
+  report_test(ctx, "md5 of 1000-byte pattern", hex_matches(EOS_HASH_MD5, buf, TEST_HASH_PATTERN_LEN, "10046f077f2082ac19676b8079f1cb1a"));
 }
 
 // ── 3. Streaming equals one-shot ───────────────────────────────────────────
 
 static void test_streaming(test_ctx_t *ctx) {
   printf("--- streaming updates ---\n");
-  uint8_t buf[1000];
+  uint8_t buf[TEST_HASH_PATTERN_LEN];
   fill_pattern(buf, sizeof(buf));
-  const size_t chunks[] = { 1, 7, 63, 64, 65, 127, 128, 129, 999 };
+  const size_t chunks[] = { 1, 7, 63, 64, 65, 127, EOS_BUFFER_128_LEN, 129, 999 };
   bool all = true;
   for (int a = 0; a < EOS_HASH_ALG_COUNT; a++) {
     uint8_t whole[EOS_HASH_MAX_DIGEST], part[EOS_HASH_MAX_DIGEST];
@@ -184,7 +167,7 @@ static void test_streaming(test_ctx_t *ctx) {
 
 static void test_crc(test_ctx_t *ctx) {
   printf("--- crc32 / cksum ---\n");
-  uint8_t buf[1000];
+  uint8_t buf[TEST_HASH_PATTERN_LEN];
   fill_pattern(buf, sizeof(buf));
   report_test(ctx, "crc32 check value 123456789", eos_crc32(0, "123456789", 9) == 0xCBF43926u);
   report_test(ctx, "crc32 of empty input", eos_crc32(0, "", 0) == 0u);
@@ -203,7 +186,7 @@ static void test_crc(test_ctx_t *ctx) {
 static void test_hex_helpers(test_ctx_t *ctx) {
   printf("--- hex helpers ---\n");
   uint8_t out[4];
-  char hex[9];
+  char hex[TEST_HEX_STR_LEN];
   const uint8_t raw[4] = { 0x00, 0xAB, 0xCD, 0xFF };
   eos_hash_to_hex(raw, 4, hex);
   report_test(ctx, "to_hex is lowercase", strcmp(hex, "00abcdff") == 0);
@@ -257,7 +240,7 @@ static void test_base64(test_ctx_t *ctx) {
   };
   bool enc_ok = true, enc_bytewise_ok = true, dec_ok = true;
   for (size_t i = 0; i < sizeof(rfc) / sizeof(rfc[0]); i++) {
-    char expected_nl[32];
+    char expected_nl[EOS_SMALL_STR_LEN];
     snprintf(expected_nl, sizeof(expected_nl), "%s%s", rfc[i].encoded, rfc[i].encoded[0] ? "\n" : "");
     enc_ok = enc_ok && b64_encode_is(rfc[i].plain, 76, expected_nl, false);
     enc_bytewise_ok = enc_bytewise_ok && b64_encode_is(rfc[i].plain, 0, rfc[i].encoded, true);
@@ -312,10 +295,10 @@ static void test_tools(test_ctx_t *ctx) {
   if (!setup) return;
 
   for (size_t t = 0; t < sizeof(tools) / sizeof(tools[0]); t++) {
-    char label[64];
+    char label[EOS_LINE_64_LEN];
     uint8_t digest[EOS_HASH_MAX_DIGEST];
     char hex[EOS_HASH_MAX_HEX];
-    char list[EOS_HASH_MAX_HEX + 64];
+    char list[EOS_HASH_MAX_HEX + EOS_LINE_64_LEN];
     eos_hash_buf(tools[t].alg, content, sizeof(content) - 1, digest);
     eos_hash_to_hex(digest, eos_hash_digest_size(tools[t].alg), hex);
 

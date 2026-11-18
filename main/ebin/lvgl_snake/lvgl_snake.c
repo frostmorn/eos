@@ -1,13 +1,12 @@
 #include "ecore/bin.h"
 #include "ecore/lvgl.h"
+#include "ebin/lvgl_snake/lvgl_snake.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
 #include <unistd.h>
-
-#define SNAKE_MAX_LEN   512
 
 typedef struct {
   int8_t x;
@@ -45,7 +44,7 @@ typedef struct {
 static uint64_t now_ms(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+  return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
 static bool snake_occupies(const snake_game_t *g, int8_t x, int8_t y) {
@@ -59,7 +58,7 @@ static bool snake_occupies(const snake_game_t *g, int8_t x, int8_t y) {
 static void snake_spawn_food(snake_game_t *g) {
   int cols = g->cols > 0 ? g->cols : 18;
   int rows = g->rows > 0 ? g->rows : 14;
-  for (int tries = 0; tries < 200; tries++) {
+  for (int tries = 0; tries < SNAKE_MAX_FOOD_TRIES; tries++) {
     int8_t fx = (int8_t)(rand() % cols);
     int8_t fy = (int8_t)(rand() % rows);
     if (!snake_occupies(g, fx, fy)) {
@@ -122,13 +121,13 @@ static void snake_sync_ui(snake_game_t *g) {
                      g->body[i].y * cs + 1);
       lv_obj_set_style_bg_color(
           g->seg_objs[i],
-          (i == 0) ? lv_color_hex(0x34D399) : lv_color_hex(0x10B981), 0);
+          (i == 0) ? lv_color_hex(EOS_THEME_ACCENT_GREEN) : lv_color_hex(0x10B981), 0);
     } else if (g->seg_objs[i]) {
       lv_obj_add_flag(g->seg_objs[i], LV_OBJ_FLAG_HIDDEN);
     }
   }
 
-  char sbuf[64];
+  char sbuf[EOS_LINE_64_LEN];
   snprintf(sbuf, sizeof(sbuf), "Score: %d   Best: %d   [%s]", g->score,
            g->high_score, g->fast_mode ? "FAST" : "NORM");
   lv_label_set_text(g->score_lbl, sbuf);
@@ -202,23 +201,7 @@ static void snake_back_btn_cb(lv_event_t *e) {
   }
 }
 
-int lvgl_snake_main(int argc, char **argv) {
-  const char *fb_path = (argc > 1) ? argv[1] : NULL;
-  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
-
-  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
-    printf("lvgl_snake: failed to init LVGL\n");
-    return -1;
-  }
-
-  snake_game_t *g = calloc(1, sizeof(snake_game_t));
-  if (!g) {
-    eos_lvgl_deinit();
-    return -1;
-  }
-
-  srand((unsigned)now_ms());
-
+static void snake_build_ui(snake_game_t *g) {
   uint32_t scr_w = eos_lvgl_get_width();
   uint32_t scr_h = eos_lvgl_get_height();
 
@@ -243,12 +226,12 @@ int lvgl_snake_main(int argc, char **argv) {
   g->board_h = rows * cell_size + 4;
 
   lv_obj_t *scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1120), 0);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   g->score_lbl = lv_label_create(scr);
-  lv_obj_set_style_text_color(g->score_lbl, lv_color_hex(0xFDE047), 0);
+  lv_obj_set_style_text_color(g->score_lbl, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
   lv_obj_align(g->score_lbl, LV_ALIGN_TOP_MID, 0, 4);
 
   g->board = lv_obj_create(scr);
@@ -269,16 +252,83 @@ int lvgl_snake_main(int argc, char **argv) {
   lv_obj_clear_flag(g->food_obj, LV_OBJ_FLAG_SCROLLABLE);
 
   g->status_lbl = lv_label_create(scr);
-  lv_obj_set_style_text_color(g->status_lbl, lv_color_hex(0x94A3B8), 0);
+  lv_obj_set_style_text_color(g->status_lbl, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
   lv_obj_align(g->status_lbl, LV_ALIGN_BOTTOM_MID, 0, -4);
 
-  // Standard touch exit/back button
   lv_obj_t *back_btn = eos_lvgl_create_back_btn(scr, snake_back_btn_cb, g);
   if (back_btn) {
     lv_obj_set_size(back_btn, 24, 18);
     lv_obj_align(back_btn, LV_ALIGN_TOP_RIGHT, -4, 2);
   }
+}
 
+static void snake_handle_key(snake_game_t *g, uint16_t key) {
+  switch (key) {
+  case KEY_UP:
+    if (g->dir_y == 0) {
+      g->next_dx = 0;
+      g->next_dy = -1;
+    }
+    break;
+  case KEY_DOWN:
+    if (g->dir_y == 0) {
+      g->next_dx = 0;
+      g->next_dy = 1;
+    }
+    break;
+  case KEY_LEFT:
+    if (g->dir_x == 0) {
+      g->next_dx = -1;
+      g->next_dy = 0;
+    }
+    break;
+  case KEY_RIGHT:
+    if (g->dir_x == 0) {
+      g->next_dx = 1;
+      g->next_dy = 0;
+    }
+    break;
+  case KEY_A:
+  case KEY_ENTER:
+  case KEY_SPACE:
+    if (g->game_over) {
+      snake_reset(g);
+    } else {
+      g->paused = !g->paused;
+    }
+    snake_sync_ui(g);
+    break;
+  case KEY_C:
+    g->fast_mode = !g->fast_mode;
+    snake_sync_ui(g);
+    break;
+  case KEY_B:
+  case KEY_BACKSPACE:
+  case KEY_ESC:
+    g->quit = true;
+    break;
+  default:
+    break;
+  }
+}
+
+int lvgl_snake_main(int argc, char **argv) {
+  const char *fb_path = (argc > 1) ? argv[1] : NULL;
+  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
+
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
+    printf("lvgl_snake: failed to init LVGL\n");
+    return -1;
+  }
+
+  snake_game_t *g = calloc(1, sizeof(snake_game_t));
+  if (!g) {
+    eos_lvgl_deinit();
+    return -1;
+  }
+
+  srand((unsigned)now_ms());
+  snake_build_ui(g);
   snake_reset(g);
   snake_sync_ui(g);
 
@@ -287,53 +337,7 @@ int lvgl_snake_main(int argc, char **argv) {
   while (!g->quit) {
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
-      switch (key) {
-      case KEY_UP:
-        if (g->dir_y == 0) {
-          g->next_dx = 0;
-          g->next_dy = -1;
-        }
-        break;
-      case KEY_DOWN:
-        if (g->dir_y == 0) {
-          g->next_dx = 0;
-          g->next_dy = 1;
-        }
-        break;
-      case KEY_LEFT:
-        if (g->dir_x == 0) {
-          g->next_dx = -1;
-          g->next_dy = 0;
-        }
-        break;
-      case KEY_RIGHT:
-        if (g->dir_x == 0) {
-          g->next_dx = 1;
-          g->next_dy = 0;
-        }
-        break;
-      case KEY_A:
-      case KEY_ENTER:
-      case KEY_SPACE:
-        if (g->game_over) {
-          snake_reset(g);
-        } else {
-          g->paused = !g->paused;
-        }
-        snake_sync_ui(g);
-        break;
-      case KEY_C:
-        g->fast_mode = !g->fast_mode;
-        snake_sync_ui(g);
-        break;
-      case KEY_B:
-      case KEY_BACKSPACE:
-      case KEY_ESC:
-        g->quit = true;
-        break;
-      default:
-        break;
-      }
+      snake_handle_key(g, key);
     }
 
     uint64_t cur = now_ms();

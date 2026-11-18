@@ -481,7 +481,7 @@ static int pipefs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
     return -1;
   }
   memset(st, 0, sizeof(*st));
-  st->st_mode = S_IFIFO | 0666;
+  st->st_mode = S_IFIFO | EOS_DEFAULT_DEV_MODE;
   st->st_size = (off_t)node->count;
   pthread_mutex_unlock(&s_pipe_table->lock);
   return 0;
@@ -499,7 +499,7 @@ static int pipefs_stat(void *ctx, const char *path, struct stat *st) {
 
   if (*path == '\0') {
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFDIR | 0755;
+    st->st_mode = S_IFDIR | EOS_DEFAULT_DIR_MODE;
     return 0;
   }
 
@@ -516,7 +516,7 @@ static int pipefs_stat(void *ctx, const char *path, struct stat *st) {
     return -1;
   }
   memset(st, 0, sizeof(*st));
-  st->st_mode = S_IFIFO | 0666;
+  st->st_mode = S_IFIFO | EOS_DEFAULT_DEV_MODE;
   st->st_size = (off_t)node->count;
   pthread_mutex_unlock(&s_pipe_table->lock);
   return 0;
@@ -718,7 +718,7 @@ void eos_pipefs_init(void) {
       .telldir = pipefs_telldir,
   };
 
-  mkdir(EOS_PIPEFS_ROOT, 0755);
+  mkdir(EOS_PIPEFS_ROOT, EOS_DEFAULT_DIR_MODE);
   eos_vfs_register_ops(EOS_PIPEFS_ROOT, &ops, NULL);
   EOS_LOGI("pipefs mounted at %s\n", EOS_PIPEFS_ROOT);
 }

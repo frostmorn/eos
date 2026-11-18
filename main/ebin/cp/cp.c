@@ -11,8 +11,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define CP_BUFFER_SIZE 1024
-
 static void print_usage(void) {
   printf("Usage: cp [-r|-R] [-f] [-v] SOURCE... DEST\n"
          "Copy SOURCE to DEST, or multiple SOURCE(s) to DIRECTORY.\n\n"
@@ -23,11 +21,6 @@ static void print_usage(void) {
          "  -v, --verbose        Explain what is being done\n"
          "  -h, --help           Display this help and exit\n");
 }
-
-#define get_basename fs_get_basename
-#define join_path fs_join_path
-#define is_directory fs_is_directory
-#define is_same_file fs_is_same_file
 
 static int copy_single_file(const char *src, const char *dst, bool force, bool verbose) {
   if (is_same_file(src, dst)) {
@@ -113,7 +106,7 @@ static int copy_directory_recursive(const char *src, const char *dst, bool force
     return -1;
   }
 
-  if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
+  if (mkdir(dst, EOS_DEFAULT_DIR_MODE) != 0 && errno != EEXIST) {
     printf("cp: cannot create directory '%s': %s\n", dst, strerror(errno));
     return -1;
   }

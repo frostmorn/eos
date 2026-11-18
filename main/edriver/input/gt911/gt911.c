@@ -18,6 +18,7 @@
 #include "ecore/input.h"
 #include "ecore/ioctl.h"
 #include "ecore/log.h"
+#include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
 
 typedef struct {
@@ -45,8 +46,8 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
   if (int_pin < 0) int_pin = eos_pin_get_no(dev->pins, "int_io_num");
 
   int clk_speed = eos_cfg_get_i(dev->cfg, "clk_speed", 400000);
-  uint16_t width = (uint16_t)eos_cfg_get_i(dev->cfg, "width", 480);
-  uint16_t height = (uint16_t)eos_cfg_get_i(dev->cfg, "height", 800);
+  uint16_t width = (uint16_t)eos_cfg_get_i(dev->cfg, "width", EOS_TOUCH_GT911_WIDTH);
+  uint16_t height = (uint16_t)eos_cfg_get_i(dev->cfg, "height", EOS_TOUCH_GT911_HEIGHT);
   uint16_t addr = (uint16_t)eos_cfg_get_i(dev->cfg, "addr", ESP_LCD_TOUCH_IO_I2C_GT911_ADDRESS);
   bool swap_xy = (bool)eos_cfg_get_i(dev->cfg, "swap_xy", 0);
   bool mirror_x = (bool)eos_cfg_get_i(dev->cfg, "mirror_x", 0);
@@ -77,7 +78,7 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
 
   // Probe touch controller on the I2C bus
   if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_PROBE, addr,
-                    50) == 0) {
+                    EOS_MS_PER_TICK_50) == 0) {
     EOS_LOGI("gt911: detected device at I2C address 0x%02X", (unsigned)addr);
   } else {
     EOS_LOGW("gt911: probe at I2C address 0x%02X returned NACK (proceeding with init)",

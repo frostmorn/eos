@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "emisc/fancymacro.h"
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -75,22 +76,16 @@ static bool test_pin_bridge(int fd_drive, int fd_read) {
   return true;
 }
 
-int soldercheck_main(int argc, char **argv) {
-  (void)argc;
-  (void)argv;
-
-  printf("====================================================\n");
-  printf(" Solder Check: GPIO Bridge & Short Detection\n");
-  printf("====================================================\n");
-  printf("Scanning /dev/gpio for testable pins...\n");
+static pin_file_t *collect_test_pins(size_t *out_valid_count, pin_file_t **out_file_list) {
+  *out_valid_count = 0;
+  *out_file_list = NULL;
 
   DIR *dir = opendir("/dev/gpio");
   if (!dir) {
     printf("[FAIL] Failed to open /dev/gpio\n");
-    return -1;
+    return NULL;
   }
 
-  // Count available pin directory entries
   size_t count_pins = 0;
   struct dirent *ent;
   while ((ent = readdir(dir)) != NULL) {
@@ -102,17 +97,16 @@ int soldercheck_main(int argc, char **argv) {
   if (count_pins == 0) {
     closedir(dir);
     printf("[!] No testable GPIO pins found in /dev/gpio\n");
-    return 0;
+    return NULL;
   }
 
   pin_file_t *file_list = calloc(count_pins, sizeof(pin_file_t));
   if (!file_list) {
     closedir(dir);
     printf("[FAIL] Out of memory allocating pin list\n");
-    return -1;
+    return NULL;
   }
 
-  // Open candidate pins
   rewinddir(dir);
   size_t opened_count = 0;
   while ((ent = readdir(dir)) != NULL) {
@@ -135,7 +129,6 @@ int soldercheck_main(int argc, char **argv) {
   }
   closedir(dir);
 
-  // Compact into array of successfully opened pins
   pin_file_t *test_pins = calloc(opened_count, sizeof(pin_file_t));
   if (!test_pins) {
     for (size_t i = 0; i < opened_count; i++) {
@@ -144,7 +137,7 @@ int soldercheck_main(int argc, char **argv) {
     }
     free(file_list);
     printf("[FAIL] Out of memory\n");
-    return -1;
+    return NULL;
   }
 
   size_t valid_count = 0;
@@ -154,28 +147,16 @@ int soldercheck_main(int argc, char **argv) {
     }
   }
 
-  // Sort pins by pin number for clean, deterministic output
   if (valid_count > 1) {
     qsort(test_pins, valid_count, sizeof(pin_file_t), compare_pins);
   }
 
-  printf("Found %zu available user GPIO pin(s):\n  ", valid_count);
-  for (size_t i = 0; i < valid_count; i++) {
-    printf("GPIO %d%s", test_pins[i].pin_num,
-           (i + 1 < valid_count) ? ", " : "\n");
-  }
+  *out_valid_count = valid_count;
+  *out_file_list = file_list;
+  return test_pins;
+}
 
-  if (valid_count < 2) {
-    printf("[!] Need at least 2 open GPIO pins to test for bridges.\n");
-    for (size_t i = 0; i < valid_count; i++) {
-      close(test_pins[i].fd);
-    }
-    free(test_pins);
-    free(file_list);
-    return 0;
-  }
-
-  // ── Phase 1: Check for short to GND or + (VCC) ──────────────────
+static void phase1_check_pin_health(pin_file_t *test_pins, size_t valid_count, size_t *out_gnd, size_t *out_vcc) {
   printf("\n[Phase 1/2] Checking pin health (short to GND / +)...\n");
   size_t gnd_shorts = 0;
   size_t vcc_shorts = 0;
@@ -185,10 +166,6 @@ int soldercheck_main(int argc, char **argv) {
     bool is_short_gnd = false;
     bool is_short_vcc = false;
 
-    // Active write-and-readback test:
-    // Drive alternating values (0, 1, 0, 1, 1, 0, 1, 0) and verify if the pin changes level.
-    // If a pin is shorted to ground, it will NEVER read 1 (remains 0 despite writes to 1).
-    // If a pin is shorted to +, it will NEVER read 0 (remains 1 despite writes to 0).
     static const uint8_t write_pattern[] = {0, 1, 0, 1, 1, 0, 1, 0};
     size_t zero_reads = 0;
     size_t one_reads = 0;
@@ -238,7 +215,11 @@ int soldercheck_main(int argc, char **argv) {
            valid_count);
   }
 
-  // ── Phase 2: Check for solder bridges between pin pairs ──────────
+  *out_gnd = gnd_shorts;
+  *out_vcc = vcc_shorts;
+}
+
+static size_t phase2_check_pin_bridges(pin_file_t *test_pins, size_t valid_count, size_t *out_pairs) {
   printf("\n[Phase 2/2] Checking for solder bridges between pin pairs...\n");
   size_t bridges_found = 0;
   size_t pairs_tested = 0;
@@ -253,12 +234,10 @@ int soldercheck_main(int argc, char **argv) {
 
       pairs_tested++;
 
-      // Test Direction 1: Drive pin i, read pin j
       bool match_ij = test_pin_bridge(test_pins[i].fd, test_pins[j].fd);
       pin_reset_to_input_pullup(test_pins[i].fd);
       pin_reset_to_input_pullup(test_pins[j].fd);
 
-      // If Direction 1 matched, test reverse direction to confirm bridge
       bool match_ji = false;
       if (match_ij) {
         match_ji = test_pin_bridge(test_pins[j].fd, test_pins[i].fd);
@@ -276,11 +255,52 @@ int soldercheck_main(int argc, char **argv) {
         bridges_found++;
       }
 
-      usleep(200); // Feed watchdog / yield between iterations
+      usleep(EOS_TIMEOUT_200_MS);
     }
   }
 
-  // ── Results Summary ──────────────────────────────────────────────
+  *out_pairs = pairs_tested;
+  return bridges_found;
+}
+
+int soldercheck_main(int argc, char **argv) {
+  (void)argc;
+  (void)argv;
+
+  printf("====================================================\n");
+  printf(" Solder Check: GPIO Bridge & Short Detection\n");
+  printf("====================================================\n");
+  printf("Scanning /dev/gpio for testable pins...\n");
+
+  size_t valid_count = 0;
+  pin_file_t *file_list = NULL;
+  pin_file_t *test_pins = collect_test_pins(&valid_count, &file_list);
+  if (!test_pins) {
+    return (valid_count == 0 && file_list == NULL) ? 0 : -1;
+  }
+
+  printf("Found %zu available user GPIO pin(s):\n  ", valid_count);
+  for (size_t i = 0; i < valid_count; i++) {
+    printf("GPIO %d%s", test_pins[i].pin_num,
+           (i + 1 < valid_count) ? ", " : "\n");
+  }
+
+  if (valid_count < 2) {
+    printf("[!] Need at least 2 open GPIO pins to test for bridges.\n");
+    for (size_t i = 0; i < valid_count; i++) {
+      close(test_pins[i].fd);
+    }
+    free(test_pins);
+    free(file_list);
+    return 0;
+  }
+
+  size_t gnd_shorts = 0, vcc_shorts = 0;
+  phase1_check_pin_health(test_pins, valid_count, &gnd_shorts, &vcc_shorts);
+
+  size_t pairs_tested = 0;
+  size_t bridges_found = phase2_check_pin_bridges(test_pins, valid_count, &pairs_tested);
+
   printf("----------------------------------------------------\n");
   printf("Summary: %zu pin(s), %zu pair(s) tested.\n", valid_count, pairs_tested);
   printf("  - Solder bridges: %zu\n", bridges_found);
@@ -294,7 +314,6 @@ int soldercheck_main(int argc, char **argv) {
     printf("[FAIL] Solder issues detected! Inspect connections on reported GPIOs.\n");
   }
 
-  // Cleanup
   for (size_t i = 0; i < valid_count; i++) {
     close(test_pins[i].fd);
   }

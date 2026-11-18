@@ -55,7 +55,8 @@ ${COMPONENT_LIB} INTERFACE
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE
-    -Wno-error=override-init
+    -Wno-override-init
+    -Wno-deprecated-declarations
 )
 
 if(DEFINED WIDTH AND NOT DEFINED EOS_QEMU_DISPLAY_WIDTH)

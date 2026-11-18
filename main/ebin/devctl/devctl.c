@@ -30,7 +30,7 @@ static int cmd_scopes(void) {
   }
 
   printf("Driver Scopes:\n");
-  char line[64];
+  char line[EOS_LINE_64_LEN];
   while (fgets(line, sizeof(line), f)) {
     printf("  %s", line);
   }
@@ -45,7 +45,7 @@ static int cmd_drivers(const char *filter_scope) {
     return 1;
   }
 
-  char line[128];
+  char line[EOS_BUFFER_128_LEN];
   bool is_header = true;
   while (fgets(line, sizeof(line), f)) {
     if (is_header) {
@@ -54,7 +54,7 @@ static int cmd_drivers(const char *filter_scope) {
       continue;
     }
     if (filter_scope) {
-      char scope[32];
+      char scope[EOS_SMALL_STR_LEN];
       if (sscanf(line, "%31s", scope) == 1) {
         if (strcmp(scope, filter_scope) != 0) {
           continue;
@@ -74,7 +74,7 @@ static int cmd_devices(void) {
     return 1;
   }
 
-  char line[128];
+  char line[EOS_BUFFER_128_LEN];
   while (fgets(line, sizeof(line), f)) {
     printf("%s", line);
   }
@@ -361,11 +361,11 @@ static int cmd_attach(int argc, char **argv) {
   const char *drv_name = argv[3];
   const char *parent_name = NULL;
 
-  eos_pin_t parsed_pins[64];
+  eos_pin_t parsed_pins[EOS_LINE_64_LEN];
   size_t pin_count = 0;
   memset(parsed_pins, 0, sizeof(parsed_pins));
 
-  eos_cfg_t parsed_cfg[64];
+  eos_cfg_t parsed_cfg[EOS_LINE_64_LEN];
   size_t cfg_count = 0;
   memset(parsed_cfg, 0, sizeof(parsed_cfg));
 
@@ -377,18 +377,18 @@ static int cmd_attach(int argc, char **argv) {
         goto cleanup_err;
       }
       i++;
-      if (parse_pin_arg(argv[i], parsed_pins, &pin_count, 64) != 0) goto cleanup_err;
+      if (parse_pin_arg(argv[i], parsed_pins, &pin_count, EOS_LINE_64_LEN) != 0) goto cleanup_err;
     } else if (strncmp(arg, "--pin=", 6) == 0) {
-      if (parse_pin_arg(arg + 6, parsed_pins, &pin_count, 64) != 0) goto cleanup_err;
+      if (parse_pin_arg(arg + 6, parsed_pins, &pin_count, EOS_LINE_64_LEN) != 0) goto cleanup_err;
     } else if (strcmp(arg, "--cfg") == 0 || strcmp(arg, "-c") == 0) {
       if (i + 1 >= argc) {
         fprintf(stderr, "devctl: option '%s' requires an argument\n", arg);
         goto cleanup_err;
       }
       i++;
-      if (parse_cfg_arg(argv[i], parsed_cfg, &cfg_count, 64) != 0) goto cleanup_err;
+      if (parse_cfg_arg(argv[i], parsed_cfg, &cfg_count, EOS_LINE_64_LEN) != 0) goto cleanup_err;
     } else if (strncmp(arg, "--cfg=", 6) == 0) {
-      if (parse_cfg_arg(arg + 6, parsed_cfg, &cfg_count, 64) != 0) goto cleanup_err;
+      if (parse_cfg_arg(arg + 6, parsed_cfg, &cfg_count, EOS_LINE_64_LEN) != 0) goto cleanup_err;
     } else if (arg[0] == '-') {
       fprintf(stderr, "devctl: unrecognized option '%s'\n", arg);
       goto cleanup_err;

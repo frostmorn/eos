@@ -15,12 +15,6 @@
 #include "ecore/ioctl.h"
 #include "emisc/psram_alloc.h"
 
-// Actual Display dimensions maxima defined by st7789 datasheets
-// We need to know those values to deduce an x/y shifts to make it actually work
-#define ST7789_GRAM_WIDTH      240
-#define ST7789_GRAM_HEIGHT     320
-#define ST7789_DMA_STRIP_BYTES 8192U
-
 // ── State ─────────────────────────────────────────────────────
 
 typedef struct {
@@ -29,11 +23,7 @@ typedef struct {
   int32_t width;  // width after rotation
   int32_t height; // height after rotation
   uint8_t rotation;
-  uint32_t clip_x;
-  uint32_t clip_y;
-  uint32_t clip_w;
-  uint32_t clip_h;
-  bool has_clip;
+  eos_clip_rect_t clip;
   uint8_t *dma_buf[2];
   uint8_t dma_idx;
   SemaphoreHandle_t lock;
@@ -80,6 +70,36 @@ static void st7789_apply_placement(st7789_state_t *state, int32_t native_w,
 }
 // ── Driver functions ──────────────────────────────────────────
 
+static bool st7789_claim_pins(eos_dev_t *dev, int32_t cs_pin, int32_t dc_pin, int32_t en_pin, int32_t rst_pin) {
+  if (!eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) return false;
+  if (!eos_cap_claim(EOS_CAPS_GPIO, dc_pin, dev)) {
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    return false;
+  }
+  if (en_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, en_pin, dev)) {
+    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    return false;
+  }
+  if (rst_pin >= 0 && !eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev)) {
+    if (en_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    return false;
+  }
+  return true;
+}
+
+static void st7789_release_pins(eos_dev_t *dev, int32_t cs_pin, int32_t dc_pin, int32_t en_pin, int32_t rst_pin) {
+  if (en_pin >= 0) {
+    gpio_set_level(en_pin, 0);
+    eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
+  }
+  if (rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
+  eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
+  eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+}
+
 bool driver_display_st7789_init(eos_dev_t *dev) {
   st7789_state_t *state = eos_psram_malloc_prefer(sizeof(st7789_state_t));
   if (!state)
@@ -88,8 +108,8 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   dev->state = state;
 
   // Native dimensions from config (before rotation)
-  int32_t native_w = eos_cfg_get_i(dev->cfg, "width", 240);
-  int32_t native_h = eos_cfg_get_i(dev->cfg, "height", 280);
+  int32_t native_w = eos_cfg_get_i(dev->cfg, "width", EOS_DISPLAY_DEFAULT_HEIGHT);
+  int32_t native_h = eos_cfg_get_i(dev->cfg, "height", EOS_DISPLAY_DEFAULT_WIDTH);
   int32_t native_gap_x =
       eos_cfg_get_i(dev->cfg, "gap_x", (ST7789_GRAM_WIDTH - native_w) / 2);
   int32_t native_gap_y =
@@ -102,37 +122,10 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   int32_t en_pin = eos_pin_get_no(dev->pins, "en");
   int32_t rst_pin = eos_pin_get_no(dev->pins, "rst");
 
-  // Claim pins with proper cleanup on failure
-  if (!eos_cap_claim(EOS_CAPS_GPIO, cs_pin, dev)) {
+  if (!st7789_claim_pins(dev, cs_pin, dc_pin, en_pin, rst_pin)) {
     free(state);
     dev->state = NULL;
     return false;
-  }
-  if (!eos_cap_claim(EOS_CAPS_GPIO, dc_pin, dev)) {
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
-    free(state);
-    dev->state = NULL;
-    return false;
-  }
-  if (en_pin >= 0) {
-    if (!eos_cap_claim(EOS_CAPS_GPIO, en_pin, dev)) {
-      eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
-      eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
-      free(state);
-      dev->state = NULL;
-      return false;
-    }
-  }
-  if (rst_pin >= 0) {
-    if (!eos_cap_claim(EOS_CAPS_GPIO, rst_pin, dev)) {
-      if (en_pin >= 0)
-        eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
-      eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
-      eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
-      free(state);
-      dev->state = NULL;
-      return false;
-    }
   }
 
   // Enable display power before anything else
@@ -163,14 +156,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
   if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)host, &io_cfg,
                                &state->io) != ESP_OK) {
-    if (en_pin >= 0) {
-      gpio_set_level(en_pin, 0);
-      eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
-    }
-    if (rst_pin >= 0)
-      eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
-    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    st7789_release_pins(dev, cs_pin, dc_pin, en_pin, rst_pin);
     free(state);
     dev->state = NULL;
     return false;
@@ -185,14 +171,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
   if (esp_lcd_new_panel_st7789(state->io, &panel_cfg, &state->panel) !=
       ESP_OK) {
-    if (en_pin >= 0) {
-      gpio_set_level(en_pin, 0);
-      eos_cap_release(EOS_CAPS_GPIO, en_pin, dev);
-    }
-    if (rst_pin >= 0)
-      eos_cap_release(EOS_CAPS_GPIO, rst_pin, dev);
-    eos_cap_release(EOS_CAPS_GPIO, dc_pin, dev);
-    eos_cap_release(EOS_CAPS_GPIO, cs_pin, dev);
+    st7789_release_pins(dev, cs_pin, dc_pin, en_pin, rst_pin);
     esp_lcd_panel_io_del(state->io);
     free(state);
     dev->state = NULL;
@@ -231,49 +210,27 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
     return -1;
   }
 
-  st7789_state_t *state = dev->state;
-  if (state->lock) {
-    xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
-  }
+  st7789_state_t *st = dev->state;
+  eos_rect_t r;
+  eos_clip_rect_consume(&st->clip, (uint32_t)st->width, (uint32_t)st->height, &r);
 
-  uint32_t x = state->has_clip ? state->clip_x : 0;
-  uint32_t y = state->has_clip ? state->clip_y : 0;
-  uint32_t w = state->has_clip ? state->clip_w : (uint32_t)state->width;
-  uint32_t h = state->has_clip ? state->clip_h : (uint32_t)state->height;
-  state->has_clip = false;
-
-  if (w == 0 || h == 0 || x + w > (uint32_t)state->width ||
-      y + h > (uint32_t)state->height) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  size_t expected_len = (size_t)w * h * 2;
-  if (len > expected_len)
-    len = expected_len;
-
-  size_t row_bytes = (size_t)w * 2;
-  if (row_bytes == 0 || len < row_bytes) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    errno = EINVAL;
-    return -1;
-  }
-
-  uint32_t total_rows = (uint32_t)(len / row_bytes);
+  uint32_t total_rows = eos_rect_calc_rows(len, r.w, sizeof(uint16_t), r.h);
   if (total_rows == 0) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
-    return 0;
+    errno = EINVAL;
+    return -1;
   }
-  if (total_rows > h)
-    total_rows = h;
+
+  if (st->lock) {
+    xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+  }
+  size_t row_bytes = (size_t)r.w * sizeof(uint16_t);
 
   // Transfer in horizontal strips using persistent ping-pong DMA buffers.
   // Because esp_lcd_panel_draw_bitmap sends CASET/RASET synchronously via
   // polling transmit before queuing RAMWR color data, alternating between
   // dma_buf[0] and dma_buf[1] guarantees the previous strip's DMA transfer
   // has completed before its buffer is reused on the next strip.
-  if (state->dma_buf[0] && state->dma_buf[1] &&
+  if (st->dma_buf[0] && st->dma_buf[1] &&
       row_bytes <= ST7789_DMA_STRIP_BYTES) {
     uint32_t strip_h = (uint32_t)(ST7789_DMA_STRIP_BYTES / row_bytes);
     if (strip_h == 0)
@@ -286,100 +243,69 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
       uint32_t sh =
           (sy + strip_h <= total_rows) ? strip_h : (total_rows - sy);
       size_t chunk_len = (size_t)sh * row_bytes;
-      uint8_t *dst = state->dma_buf[state->dma_idx & 1U];
-      state->dma_idx ^= 1U;
+      uint8_t *dst = st->dma_buf[st->dma_idx & 1U];
+      st->dma_idx ^= 1U;
 
       memcpy(dst, src + (size_t)sy * row_bytes, chunk_len);
-      if (esp_lcd_panel_draw_bitmap(state->panel, x, y + sy, x + w,
-                                    y + sy + sh, dst) != ESP_OK) {
-        if (state->lock) xSemaphoreGiveRecursive(state->lock);
+      if (esp_lcd_panel_draw_bitmap(st->panel, r.x, r.y + sy, r.x + r.w,
+                                    r.y + sy + sh, dst) != ESP_OK) {
+        if (st->lock) xSemaphoreGiveRecursive(st->lock);
         return -1;
       }
     }
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    if (st->lock) xSemaphoreGiveRecursive(st->lock);
     return (ssize_t)((size_t)total_rows * row_bytes);
   }
 
   // Fallback if persistent ping-pong buffers are unavailable
-  if (esp_lcd_panel_draw_bitmap(state->panel, x, y, x + w, y + total_rows,
+  if (esp_lcd_panel_draw_bitmap(st->panel, r.x, r.y, r.x + r.w, r.y + total_rows,
                                 buf) != ESP_OK) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    if (st->lock) xSemaphoreGiveRecursive(st->lock);
     return -1;
   }
-  if (state->lock) xSemaphoreGiveRecursive(state->lock);
+  if (st->lock) xSemaphoreGiveRecursive(st->lock);
   return (ssize_t)((size_t)total_rows * row_bytes);
 }
 
 int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   (void)fd;
-  st7789_state_t *state = dev->state;
-  if (!state) {
+  st7789_state_t *st = dev->state;
+  if (!st) {
     errno = ENODEV;
     return -1;
   }
 
-  int ret = 0;
-
   switch (cmd) {
   case EOS_DISPLAY_IOCTL_GET_WIDTH: {
-    uint32_t *width = va_arg(args, uint32_t *);
-    if (!width) {
-      errno = EINVAL;
-      return -1;
-    }
-    *width = state->width;
-    break;
+    uint32_t *w = va_arg(args, uint32_t *);
+    if (!w) { errno = EINVAL; return -1; }
+    *w = st->width;
+    return 0;
   }
   case EOS_DISPLAY_IOCTL_GET_HEIGHT: {
-    uint32_t *height = va_arg(args, uint32_t *);
-    if (!height) {
-      errno = EINVAL;
-      return -1;
-    }
-    *height = state->height;
-    break;
+    uint32_t *h = va_arg(args, uint32_t *);
+    if (!h) { errno = EINVAL; return -1; }
+    *h = st->height;
+    return 0;
   }
-  case EOS_DISPLAY_IOCTL_SET_WINDOW: {
-    const eos_display_rect_t *rect = va_arg(args, const eos_display_rect_t *);
-    if (rect) {
-      if (rect->w == 0 || rect->h == 0 ||
-          rect->x >= (uint32_t)state->width ||
-          rect->y >= (uint32_t)state->height ||
-          rect->x + rect->w > (uint32_t)state->width ||
-          rect->y + rect->h > (uint32_t)state->height) {
-        state->has_clip = false;
-        errno = EINVAL;
-        return -1;
-      }
-      state->clip_x = rect->x;
-      state->clip_y = rect->y;
-      state->clip_w = rect->w;
-      state->clip_h = rect->h;
-      state->has_clip = true;
-    } else {
-      state->has_clip = false;
-    }
-    break;
-  }
+  case EOS_DISPLAY_IOCTL_SET_WINDOW:
+    return eos_clip_rect_set(&st->clip, va_arg(args, const eos_display_rect_t *),
+                            (uint32_t)st->width, (uint32_t)st->height);
+  case EOS_DISPLAY_IOCTL_GET_WINDOW:
+    return eos_clip_rect_get(&st->clip, (uint32_t)st->width, (uint32_t)st->height,
+                            va_arg(args, eos_display_rect_t *));
   case EOS_DISPLAY_IOCTL_LOCK:
-    if (state->lock) {
-      xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
-    }
-    break;
+    if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+    return 0;
 
   case EOS_DISPLAY_IOCTL_UNLOCK:
-    if (state->lock) {
-      xSemaphoreGiveRecursive(state->lock);
-    }
-    break;
+    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    return 0;
 
   default:
     errno = ENOTTY;
-    ret = -1;
-    break;
+    return -1;
   }
-
-  return ret;
 }
 
 void driver_display_st7789_shutdown(eos_dev_t *dev) {

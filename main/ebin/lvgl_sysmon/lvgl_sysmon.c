@@ -1,5 +1,8 @@
 #include "ecore/bin.h"
 #include "ecore/lvgl.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
+#include "lvgl_sysmon.h"
 
 #include <esp_heap_caps.h>
 #include <stdio.h>
@@ -22,7 +25,7 @@ typedef struct {
 static uint64_t get_ms(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (uint64_t)tv.tv_sec * 1000ULL + (uint64_t)tv.tv_usec / 1000ULL;
+  return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
 static void update_mem_row(uint32_t caps, const char *title, lv_obj_t *lbl,
@@ -32,18 +35,19 @@ static void update_mem_row(uint32_t caps, const char *title, lv_obj_t *lbl,
   size_t used_b = (total_b >= free_b) ? (total_b - free_b) : 0;
   int32_t pct = (total_b > 0) ? (int32_t)((used_b * 100ULL) / total_b) : 0;
 
-  char buf[64];
+  char buf[EOS_LINE_64_LEN];
   snprintf(buf, sizeof(buf), "%s: %u / %u KB (%d%%)", title,
-           (unsigned)(used_b / 1024U), (unsigned)(total_b / 1024U), (int)pct);
+           (unsigned)(used_b / (size_t)EOS_LARGE_STR_LEN),
+           (unsigned)(total_b / (size_t)EOS_LARGE_STR_LEN), (int)pct);
   lv_label_set_text(lbl, buf);
   lv_bar_set_value(bar, pct, LV_ANIM_OFF);
 }
 
 static void sysmon_refresh(sysmon_ui_t *ui, uint64_t start_ms) {
-  uint64_t elapsed_s = (get_ms() - start_ms) / 1000ULL;
+  uint64_t elapsed_s = (get_ms() - start_ms) / (uint64_t)EOS_MS_PER_SEC;
   eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
 
-  char ubuf[64];
+  char ubuf[EOS_LINE_64_LEN];
   snprintf(ubuf, sizeof(ubuf), "EOS System Monitor   Up: %llus",
            (unsigned long long)elapsed_s);
   lv_label_set_text(ui->lbl_uptime, ubuf);
@@ -54,7 +58,7 @@ static void sysmon_refresh(sysmon_ui_t *ui, uint64_t start_ms) {
   update_mem_row(MALLOC_CAP_DMA, "DMA", ui->lbl_dma, ui->bar_dma);
 
   if (ctx) {
-    char lbuf[80];
+    char lbuf[EOS_STR_80_LEN];
     snprintf(lbuf, sizeof(lbuf), "LVGL Flushes: P:%u F:%u (%ux%u)",
              (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes,
              (unsigned)ctx->width, (unsigned)ctx->height);
@@ -83,52 +87,52 @@ int lvgl_sysmon_main(int argc, char **argv) {
   uint32_t w = eos_lvgl_get_width();
 
   lv_obj_t *scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1120), 0);
+  lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
   ui.lbl_uptime = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.lbl_uptime, lv_color_hex(0x38BDF8), 0);
+  lv_obj_set_style_text_color(ui.lbl_uptime, lv_color_hex(EOS_THEME_INFO_BLUE), 0);
   lv_obj_align(ui.lbl_uptime, LV_ALIGN_TOP_MID, 0, 8);
 
   // DRAM bar
   ui.lbl_dram = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.lbl_dram, lv_color_hex(0xF8FAFC), 0);
-  lv_obj_align(ui.lbl_dram, LV_ALIGN_TOP_LEFT, 10, 36);
+  lv_obj_set_style_text_color(ui.lbl_dram, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
+  lv_obj_align(ui.lbl_dram, LV_ALIGN_TOP_LEFT, 10, SYSMON_TITLE_Y);
 
   ui.bar_dram = lv_bar_create(scr);
-  lv_obj_set_size(ui.bar_dram, (int32_t)w - 20, 14);
+  lv_obj_set_size(ui.bar_dram, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
   lv_bar_set_range(ui.bar_dram, 0, 100);
-  lv_obj_align(ui.bar_dram, LV_ALIGN_TOP_MID, 0, 56);
+  lv_obj_align(ui.bar_dram, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_DRAM_Y);
 
   // PSRAM bar
   ui.lbl_psram = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.lbl_psram, lv_color_hex(0xF8FAFC), 0);
-  lv_obj_align(ui.lbl_psram, LV_ALIGN_TOP_LEFT, 10, 84);
+  lv_obj_set_style_text_color(ui.lbl_psram, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
+  lv_obj_align(ui.lbl_psram, LV_ALIGN_TOP_LEFT, 10, SYSMON_PSRAM_LBL_Y);
 
   ui.bar_psram = lv_bar_create(scr);
-  lv_obj_set_size(ui.bar_psram, (int32_t)w - 20, 14);
+  lv_obj_set_size(ui.bar_psram, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
   lv_bar_set_range(ui.bar_psram, 0, 100);
-  lv_obj_align(ui.bar_psram, LV_ALIGN_TOP_MID, 0, 104);
+  lv_obj_align(ui.bar_psram, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_PSRAM_Y);
 
   // DMA bar
   ui.lbl_dma = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.lbl_dma, lv_color_hex(0xF8FAFC), 0);
-  lv_obj_align(ui.lbl_dma, LV_ALIGN_TOP_LEFT, 10, 132);
+  lv_obj_set_style_text_color(ui.lbl_dma, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
+  lv_obj_align(ui.lbl_dma, LV_ALIGN_TOP_LEFT, 10, SYSMON_DMA_LBL_Y);
 
   ui.bar_dma = lv_bar_create(scr);
-  lv_obj_set_size(ui.bar_dma, (int32_t)w - 20, 14);
+  lv_obj_set_size(ui.bar_dma, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
   lv_bar_set_range(ui.bar_dma, 0, 100);
-  lv_obj_align(ui.bar_dma, LV_ALIGN_TOP_MID, 0, 152);
+  lv_obj_align(ui.bar_dma, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_DMA_Y);
 
   // LVGL stats box
   ui.lbl_lvgl = lv_label_create(scr);
-  lv_obj_set_style_text_color(ui.lbl_lvgl, lv_color_hex(0x34D399), 0);
-  lv_obj_align(ui.lbl_lvgl, LV_ALIGN_TOP_LEFT, 10, 184);
+  lv_obj_set_style_text_color(ui.lbl_lvgl, lv_color_hex(EOS_THEME_ACCENT_GREEN), 0);
+  lv_obj_align(ui.lbl_lvgl, LV_ALIGN_TOP_LEFT, 10, SYSMON_STATS_Y);
 
   lv_obj_t *hint = lv_label_create(scr);
   lv_label_set_text(hint, "A/Tap: Refresh    B/X: Exit");
-  lv_obj_set_style_text_color(hint, lv_color_hex(0x94A3B8), 0);
+  lv_obj_set_style_text_color(hint, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 
   // Standard touch exit/back button
@@ -157,7 +161,7 @@ int lvgl_sysmon_main(int argc, char **argv) {
     }
 
     uint64_t now = get_ms();
-    if (now - last_upd >= 250ULL) {
+    if (now - last_upd >= SYSMON_REFRESH_INTERVAL_MS) {
       last_upd = now;
       sysmon_refresh(&ui, start_ms);
     }

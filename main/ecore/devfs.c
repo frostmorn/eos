@@ -205,7 +205,7 @@ static int devfs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
   }
   if (df->is_null || df->is_zero) {
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFCHR | 0666;
+    st->st_mode = S_IFCHR | EOS_DEFAULT_DEV_MODE;
     return 0;
   }
   if (!df->dev || !df->dev->in_use) {
@@ -224,7 +224,7 @@ static int devfs_stat(void *ctx, const char *path, struct stat *st) {
 
   if (devfs_is_root(path)) {
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFDIR | 0755;
+    st->st_mode = S_IFDIR | EOS_DEFAULT_DIR_MODE;
     return 0;
   }
 
@@ -232,7 +232,7 @@ static int devfs_stat(void *ctx, const char *path, struct stat *st) {
   while (*p == '/') p++;
   if (strcmp(p, "null") == 0 || strcmp(p, "zero") == 0) {
     memset(st, 0, sizeof(*st));
-    st->st_mode = S_IFCHR | 0666;
+    st->st_mode = S_IFCHR | EOS_DEFAULT_DEV_MODE;
     return 0;
   }
 
@@ -486,7 +486,7 @@ void eos_devfs_init(void) {
       .telldir = devfs_telldir,
   };
 
-  mkdir(EOS_DEVFS_ROOT, 0755);
+  mkdir(EOS_DEVFS_ROOT, EOS_DEFAULT_DIR_MODE);
   eos_vfs_register_ops(EOS_DEVFS_ROOT, &ops, NULL);
   EOS_LOGI("devfs mounted at %s\n", EOS_DEVFS_ROOT);
 }

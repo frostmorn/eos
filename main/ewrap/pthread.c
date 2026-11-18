@@ -7,10 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef EOS_PTHREAD_MIN_STACK_SIZE
-#define EOS_PTHREAD_MIN_STACK_SIZE EOS_BIN_MIN_STACK_SIZE
-#endif
-
 extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                                  void *(*start_routine)(void *), void *arg);
 
@@ -67,9 +63,9 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   } else {
     size_t stack_size = 0;
     if (pthread_attr_getstacksize(attr, &stack_size) == 0 &&
-        stack_size < EOS_PTHREAD_MIN_STACK_SIZE) {
+        stack_size < EOS_BIN_MIN_STACK_SIZE) {
       local_attr = *attr;
-      pthread_attr_setstacksize(&local_attr, EOS_PTHREAD_MIN_STACK_SIZE);
+      pthread_attr_setstacksize(&local_attr, EOS_BIN_MIN_STACK_SIZE);
       use_attr = &local_attr;
     }
   }

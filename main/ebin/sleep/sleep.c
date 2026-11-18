@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "emisc/fancymacro.h"
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -56,7 +57,7 @@ int sleep_main(int argc, char **argv) {
     total_seconds += val;
   }
 
-  uint64_t total_usec = (uint64_t)(total_seconds * 1000000.0);
+  uint64_t total_usec = (uint64_t)(total_seconds * (double)EOS_US_PER_SEC);
   while (total_usec > 0) {
     useconds_t chunk = (total_usec > 500000ULL) ? 500000U : (useconds_t)total_usec;
     usleep(chunk);

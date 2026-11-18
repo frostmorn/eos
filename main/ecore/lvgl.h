@@ -16,6 +16,18 @@ extern "C" {
 #define EOS_LVGL_DEFAULT_FB_PATH    "/dev/fb0"
 #define EOS_LVGL_DEFAULT_KBD_PATH   "/dev/keyboard0"
 #define EOS_LVGL_DEFAULT_TOUCH_PATH "/dev/touch0"
+#define EOS_LVGL_DMA_STRIP_BYTES    16384U
+#define EOS_LVGL_KEY_QUEUE_SIZE     32U
+#define EOS_LVGL_TOUCH_QUEUE_SIZE   16U
+
+#define EOS_LVGL_KB_MAX_W          480
+#define EOS_LVGL_KB_MIN_H          75
+#define EOS_LVGL_KB_MAX_H          240
+#define EOS_LVGL_KB_HEIGHT_PCT     50
+#define EOS_LVGL_DIALOG_BTN_W      56
+#define EOS_LVGL_DIALOG_CANCEL_X   64
+#define EOS_LVGL_DIALOG_MIN_KB_H   60
+#define EOS_LVGL_DIALOG_MIN_W      200
 
 // Key event callback invoked when a physical key press is polled
 typedef void (*eos_lvgl_key_cb_t)(uint16_t eos_key, uint32_t lv_key,
@@ -159,6 +171,19 @@ lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
 #define EOS_COLOR_STATUS_GREEN   0x34D399
 #define EOS_COLOR_STATUS_ORANGE  0xFB923C
 #define EOS_COLOR_STATUS_RED     0xEF4444
+
+// Semantic Theme Color Aliases
+#define EOS_THEME_BG_COLOR         EOS_COLOR_BG_DARK
+#define EOS_THEME_PANEL_COLOR      EOS_COLOR_BG_PANEL
+#define EOS_THEME_SURFACE_COLOR    EOS_COLOR_BG_CARD
+#define EOS_THEME_BORDER_COLOR     EOS_COLOR_BORDER
+#define EOS_THEME_TEXT_MUTED       EOS_COLOR_TEXT_MUTED
+#define EOS_THEME_TEXT_PRIMARY     EOS_COLOR_TEXT_PRIMARY
+#define EOS_THEME_TEXT_WHITE       EOS_COLOR_TEXT_WHITE
+#define EOS_THEME_PRIMARY_BLUE     EOS_COLOR_ACCENT_BLUE
+#define EOS_THEME_ACCENT_GREEN     EOS_COLOR_STATUS_GREEN
+#define EOS_THEME_HIGHLIGHT_YELLOW EOS_COLOR_ACCENT_YELLOW
+#define EOS_THEME_INFO_BLUE        EOS_COLOR_ACCENT_CYAN
 
 static inline lv_color_t eos_lvgl_color(uint32_t hex) {
   return lv_color_hex(hex);

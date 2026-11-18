@@ -1,6 +1,8 @@
 #include "SDL.h"
 #include "ecore/ioctl.h"
 #include "ecore/input.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -16,7 +18,7 @@ typedef struct {
   int touch_fd;
   int width;
   int height;
-  char error_buf[256];
+  char error_buf[EOS_MID_STR_LEN];
   SDL_Surface *screen_surface;
   SDL_PixelFormat default_pixel_format;
   uint16_t last_touch_x;
@@ -35,9 +37,9 @@ static sdl_context_t *sdl_get_context(void) {
       sdl_ctx->touch_fd = -1;
       sdl_ctx->default_pixel_format.bits_per_pixel = 16;
       sdl_ctx->default_pixel_format.bytes_per_pixel = 2;
-      sdl_ctx->default_pixel_format.Rmask = 0xF800;
-      sdl_ctx->default_pixel_format.Gmask = 0x07E0;
-      sdl_ctx->default_pixel_format.Bmask = 0x001F;
+      sdl_ctx->default_pixel_format.Rmask = EOS_RGB565_RED_MASK;
+      sdl_ctx->default_pixel_format.Gmask = EOS_RGB565_GREEN_MASK;
+      sdl_ctx->default_pixel_format.Bmask = EOS_RGB565_BLUE_MASK;
       sdl_ctx->default_pixel_format.Amask = 0x0000;
     }
   }
@@ -106,8 +108,8 @@ SDL_Surface *SDL_SetVideoMode(int width, int height, int bpp, Uint32 flags) {
   if (!ctx) return NULL;
   sdl_query_display_and_input(ctx);
 
-  if (ctx->width <= 0) ctx->width = 240;
-  if (ctx->height <= 0) ctx->height = 280;
+  if (ctx->width <= 0) ctx->width = EOS_DISPLAY_DEFAULT_HEIGHT;
+  if (ctx->height <= 0) ctx->height = EOS_DISPLAY_DEFAULT_WIDTH;
 
   int w = ctx->width;
   int h = ctx->height;
@@ -215,11 +217,11 @@ int SDL_Flip(SDL_Surface *screen) {
 Uint32 __attribute__((weak)) SDL_GetTicks(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (Uint32)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
+  return (Uint32)(tv.tv_sec * (time_t)EOS_MS_PER_SEC + tv.tv_usec / (suseconds_t)EOS_US_PER_MS);
 }
 
 void __attribute__((weak)) SDL_Delay(Uint32 ms) {
-  usleep(ms * 1000);
+  usleep(ms * (Uint32)EOS_US_PER_MS);
 }
 
 void __attribute__((weak)) SDL_PumpEvents(void) {
@@ -296,6 +298,6 @@ int __attribute__((weak)) SDL_WaitEvent(SDL_Event *event) {
     if (SDL_PollEvent(event)) {
       return 1;
     }
-    usleep(10000);
+    usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
   }
 }

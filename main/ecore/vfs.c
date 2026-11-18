@@ -5,6 +5,7 @@
 #include "emisc/fancymacro.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
+#include "emisc/strlimits.h"
 #include <errno.h>
 #include <limits.h>
 #include <reent.h>
@@ -56,9 +57,9 @@ void eos_vfs_init(void) {
   kv_init(s_dir_descs);
 
   // Pre-reserve capacities in PSRAM
-  kv_resize(eos_vfs_mount_t *, s_mounts, 8);
-  kv_resize(eos_vfs_file_t *, s_fd_descs, 64);
-  kv_resize(eos_vfs_dir_t *, s_dir_descs, 16);
+  kv_resize(eos_vfs_mount_t *, s_mounts, EOS_STR_8_LEN);
+  kv_resize(eos_vfs_file_t *, s_fd_descs, EOS_LINE_64_LEN);
+  kv_resize(eos_vfs_dir_t *, s_dir_descs, EOS_XSMALL_STR_LEN);
 
   // Pre-seed standard console file descriptors 0, 1, 2, 3 in PSRAM
   for (int i = 0; i < 4; i++) {

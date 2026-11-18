@@ -16,6 +16,9 @@
 #define EOS_MAX_PROCS 128
 #endif
 
+#define EOS_MAX_TASK_FLAGS 64
+#define EOS_MAIN_TASK_STACK_SIZE 32768
+
 typedef enum {
   EOS_PROC_STATE_UNUSED = 0,
   EOS_PROC_STATE_RUNNING = 'R',  // Executing or ready

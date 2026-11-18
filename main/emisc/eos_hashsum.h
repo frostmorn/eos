@@ -9,6 +9,12 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "emisc/eos_hash.h"
+#include "emisc/strlimits.h"
+
+#define EOS_STREAM_CHUNK        4096u
+#define EOS_STREAM_YIELD_BYTES  (64u * 1024u)
+#define EOS_STREAM_YIELD_US     1000
+#define EOS_LIST_LINE_MAX       (EOS_XLARGE_STR_LEN + 256u)
 
 // Called for every chunk read from a stream. Return 0 to continue reading,
 // non-zero to stop early.

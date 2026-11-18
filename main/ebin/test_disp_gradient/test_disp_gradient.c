@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "ebin/test_common.h"
 #include "esp_timer.h"
 #include <fcntl.h>
 #include <math.h>
@@ -8,8 +9,6 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-
-#define DISP_GRADIENT_TIME 3
 
 static int test_disp_gradient_main(int argc, char **argv) {
   printf("Starting Display Test App...\n");
@@ -53,9 +52,9 @@ static int test_disp_gradient_main(int argc, char **argv) {
       float phase_b = (float)y / height * 3.14159f * 2.0f +
                       (float)frame_count / 40.0f + 4.0f;
 
-      uint8_t r = (uint8_t)(128 + 127 * sinf(phase_r));
-      uint8_t g = (uint8_t)(128 + 127 * sinf(phase_g));
-      uint8_t b = (uint8_t)(128 + 127 * sinf(phase_b));
+      uint8_t r = (uint8_t)(127.5f + 127.0f * sinf(phase_r));
+      uint8_t g = (uint8_t)(127.5f + 127.0f * sinf(phase_g));
+      uint8_t b = (uint8_t)(127.5f + 127.0f * sinf(phase_b));
       uint16_t color = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
 
       for (int x = 0; x < width; x++) {
@@ -71,9 +70,9 @@ static int test_disp_gradient_main(int argc, char **argv) {
     frame_count++;
     fps_frame_count++;
     int64_t now = esp_timer_get_time();
-    if (now - last_fps_time >= 1000000) { // Every 1 second
+    if (now - last_fps_time >= EOS_US_PER_SEC) { // Every 1 second
       count_tests++;
-      float fps = (float)fps_frame_count / ((now - last_fps_time) / 1000000.0f);
+      float fps = (float)fps_frame_count / ((float)(now - last_fps_time) / (float)EOS_US_PER_SEC);
       printf("FPS: %.2f\n", fps);
       fps_frame_count = 0;
       last_fps_time = now;

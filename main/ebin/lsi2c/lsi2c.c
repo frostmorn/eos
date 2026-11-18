@@ -13,8 +13,8 @@
 #include <unistd.h>
 
 static const char *guess_device_name(uint16_t addr) {
-  if (addr > 0x7F) return NULL;
-  static const char *const s_known_i2c_devices[128] = {
+  if (addr > EOS_I2C_ADDR_MAX) return NULL;
+  static const char *const s_known_i2c_devices[EOS_I2C_ADDR_TABLE_SIZE] = {
       [0x00] = "General Call / Broadcast Address",
       [0x08] = "Custom Device / Serial RAM",
       [0x0A] = "SGTL5000 Audio Codec",
@@ -131,6 +131,80 @@ static const char *guess_device_name(uint16_t addr) {
   return s_known_i2c_devices[addr];
 }
 
+static void scan_probe_bus(int cfg_fd, const char *dir_path) {
+  uint16_t found_addrs[EOS_BUFFER_128_LEN];
+  size_t found_count = 0;
+
+  printf("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n");
+  for (int row = 0; row < EOS_I2C_ADDR_TABLE_SIZE; row += 16) {
+    printf("%02x: ", row);
+    for (int col = 0; col < 16; col++) {
+      uint16_t addr = (uint16_t)(row + col);
+      if (addr < 0x03 || addr > EOS_I2C_ADDR_SCAN_MAX) {
+        printf("   ");
+      } else {
+        // Trigger device probe via config file ioctl
+        int rc = ioctl(cfg_fd, EOS_I2C_IOCTL_PROBE, addr, 20);
+        if (rc == 0) {
+          printf("%02x ", (unsigned)addr);
+          if (found_count < sizeof(found_addrs) / sizeof(found_addrs[0])) {
+            found_addrs[found_count++] = addr;
+          }
+        } else {
+          printf("-- ");
+        }
+      }
+    }
+    printf("\n");
+  }
+  printf("----------------------------------------------------\n");
+  if (found_count == 0) {
+    printf("Result: No devices detected on %s\n", dir_path);
+  } else {
+    printf("Result: Found %zu device(s) on %s:\n", found_count, dir_path);
+    for (size_t i = 0; i < found_count; i++) {
+      uint16_t a = found_addrs[i];
+      const char *guess = guess_device_name(a);
+      if (guess) {
+        printf("  - 0x%02X (%3u): %s\n", (unsigned)a, (unsigned)a, guess);
+      } else {
+        printf("  - 0x%02X (%3u)\n", (unsigned)a, (unsigned)a);
+      }
+    }
+  }
+}
+
+static void list_bus_device_nodes(const char *dir_path) {
+  DIR *dir = opendir(dir_path);
+  if (!dir) return;
+
+  printf("\nDevice nodes in %s:\n", dir_path);
+  struct dirent *ent;
+  size_t node_count = 0;
+  while ((ent = readdir(dir)) != NULL) {
+    if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+      continue;
+
+    char *endptr = NULL;
+    unsigned long val = strtoul(ent->d_name, &endptr, 16);
+    if (endptr && *endptr == '\0' && val <= EOS_I2C_ADDR_MAX) {
+      const char *guess = guess_device_name((uint16_t)val);
+      if (guess) {
+        printf("  %s/%s: %s\n", dir_path, ent->d_name, guess);
+      } else {
+        printf("  %s/%s\n", dir_path, ent->d_name);
+      }
+    } else {
+      printf("  %s/%s\n", dir_path, ent->d_name);
+    }
+    node_count++;
+  }
+  if (node_count == 0) {
+    printf("  (none)\n");
+  }
+  closedir(dir);
+}
+
 static int enumerate_i2c_bus(const char *bus_path, bool probe) {
   char config_path[EOS_MID_STR_LEN];
   char dir_path[EOS_MID_STR_LEN];
@@ -179,89 +253,65 @@ static int enumerate_i2c_bus(const char *bus_path, bool probe) {
   }
   printf("====================================================\n");
 
-  uint16_t found_addrs[128];
-  size_t found_count = 0;
-
   if (probe) {
-    printf("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n");
-    for (int row = 0; row < 128; row += 16) {
-      printf("%02x: ", row);
-      for (int col = 0; col < 16; col++) {
-        uint16_t addr = (uint16_t)(row + col);
-        if (addr < 0x03 || addr > 0x77) {
-          printf("   ");
-        } else {
-          // Trigger device probe via config file ioctl
-          int rc = ioctl(cfg_fd, EOS_I2C_IOCTL_PROBE, addr, 20);
-          if (rc == 0) {
-            printf("%02x ", (unsigned)addr);
-            if (found_count < sizeof(found_addrs) / sizeof(found_addrs[0])) {
-              found_addrs[found_count++] = addr;
-            }
-          } else {
-            printf("-- ");
-          }
-        }
-      }
-      printf("\n");
-    }
-    printf("----------------------------------------------------\n");
-    if (found_count == 0) {
-      printf("Result: No devices detected on %s\n", dir_path);
-    } else {
-      printf("Result: Found %zu device(s) on %s:\n", found_count, dir_path);
-      for (size_t i = 0; i < found_count; i++) {
-        uint16_t a = found_addrs[i];
-        const char *guess = guess_device_name(a);
-        if (guess) {
-          printf("  - 0x%02X (%3u): %s\n", (unsigned)a, (unsigned)a, guess);
-        } else {
-          printf("  - 0x%02X (%3u)\n", (unsigned)a, (unsigned)a);
-        }
-      }
-    }
+    scan_probe_bus(cfg_fd, dir_path);
   } else {
     printf("Active wire probing skipped (--no-probe).\n");
   }
 
   close(cfg_fd);
+  list_bus_device_nodes(dir_path);
+  return 0;
+}
 
-  // Enumerate devices via opendir/readdir on the bus directory
-  DIR *dir = opendir(dir_path);
-  if (dir) {
-    printf("\nDevice nodes in %s:\n", dir_path);
-    struct dirent *ent;
-    size_t node_count = 0;
-    while ((ent = readdir(dir)) != NULL) {
-      if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
-        continue;
-
-      char *endptr = NULL;
-      unsigned long val = strtoul(ent->d_name, &endptr, 16);
-      if (endptr && *endptr == '\0' && val <= 0x7F) {
-        const char *guess = guess_device_name((uint16_t)val);
-        if (guess) {
-          printf("  %s/%s: %s\n", dir_path, ent->d_name, guess);
-        } else {
-          printf("  %s/%s\n", dir_path, ent->d_name);
-        }
-      } else {
-        printf("  %s/%s\n", dir_path, ent->d_name);
-      }
-      node_count++;
-    }
-    if (node_count == 0) {
-      printf("  (none)\n");
-    }
-    closedir(dir);
+static int handle_reconfigure_pins(int argc, char **argv, int i, bool probe) {
+  if (i + 2 >= argc) {
+    printf("[ERROR] -p requires <sda> and <scl> arguments\n");
+    return -1;
   }
-
+  int sda = atoi(argv[i + 1]);
+  int scl = atoi(argv[i + 2]);
+  const char *bus_path = (i + 3 < argc && argv[i + 3][0] != '-') ? argv[i + 3] : "/dev/i2c";
+  char cfg_path[EOS_MID_STR_LEN];
+  if (strstr(bus_path, "/cfg") || strstr(bus_path, "/config")) {
+    snprintf(cfg_path, sizeof(cfg_path), "%s", bus_path);
+  } else {
+    snprintf(cfg_path, sizeof(cfg_path), "%.*s/cfg", (int)(sizeof(cfg_path) - 5), bus_path);
+  }
+  int fd = open(cfg_path, O_RDWR);
+  if (fd < 0) {
+    char legacy_path[EOS_MID_STR_LEN];
+    snprintf(legacy_path, sizeof(legacy_path), "%.*s/config", (int)(sizeof(legacy_path) - 8), bus_path);
+    fd = open(legacy_path, O_RDWR);
+  }
+  if (fd < 0) {
+    printf("[ERROR] Cannot open %s: %s\n", cfg_path, strerror(errno));
+    return -1;
+  }
+  printf("Reconfiguring %s pins: SDA=%d, SCL=%d...\n", bus_path, sda, scl);
+  if (ioctl(fd, EOS_I2C_IOCTL_SET_PINS, sda, scl) != 0) {
+    if (errno == EBUSY) {
+      printf("[ERROR] Cannot reconfigure pins: devices are attached to this I2C bus\n");
+    } else {
+      printf("[ERROR] Failed to set pins: %s\n", strerror(errno));
+    }
+    close(fd);
+    return -1;
+  }
+  printf("Successfully updated pin configuration.\n");
+  if (sda < 0 || scl < 0) {
+    printf("Pins released and restored to standard GPIO function.\n");
+    close(fd);
+    return 0;
+  }
+  close(fd);
+  enumerate_i2c_bus(bus_path, probe);
   return 0;
 }
 
 int lsi2c_main(int argc, char **argv) {
   bool probe = true;
-  char *explicit_buses[8];
+  char *explicit_buses[EOS_STR_8_LEN];
   size_t explicit_count = 0;
 
   for (int i = 1; i < argc; i++) {
@@ -282,48 +332,7 @@ int lsi2c_main(int argc, char **argv) {
     } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--no-probe") == 0) {
       probe = false;
     } else if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--pins") == 0) {
-      if (i + 2 >= argc) {
-        printf("[ERROR] -p requires <sda> and <scl> arguments\n");
-        return -1;
-      }
-      int sda = atoi(argv[i + 1]);
-      int scl = atoi(argv[i + 2]);
-      const char *bus_path = (i + 3 < argc && argv[i + 3][0] != '-') ? argv[i + 3] : "/dev/i2c";
-      char cfg_path[EOS_MID_STR_LEN];
-      if (strstr(bus_path, "/cfg") || strstr(bus_path, "/config")) {
-        snprintf(cfg_path, sizeof(cfg_path), "%s", bus_path);
-      } else {
-        snprintf(cfg_path, sizeof(cfg_path), "%.*s/cfg", (int)(sizeof(cfg_path) - 5), bus_path);
-      }
-      int fd = open(cfg_path, O_RDWR);
-      if (fd < 0) {
-        char legacy_path[EOS_MID_STR_LEN];
-        snprintf(legacy_path, sizeof(legacy_path), "%.*s/config", (int)(sizeof(legacy_path) - 8), bus_path);
-        fd = open(legacy_path, O_RDWR);
-      }
-      if (fd < 0) {
-        printf("[ERROR] Cannot open %s: %s\n", cfg_path, strerror(errno));
-        return -1;
-      }
-      printf("Reconfiguring %s pins: SDA=%d, SCL=%d...\n", bus_path, sda, scl);
-      if (ioctl(fd, EOS_I2C_IOCTL_SET_PINS, sda, scl) != 0) {
-        if (errno == EBUSY) {
-          printf("[ERROR] Cannot reconfigure pins: devices are attached to this I2C bus\n");
-        } else {
-          printf("[ERROR] Failed to set pins: %s\n", strerror(errno));
-        }
-        close(fd);
-        return -1;
-      }
-      printf("Successfully updated pin configuration.\n");
-      if (sda < 0 || scl < 0) {
-        printf("Pins released and restored to standard GPIO function.\n");
-        close(fd);
-        return 0;
-      }
-      close(fd);
-      enumerate_i2c_bus(bus_path, probe);
-      return 0;
+      return handle_reconfigure_pins(argc, argv, i, probe);
     } else if (argv[i][0] != '-') {
       if (explicit_count < sizeof(explicit_buses) / sizeof(explicit_buses[0])) {
         explicit_buses[explicit_count++] = argv[i];
@@ -339,7 +348,7 @@ int lsi2c_main(int argc, char **argv) {
   }
 
   // Discover all I2C buses from /dev
-  char bus_list[8][EOS_MID_STR_LEN];
+  char bus_list[EOS_STR_8_LEN][EOS_MID_STR_LEN];
   size_t bus_count = 0;
 
   DIR *dev_dir = opendir("/dev");

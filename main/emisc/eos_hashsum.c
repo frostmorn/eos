@@ -9,10 +9,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#define STREAM_CHUNK      4096u
-#define YIELD_EVERY_BYTES (64u * 1024u)
-#define LIST_LINE_MAX     (EOS_XLARGE_STR_LEN + 256u)
-
 ///////////////////////////////////////////////////////////////////////
 // Streaming file reader
 ///////////////////////////////////////////////////////////////////////
@@ -24,7 +20,7 @@ int eos_stream_path(const char *path, eos_chunk_fn fn, void *arg, uint64_t *tota
     if (fd < 0) return -1;
   }
 
-  uint8_t *buf = (uint8_t *)eos_psram_malloc_prefer(STREAM_CHUNK);
+  uint8_t *buf = (uint8_t *)eos_psram_malloc_prefer(EOS_STREAM_CHUNK);
   if (!buf) {
     if (!use_stdin) close(fd);
     errno = ENOMEM;
@@ -35,7 +31,7 @@ int eos_stream_path(const char *path, eos_chunk_fn fn, void *arg, uint64_t *tota
   size_t since_yield = 0;
   int rc = 0;
   for (;;) {
-    ssize_t n = read(fd, buf, STREAM_CHUNK);
+    ssize_t n = read(fd, buf, EOS_STREAM_CHUNK);
     if (n < 0) {
       if (errno == EINTR) continue;
       rc = -1;
@@ -48,9 +44,9 @@ int eos_stream_path(const char *path, eos_chunk_fn fn, void *arg, uint64_t *tota
       break;
     }
     since_yield += (size_t)n;
-    if (since_yield >= YIELD_EVERY_BYTES) {
+    if (since_yield >= EOS_STREAM_YIELD_BYTES) {
       since_yield = 0;
-      usleep(1000);
+      usleep(EOS_STREAM_YIELD_US);
     }
   }
 
@@ -102,7 +98,7 @@ static int lr_getc(line_reader_t *r) {
   if (r->rpos == r->rlen) {
     ssize_t n;
     do {
-      n = read(r->fd, r->rbuf, 1024);
+      n = read(r->fd, r->rbuf, EOS_LARGE_STR_LEN);
     } while (n < 0 && errno == EINTR);
     if (n < 0) return -2;
     if (n == 0) return -1;
@@ -186,8 +182,8 @@ static void check_one_list(const char *prog, const char *list_path, eos_hash_alg
     }
   }
 
-  char *line = (char *)eos_psram_malloc_prefer(LIST_LINE_MAX);
-  uint8_t *rbuf = (uint8_t *)eos_psram_malloc_prefer(1024);
+  char *line = (char *)eos_psram_malloc_prefer(EOS_LIST_LINE_MAX);
+  uint8_t *rbuf = (uint8_t *)eos_psram_malloc_prefer(EOS_LARGE_STR_LEN);
   if (!line || !rbuf) {
     fprintf(stderr, "%s: out of memory\n", prog);
     free(line);
@@ -201,7 +197,7 @@ static void check_one_list(const char *prog, const char *list_path, eos_hash_alg
   int lineno = 0;
   for (;;) {
     bool too_long = false;
-    int got = lr_getline(&lr, line, LIST_LINE_MAX, &too_long);
+    int got = lr_getline(&lr, line, EOS_LIST_LINE_MAX, &too_long);
     if (got < 0) {
       fprintf(stderr, "%s: %s: read error\n", prog, list_path);
       counts->unreadable++;
@@ -250,6 +246,63 @@ static void check_one_list(const char *prog, const char *list_path, eos_hash_alg
   if (!use_stdin) close(fd);
 }
 
+static int parse_long_opt(const char *a, const char *prog, eos_hash_alg_t alg, sum_opts_t *opt) {
+  if (strcmp(a, "--check") == 0) opt->check = true;
+  else if (strcmp(a, "--binary") == 0) opt->binary = true;
+  else if (strcmp(a, "--text") == 0) opt->binary = false;
+  else if (strcmp(a, "--warn") == 0) opt->warn = true;
+  else if (strcmp(a, "--quiet") == 0) opt->quiet = true;
+  else if (strcmp(a, "--status") == 0) opt->status = true;
+  else if (strcmp(a, "--help") == 0) { print_usage(prog, alg); fflush(stdout); return 2; }
+  else {
+    fprintf(stderr, "%s: unrecognized option '%s'\nTry '%s --help'.\n", prog, a, prog);
+    return 1;
+  }
+  return 0;
+}
+
+static int parse_short_opts(const char *a, const char *prog, eos_hash_alg_t alg, sum_opts_t *opt) {
+  for (const char *c = a + 1; *c; c++) {
+    switch (*c) {
+      case 'c': opt->check = true; break;
+      case 'b': opt->binary = true; break;
+      case 't': opt->binary = false; break;
+      case 'w': opt->warn = true; break;
+      case 'h': print_usage(prog, alg); fflush(stdout); return 2;
+      default:
+        fprintf(stderr, "%s: invalid option -- '%c'\nTry '%s --help'.\n", prog, *c, prog);
+        return 1;
+    }
+  }
+  return 0;
+}
+
+static int run_check_mode(int argc, char **argv, int first_file, eos_hash_alg_t alg,
+                          const char *prog, const sum_opts_t *opt) {
+  check_counts_t counts = { 0, 0, 0, 0 };
+  if (first_file >= argc) {
+    check_one_list(prog, "-", alg, opt, &counts);
+  } else {
+    for (int i = first_file; i < argc; i++) check_one_list(prog, argv[i], alg, opt, &counts);
+  }
+  fflush(stdout);
+
+  if (counts.properly_formatted == 0 && counts.unreadable == 0 && !opt->status)
+    fprintf(stderr, "%s: no properly formatted %s checksum lines found\n", prog, eos_hash_name(alg));
+  if (!opt->status) {
+    if (counts.improper)
+      fprintf(stderr, "%s: WARNING: %d line%s improperly formatted\n", prog, counts.improper,
+              counts.improper == 1 ? " is" : "s are");
+    if (counts.unreadable)
+      fprintf(stderr, "%s: WARNING: %d listed file%s could not be read\n", prog, counts.unreadable,
+              counts.unreadable == 1 ? "" : "s");
+    if (counts.mismatched)
+      fprintf(stderr, "%s: WARNING: %d computed checksum%s did NOT match\n", prog, counts.mismatched,
+              counts.mismatched == 1 ? "" : "s");
+  }
+  return (counts.properly_formatted == 0 || counts.mismatched || counts.unreadable) ? 1 : 0;
+}
+
 ///////////////////////////////////////////////////////////////////////
 // Entry point
 ///////////////////////////////////////////////////////////////////////
@@ -269,63 +322,18 @@ int eos_hashsum_main(int argc, char **argv, eos_hash_alg_t alg, const char *prog
       first_file = i + 1;
       continue;
     }
-    if (a[1] == '-') {
-      if (strcmp(a, "--check") == 0) opt.check = true;
-      else if (strcmp(a, "--binary") == 0) opt.binary = true;
-      else if (strcmp(a, "--text") == 0) opt.binary = false;
-      else if (strcmp(a, "--warn") == 0) opt.warn = true;
-      else if (strcmp(a, "--quiet") == 0) opt.quiet = true;
-      else if (strcmp(a, "--status") == 0) opt.status = true;
-      else if (strcmp(a, "--help") == 0) { print_usage(prog, alg); fflush(stdout); return 0; }
-      else {
-        fprintf(stderr, "%s: unrecognized option '%s'\nTry '%s --help'.\n", prog, a, prog);
-        return 1;
-      }
-    } else {
-      for (const char *c = a + 1; *c; c++) {
-        switch (*c) {
-          case 'c': opt.check = true; break;
-          case 'b': opt.binary = true; break;
-          case 't': opt.binary = false; break;
-          case 'w': opt.warn = true; break;
-          case 'h': print_usage(prog, alg); fflush(stdout); return 0;
-          default:
-            fprintf(stderr, "%s: invalid option -- '%c'\nTry '%s --help'.\n", prog, *c, prog);
-            return 1;
-        }
-      }
-    }
+    int rc = (a[1] == '-') ? parse_long_opt(a, prog, alg, &opt)
+                           : parse_short_opts(a, prog, alg, &opt);
+    if (rc == 2) return 0;
+    if (rc != 0) return 1;
     first_file = i + 1;
   }
 
-  int status = 0;
-
   if (opt.check) {
-    check_counts_t counts = { 0, 0, 0, 0 };
-    if (first_file >= argc) {
-      check_one_list(prog, "-", alg, &opt, &counts);
-    } else {
-      for (int i = first_file; i < argc; i++) check_one_list(prog, argv[i], alg, &opt, &counts);
-    }
-    fflush(stdout);
-
-    if (counts.properly_formatted == 0 && counts.unreadable == 0 && !opt.status)
-      fprintf(stderr, "%s: no properly formatted %s checksum lines found\n", prog, eos_hash_name(alg));
-    if (!opt.status) {
-      if (counts.improper)
-        fprintf(stderr, "%s: WARNING: %d line%s improperly formatted\n", prog, counts.improper,
-                counts.improper == 1 ? " is" : "s are");
-      if (counts.unreadable)
-        fprintf(stderr, "%s: WARNING: %d listed file%s could not be read\n", prog, counts.unreadable,
-                counts.unreadable == 1 ? "" : "s");
-      if (counts.mismatched)
-        fprintf(stderr, "%s: WARNING: %d computed checksum%s did NOT match\n", prog, counts.mismatched,
-                counts.mismatched == 1 ? "" : "s");
-    }
-    if (counts.properly_formatted == 0 || counts.mismatched || counts.unreadable) status = 1;
-    return status;
+    return run_check_mode(argc, argv, first_file, alg, prog, &opt);
   }
 
+  int status = 0;
   const int nfiles = (first_file >= argc) ? 1 : (argc - first_file);
   for (int n = 0; n < nfiles; n++) {
     const char *path = (first_file >= argc) ? "-" : argv[first_file + n];

@@ -25,7 +25,7 @@ typedef struct {
   bool dhcps_enabled;
   uint8_t mac[6];
   eos_ap_config_t ap_cfg;
-  char hostname[32];
+  char hostname[EOS_SMALL_STR_LEN];
 } ap_state_t;
 
 bool driver_net_ap_init(eos_dev_t *dev) {
@@ -42,7 +42,7 @@ bool driver_net_ap_init(eos_dev_t *dev) {
     if (esp_base_mac_addr_get(base) == ESP_OK || esp_efuse_mac_get_default(base) == ESP_OK) {
       esp_derive_local_mac(st->mac, base);
     } else {
-      st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = 0x80;
+      st->mac[0] = 0x02; st->mac[1] = 0x48; st->mac[2] = EOS_HEX_BYTE_MSB;
       st->mac[3] = 0x00; st->mac[4] = 0x00; st->mac[5] = 0x02;
     }
   }
@@ -129,272 +129,256 @@ int driver_net_ap_close(eos_dev_t *dev, int fd) {
   return 0;
 }
 
+static int ap_get_info(ap_state_t *st, eos_netif_info_t *info) {
+  if (!info) return -1;
+  memset(info, 0, sizeof(*info));
+  strncpy(info->name, "ap0", sizeof(info->name) - 1);
+  info->type = EOS_NETIF_TYPE_AP;
+
+  if (st->is_up) info->flags |= EOS_NETIF_FLAG_UP;
+  if (st->dhcps_enabled) info->flags |= EOS_NETIF_FLAG_DHCP_SERVER;
+  strncpy(info->hostname, st->hostname, sizeof(info->hostname) - 1);
+
+  if (st->netif) {
+    esp_netif_ip_info_t ip;
+    if (esp_netif_get_ip_info(st->netif, &ip) == ESP_OK) {
+      snprintf(info->ip.ip, sizeof(info->ip.ip), "%d.%d.%d.%d", IP2STR(&ip.ip));
+      snprintf(info->ip.netmask, sizeof(info->ip.netmask), "%d.%d.%d.%d", IP2STR(&ip.netmask));
+      snprintf(info->ip.gw, sizeof(info->ip.gw), "%d.%d.%d.%d", IP2STR(&ip.gw));
+    }
+    uint8_t m[6];
+    if (esp_netif_get_mac(st->netif, m) == ESP_OK && (m[0]|m[1]|m[2]|m[3]|m[4]|m[5])) {
+      memcpy(info->mac, m, 6);
+    } else {
+      memcpy(info->mac, st->mac, 6);
+    }
+    esp_netif_dns_info_t dns;
+    if (esp_netif_get_dns_info(st->netif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK &&
+        dns.ip.type == ESP_IPADDR_TYPE_V4) {
+      snprintf(info->dns_main, sizeof(info->dns_main), "%d.%d.%d.%d", IP2STR(&dns.ip.u_addr.ip4));
+    }
+  }
+
+  if (st->is_up) {
+#if EOS_HAVE_WIFI
+    wifi_sta_list_t sta_list = {0};
+    if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK && sta_list.num > 0) {
+      info->flags |= EOS_NETIF_FLAG_LINK_UP;
+      snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, %d clients)",
+               st->ap_cfg.ssid, st->ap_cfg.channel, sta_list.num);
+    } else {
+      snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, idle)",
+               st->ap_cfg.ssid, st->ap_cfg.channel);
+    }
+#else
+    snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d)",
+             st->ap_cfg.ssid, st->ap_cfg.channel);
+#endif
+  } else {
+    snprintf(info->extra, sizeof(info->extra), "disabled (SSID \"%s\", ch %d)",
+             st->ap_cfg.ssid, st->ap_cfg.channel);
+  }
+  return 0;
+}
+
+static int ap_set_up_down(eos_dev_t *dev, ap_state_t *st, bool up) {
+  st->is_up = up;
+  if (up) {
+    st->dhcps_enabled = true;
+#if EOS_HAVE_WIFI
+    wifi_config_t wcfg = {0};
+    strncpy((char *)wcfg.ap.ssid, st->ap_cfg.ssid, sizeof(wcfg.ap.ssid) - 1);
+    wcfg.ap.ssid_len = strlen(st->ap_cfg.ssid);
+    strncpy((char *)wcfg.ap.password, st->ap_cfg.password, sizeof(wcfg.ap.password) - 1);
+    wcfg.ap.channel = st->ap_cfg.channel;
+    wcfg.ap.max_connection = st->ap_cfg.max_connection;
+    wcfg.ap.ssid_hidden = st->ap_cfg.ssid_hidden;
+    wcfg.ap.authmode = (strlen(st->ap_cfg.password) == 0) ? WIFI_AUTH_OPEN : (wifi_auth_mode_t)st->ap_cfg.authmode;
+    esp_wifi_set_config(WIFI_IF_AP, &wcfg);
+    if (dev->parent) {
+      eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
+    }
+    if (st->netif && st->dhcps_enabled) {
+      esp_netif_dhcps_start(st->netif);
+    }
+#else
+    if (dev->parent) {
+      eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
+    }
+#endif
+    EOS_LOGI("ap: interface set to UP (SSID: \"%s\")", st->ap_cfg.ssid);
+  } else {
+    if (dev->parent) {
+      eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
+    }
+    if (st->netif) {
+      esp_netif_dhcps_stop(st->netif);
+    }
+    EOS_LOGI("ap: interface set to DOWN");
+  }
+  return 0;
+}
+
+static int ap_cfg_ip(ap_state_t *st, const eos_netif_ip_info_t *ip_info) {
+  if (!ip_info || !st->netif) return -1;
+  esp_netif_dhcps_stop(st->netif);
+
+  esp_netif_ip_info_t netif_ip = {0};
+  netif_ip.ip.addr = esp_ip4addr_aton(ip_info->ip);
+  netif_ip.netmask.addr = esp_ip4addr_aton(ip_info->netmask);
+  netif_ip.gw.addr = esp_ip4addr_aton(ip_info->gw);
+
+  esp_err_t err = esp_netif_set_ip_info(st->netif, &netif_ip);
+  if (err != ESP_OK) {
+    EOS_LOGE("ap: set_ip_info failed: %s", esp_err_to_name(err));
+    return -1;
+  }
+  if (st->dhcps_enabled) {
+    esp_netif_dhcps_start(st->netif);
+  }
+  EOS_LOGI("ap: configured IP: %s netmask %s gw %s",
+           ip_info->ip, ip_info->netmask, ip_info->gw);
+  return 0;
+}
+
+static int ap_get_ip(ap_state_t *st, eos_netif_ip_info_t *out_ip) {
+  if (!out_ip || !st->netif) return -1;
+  esp_netif_ip_info_t ip;
+  if (esp_netif_get_ip_info(st->netif, &ip) != ESP_OK) return -1;
+  snprintf(out_ip->ip, sizeof(out_ip->ip), "%d.%d.%d.%d", IP2STR(&ip.ip));
+  snprintf(out_ip->netmask, sizeof(out_ip->netmask), "%d.%d.%d.%d", IP2STR(&ip.netmask));
+  snprintf(out_ip->gw, sizeof(out_ip->gw), "%d.%d.%d.%d", IP2STR(&ip.gw));
+  return 0;
+}
+
+static int ap_dhcps_ctrl(ap_state_t *st, bool enable) {
+  if (!st->netif) return -1;
+  st->dhcps_enabled = enable;
+  if (enable) {
+    esp_netif_dhcps_start(st->netif);
+    EOS_LOGI("ap: DHCP server enabled");
+  } else {
+    esp_netif_dhcps_stop(st->netif);
+    EOS_LOGI("ap: DHCP server stopped");
+  }
+  return 0;
+}
+
+static int ap_set_hostname(ap_state_t *st, const char *hn) {
+  if (!hn) return -1;
+  strncpy(st->hostname, hn, sizeof(st->hostname) - 1);
+  st->hostname[sizeof(st->hostname) - 1] = '\0';
+  if (st->netif) esp_netif_set_hostname(st->netif, st->hostname);
+  return 0;
+}
+
+static int ap_get_hostname(ap_state_t *st, char *out_hn) {
+  if (!out_hn) return -1;
+  strncpy(out_hn, st->hostname, EOS_SMALL_STR_LEN - 1);
+  out_hn[EOS_SMALL_STR_LEN - 1] = '\0';
+  return 0;
+}
+
+static int ap_set_mac(ap_state_t *st, const uint8_t *mac) {
+  if (!mac) return -1;
+  memcpy(st->mac, mac, 6);
+  if (st->netif) esp_netif_set_mac(st->netif, (uint8_t *)mac);
+  return 0;
+}
+
+static int ap_get_mac(ap_state_t *st, uint8_t *out_mac) {
+  if (!out_mac) return -1;
+  if (st->netif && esp_netif_get_mac(st->netif, out_mac) == ESP_OK) {
+    if (out_mac[0] || out_mac[1] || out_mac[2] || out_mac[3] || out_mac[4] || out_mac[5]) {
+      return 0;
+    }
+  }
+  memcpy(out_mac, st->mac, 6);
+  return 0;
+}
+
+static int ap_handle_config(ap_state_t *st, int cmd, va_list args) {
+  if (cmd == EOS_AP_IOCTL_GET_CONFIG) {
+    eos_ap_config_t *out_cfg = va_arg(args, eos_ap_config_t *);
+    if (!out_cfg) return -1;
+    *out_cfg = st->ap_cfg;
+    return 0;
+  }
+  if (cmd == EOS_AP_IOCTL_GET_STAS) {
+    eos_ap_sta_list_t *list = va_arg(args, eos_ap_sta_list_t *);
+    if (!list) return -1;
+    memset(list, 0, sizeof(*list));
+#if EOS_HAVE_WIFI
+    wifi_sta_list_t sta_list = {0};
+    if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
+      size_t count = (sta_list.num < 10) ? sta_list.num : 10;
+      list->count = count;
+      for (size_t i = 0; i < count; i++) {
+        memcpy(list->stas[i].mac, sta_list.sta[i].mac, 6);
+        list->stas[i].rssi = sta_list.sta[i].rssi;
+      }
+    }
+#endif
+    return 0;
+  }
+  if (cmd == EOS_AP_IOCTL_SET_CONFIG) {
+    const eos_ap_config_t *cfg = va_arg(args, const eos_ap_config_t *);
+    if (!cfg) return -1;
+    st->ap_cfg = *cfg;
+#if EOS_HAVE_WIFI
+    wifi_config_t wcfg = {0};
+    strncpy((char *)wcfg.ap.ssid, cfg->ssid, sizeof(wcfg.ap.ssid) - 1);
+    wcfg.ap.ssid_len = strlen(cfg->ssid);
+    strncpy((char *)wcfg.ap.password, cfg->password, sizeof(wcfg.ap.password) - 1);
+    wcfg.ap.channel = cfg->channel ? cfg->channel : 1;
+    wcfg.ap.max_connection = cfg->max_connection ? cfg->max_connection : 4;
+    wcfg.ap.ssid_hidden = cfg->ssid_hidden;
+    wcfg.ap.authmode = (strlen(cfg->password) == 0) ? WIFI_AUTH_OPEN : (wifi_auth_mode_t)cfg->authmode;
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &wcfg);
+    if (err != ESP_OK) {
+      EOS_LOGE("ap: esp_wifi_set_config failed: %s", esp_err_to_name(err));
+      return -1;
+    }
+    EOS_LOGI("ap: configured SSID: \"%s\" (channel %d, max clients: %d)",
+             cfg->ssid, wcfg.ap.channel, wcfg.ap.max_connection);
+#endif
+    return 0;
+  }
+  return -1;
+}
+
 int driver_net_ap_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   (void)fd;
   if (!dev || !dev->state) return -1;
   ap_state_t *st = (ap_state_t *)dev->state;
 
   switch (cmd) {
-    case EOS_NETIF_IOCTL_GET_INFO: {
-      eos_netif_info_t *info = va_arg(args, eos_netif_info_t *);
-      if (!info) return -1;
-      memset(info, 0, sizeof(*info));
-      strncpy(info->name, "ap0", sizeof(info->name) - 1);
-      info->type = EOS_NETIF_TYPE_AP;
-
-      if (st->is_up) info->flags |= EOS_NETIF_FLAG_UP;
-      if (st->dhcps_enabled) info->flags |= EOS_NETIF_FLAG_DHCP_SERVER;
-
-      strncpy(info->hostname, st->hostname, sizeof(info->hostname) - 1);
-
-      if (st->netif) {
-        // Read IP info
-        esp_netif_ip_info_t ip_info;
-        if (esp_netif_get_ip_info(st->netif, &ip_info) == ESP_OK) {
-          snprintf(info->ip.ip, sizeof(info->ip.ip), IPSTR, IP2STR(&ip_info.ip));
-          snprintf(info->ip.netmask, sizeof(info->ip.netmask), IPSTR, IP2STR(&ip_info.netmask));
-          snprintf(info->ip.gw, sizeof(info->ip.gw), IPSTR, IP2STR(&ip_info.gw));
-        }
-
-        // Read MAC
-        if (esp_netif_get_mac(st->netif, info->mac) != ESP_OK ||
-            (info->mac[0] == 0 && info->mac[1] == 0 && info->mac[2] == 0 &&
-             info->mac[3] == 0 && info->mac[4] == 0 && info->mac[5] == 0)) {
-          memcpy(info->mac, st->mac, 6);
-        }
-
-        // Read DNS
-        esp_netif_dns_info_t dns;
-        if (esp_netif_get_dns_info(st->netif, ESP_NETIF_DNS_MAIN, &dns) == ESP_OK) {
-          if (dns.ip.type == ESP_IPADDR_TYPE_V4) {
-            snprintf(info->dns_main, sizeof(info->dns_main), IPSTR, IP2STR(&dns.ip.u_addr.ip4));
-          }
-        }
-      }
-
-      if (st->is_up) {
-#if EOS_HAVE_WIFI
-        wifi_sta_list_t sta_list = {0};
-        if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK && sta_list.num > 0) {
-          info->flags |= EOS_NETIF_FLAG_LINK_UP;
-          snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, %d clients)",
-                   st->ap_cfg.ssid, st->ap_cfg.channel, sta_list.num);
-        } else {
-          snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d, idle)",
-                   st->ap_cfg.ssid, st->ap_cfg.channel);
-        }
-#else
-        snprintf(info->extra, sizeof(info->extra), "SSID \"%s\" (ch %d)",
-                 st->ap_cfg.ssid, st->ap_cfg.channel);
-#endif
-      } else {
-        snprintf(info->extra, sizeof(info->extra), "disabled (SSID \"%s\", ch %d)",
-                 st->ap_cfg.ssid, st->ap_cfg.channel);
-      }
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_SET_UP: {
-      st->is_up = true;
-      st->dhcps_enabled = true;
-
-#if EOS_HAVE_WIFI
-      // Apply AP config before bringing interface up
-      wifi_config_t wcfg = {0};
-      strncpy((char *)wcfg.ap.ssid, st->ap_cfg.ssid, sizeof(wcfg.ap.ssid) - 1);
-      wcfg.ap.ssid_len = strlen(st->ap_cfg.ssid);
-      strncpy((char *)wcfg.ap.password, st->ap_cfg.password, sizeof(wcfg.ap.password) - 1);
-      wcfg.ap.channel = st->ap_cfg.channel;
-      wcfg.ap.max_connection = st->ap_cfg.max_connection;
-      wcfg.ap.ssid_hidden = st->ap_cfg.ssid_hidden;
-      if (strlen(st->ap_cfg.password) == 0) {
-        wcfg.ap.authmode = WIFI_AUTH_OPEN;
-      } else {
-        wcfg.ap.authmode = (wifi_auth_mode_t)st->ap_cfg.authmode;
-      }
-
-      esp_wifi_set_config(WIFI_IF_AP, &wcfg);
-      if (dev->parent) {
-        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
-      }
-
-      if (st->netif && st->dhcps_enabled) {
-        esp_netif_dhcps_start(st->netif);
-      }
-#else
-      if (dev->parent) {
-        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, true);
-      }
-#endif
-      EOS_LOGI("ap: interface set to UP (SSID: \"%s\")", st->ap_cfg.ssid);
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_SET_DOWN: {
-      st->is_up = false;
-      if (dev->parent) {
-        eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_WIFI_IOCTL_SET_MODE, 1, false);
-      }
-      if (st->netif) {
-        esp_netif_dhcps_stop(st->netif);
-      }
-      EOS_LOGI("ap: interface set to DOWN");
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_SET_IP: {
-      const eos_netif_ip_info_t *ip_info = va_arg(args, const eos_netif_ip_info_t *);
-      if (!ip_info || !st->netif) return -1;
-
-      // Stop DHCP server before setting static IP
-      esp_netif_dhcps_stop(st->netif);
-
-      esp_netif_ip_info_t netif_ip = {0};
-      netif_ip.ip.addr = esp_ip4addr_aton(ip_info->ip);
-      netif_ip.netmask.addr = esp_ip4addr_aton(ip_info->netmask);
-      netif_ip.gw.addr = esp_ip4addr_aton(ip_info->gw);
-
-      esp_err_t err = esp_netif_set_ip_info(st->netif, &netif_ip);
-      if (err != ESP_OK) {
-        EOS_LOGE("ap: set_ip_info failed: %s", esp_err_to_name(err));
-        return -1;
-      }
-
-      if (st->dhcps_enabled) {
-        esp_netif_dhcps_start(st->netif);
-      }
-      EOS_LOGI("ap: configured IP: %s netmask %s gw %s",
-               ip_info->ip, ip_info->netmask, ip_info->gw);
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_GET_IP: {
-      eos_netif_ip_info_t *out_ip = va_arg(args, eos_netif_ip_info_t *);
-      if (!out_ip || !st->netif) return -1;
-
-      esp_netif_ip_info_t ip_info;
-      if (esp_netif_get_ip_info(st->netif, &ip_info) != ESP_OK) return -1;
-      snprintf(out_ip->ip, sizeof(out_ip->ip), IPSTR, IP2STR(&ip_info.ip));
-      snprintf(out_ip->netmask, sizeof(out_ip->netmask), IPSTR, IP2STR(&ip_info.netmask));
-      snprintf(out_ip->gw, sizeof(out_ip->gw), IPSTR, IP2STR(&ip_info.gw));
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_START_DHCPS: {
-      if (!st->netif) return -1;
-      st->dhcps_enabled = true;
-      esp_netif_dhcps_start(st->netif);
-      EOS_LOGI("ap: DHCP server enabled");
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_STOP_DHCPS: {
-      if (!st->netif) return -1;
-      st->dhcps_enabled = false;
-      esp_netif_dhcps_stop(st->netif);
-      EOS_LOGI("ap: DHCP server stopped");
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_SET_HOSTNAME: {
-      const char *hn = va_arg(args, const char *);
-      if (!hn) return -1;
-      strncpy(st->hostname, hn, sizeof(st->hostname) - 1);
-      st->hostname[sizeof(st->hostname) - 1] = '\0';
-      if (st->netif) {
-        esp_netif_set_hostname(st->netif, st->hostname);
-      }
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_GET_HOSTNAME: {
-      char *out_hn = va_arg(args, char *);
-      if (!out_hn) return -1;
-      strncpy(out_hn, st->hostname, 31);
-      out_hn[31] = '\0';
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_SET_MAC: {
-      const uint8_t *mac = va_arg(args, const uint8_t *);
-      if (!mac) return -1;
-      memcpy(st->mac, mac, 6);
-      if (st->netif) {
-        esp_netif_set_mac(st->netif, (uint8_t *)mac);
-      }
-      return 0;
-    }
-
-    case EOS_NETIF_IOCTL_GET_MAC: {
-      uint8_t *out_mac = va_arg(args, uint8_t *);
-      if (!out_mac) return -1;
-      if (st->netif && esp_netif_get_mac(st->netif, out_mac) == ESP_OK) {
-        if (out_mac[0] != 0 || out_mac[1] != 0 || out_mac[2] != 0 ||
-            out_mac[3] != 0 || out_mac[4] != 0 || out_mac[5] != 0) {
-          return 0;
-        }
-      }
-      memcpy(out_mac, st->mac, 6);
-      return 0;
-    }
-
-    case EOS_AP_IOCTL_SET_CONFIG: {
-      const eos_ap_config_t *cfg = va_arg(args, const eos_ap_config_t *);
-      if (!cfg) return -1;
-
-      st->ap_cfg = *cfg;
-
-#if EOS_HAVE_WIFI
-      wifi_config_t wcfg = {0};
-      strncpy((char *)wcfg.ap.ssid, cfg->ssid, sizeof(wcfg.ap.ssid) - 1);
-      wcfg.ap.ssid_len = strlen(cfg->ssid);
-      strncpy((char *)wcfg.ap.password, cfg->password, sizeof(wcfg.ap.password) - 1);
-      wcfg.ap.channel = cfg->channel ? cfg->channel : 1;
-      wcfg.ap.max_connection = cfg->max_connection ? cfg->max_connection : 4;
-      wcfg.ap.ssid_hidden = cfg->ssid_hidden;
-      if (strlen(cfg->password) == 0) {
-        wcfg.ap.authmode = WIFI_AUTH_OPEN;
-      } else {
-        wcfg.ap.authmode = (wifi_auth_mode_t)cfg->authmode;
-      }
-
-      esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &wcfg);
-      if (err != ESP_OK) {
-        EOS_LOGE("ap: esp_wifi_set_config failed: %s", esp_err_to_name(err));
-        return -1;
-      }
-      EOS_LOGI("ap: configured SSID: \"%s\" (channel %d, max clients: %d)",
-               cfg->ssid, wcfg.ap.channel, wcfg.ap.max_connection);
-#endif
-      return 0;
-    }
-
-    case EOS_AP_IOCTL_GET_CONFIG: {
-      eos_ap_config_t *out_cfg = va_arg(args, eos_ap_config_t *);
-      if (!out_cfg) return -1;
-      *out_cfg = st->ap_cfg;
-      return 0;
-    }
-
-    case EOS_AP_IOCTL_GET_STAS: {
-      eos_ap_sta_list_t *list = va_arg(args, eos_ap_sta_list_t *);
-      if (!list) return -1;
-      memset(list, 0, sizeof(*list));
-
-#if EOS_HAVE_WIFI
-      wifi_sta_list_t sta_list = {0};
-      if (esp_wifi_ap_get_sta_list(&sta_list) == ESP_OK) {
-        size_t count = (sta_list.num < 10) ? sta_list.num : 10;
-        list->count = count;
-        for (size_t i = 0; i < count; i++) {
-          memcpy(list->stas[i].mac, sta_list.sta[i].mac, 6);
-          list->stas[i].rssi = sta_list.sta[i].rssi;
-        }
-      }
-#endif
-      return 0;
-    }
-
+    case EOS_NETIF_IOCTL_GET_INFO:
+      return ap_get_info(st, va_arg(args, eos_netif_info_t *));
+    case EOS_NETIF_IOCTL_SET_UP:
+      return ap_set_up_down(dev, st, true);
+    case EOS_NETIF_IOCTL_SET_DOWN:
+      return ap_set_up_down(dev, st, false);
+    case EOS_NETIF_IOCTL_SET_IP:
+      return ap_cfg_ip(st, va_arg(args, const eos_netif_ip_info_t *));
+    case EOS_NETIF_IOCTL_GET_IP:
+      return ap_get_ip(st, va_arg(args, eos_netif_ip_info_t *));
+    case EOS_NETIF_IOCTL_START_DHCPS:
+      return ap_dhcps_ctrl(st, true);
+    case EOS_NETIF_IOCTL_STOP_DHCPS:
+      return ap_dhcps_ctrl(st, false);
+    case EOS_NETIF_IOCTL_SET_HOSTNAME:
+      return ap_set_hostname(st, va_arg(args, const char *));
+    case EOS_NETIF_IOCTL_GET_HOSTNAME:
+      return ap_get_hostname(st, va_arg(args, char *));
+    case EOS_NETIF_IOCTL_SET_MAC:
+      return ap_set_mac(st, va_arg(args, const uint8_t *));
+    case EOS_NETIF_IOCTL_GET_MAC:
+      return ap_get_mac(st, va_arg(args, uint8_t *));
+    case EOS_AP_IOCTL_SET_CONFIG:
+    case EOS_AP_IOCTL_GET_CONFIG:
+    case EOS_AP_IOCTL_GET_STAS:
+      return ap_handle_config(st, cmd, args);
     default:
       return -1;
   }

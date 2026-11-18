@@ -147,7 +147,7 @@ static void apply_envp(pid_t child_pid, char *const envp[]) {
     const char *eq = strchr(envp[i], '=');
     if (eq) {
       size_t klen = (size_t)(eq - envp[i]);
-      char key[64];
+      char key[EOS_LINE_64_LEN];
       if (klen < sizeof(key)) {
         memcpy(key, envp[i], klen);
         key[klen] = '\0';

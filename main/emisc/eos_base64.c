@@ -1,7 +1,5 @@
 #include "emisc/eos_base64.h"
 
-#define B64_OUT_CHUNK 192
-
 static const char b64_alphabet[64] = {
   'A','B','C','D','E','F','G','H','I','J','K','L','M','N','O','P',
   'Q','R','S','T','U','V','W','X','Y','Z','a','b','c','d','e','f',
@@ -14,7 +12,7 @@ static const char b64_alphabet[64] = {
 ///////////////////////////////////////////////////////////////////////
 typedef struct {
   eos_b64enc_t *e;
-  char buf[B64_OUT_CHUNK];
+  char buf[EOS_B64_OUT_CHUNK];
   size_t len;
 } enc_out_t;
 
@@ -27,7 +25,7 @@ static int enc_flush(enc_out_t *o) {
 
 static int enc_put(enc_out_t *o, char c) {
   eos_b64enc_t *e = o->e;
-  if (o->len > B64_OUT_CHUNK - 3) {
+  if (o->len > EOS_B64_OUT_CHUNK - 3) {
     int rc = enc_flush(o);
     if (rc) return rc;
   }

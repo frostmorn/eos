@@ -13,8 +13,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define SBAR_MAX_LINE 128
-
 typedef struct {
   char line1[SBAR_MAX_LINE];
   char line2[SBAR_MAX_LINE];
@@ -49,7 +47,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   uint32_t mem_int_kb = 0;
   uint32_t mem_spi_kb = 0;
 
-  char pbuf[384];
+  char pbuf[EOS_STR_384_LEN];
   if (bar_read_file("/proc/meminfo", pbuf, sizeof(pbuf)) > 0) {
     char *line = pbuf;
     while (line && *line) {
@@ -90,18 +88,18 @@ static void read_fallback_stats(sbar_content_t *out) {
   }
 
   // Battery charge status
-  char bat_str[32] = {0};
+  char bat_str[EOS_SMALL_STR_LEN] = {0};
   int bfd = open("/dev/battery0", O_RDONLY);
   if (bfd >= 0) {
     eos_battery_info_t binfo;
     if (ioctl(bfd, EOS_POWER_IOCTL_GET_BATTERY_INFO, &binfo) == 0) {
-      if (binfo.status == EOS_BATTERY_STATUS_NOT_PRESENT || binfo.voltage_mv < 500) {
+      if (binfo.status == EOS_BATTERY_STATUS_NOT_PRESENT || binfo.voltage_mv < SBAR_MIN_BATTERY_MV) {
         snprintf(bat_str, sizeof(bat_str), "%s", LV_SYMBOL_CHARGE);
       } else {
-        const char *bsym = (binfo.soc_percent >= 80) ? LV_SYMBOL_BATTERY_FULL
-                         : (binfo.soc_percent >= 55) ? LV_SYMBOL_BATTERY_3
-                         : (binfo.soc_percent >= 30) ? LV_SYMBOL_BATTERY_2
-                         : (binfo.soc_percent >= 10) ? LV_SYMBOL_BATTERY_1
+        const char *bsym = (binfo.soc_percent >= SBAR_BATTERY_HIGH_THRESHOLD) ? LV_SYMBOL_BATTERY_FULL
+                         : (binfo.soc_percent >= SBAR_BATTERY_MID_THRESHOLD) ? LV_SYMBOL_BATTERY_3
+                         : (binfo.soc_percent >= SBAR_BATTERY_LOW_THRESHOLD) ? LV_SYMBOL_BATTERY_2
+                         : (binfo.soc_percent >= SBAR_BATTERY_CRIT_THRESHOLD) ? LV_SYMBOL_BATTERY_1
                                                      : LV_SYMBOL_BATTERY_EMPTY;
         snprintf(bat_str, sizeof(bat_str), "%s %u%%", bsym, (unsigned int)binfo.soc_percent);
       }
@@ -113,7 +111,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   }
 
   // WLAN status
-  char wlan_str[32] = {0};
+  char wlan_str[EOS_SMALL_STR_LEN] = {0};
   int wfd = open("/dev/sta0", O_RDONLY);
   if (wfd >= 0) {
     eos_netif_info_t ninfo;
@@ -173,7 +171,7 @@ int statusbar_main(int argc, char **argv) {
   }
 
   uint32_t width = 0, height = 0;
-  bar_query_display_size(fd, &width, &height, 280, 32);
+  bar_query_display_size(fd, &width, &height, EOS_DISPLAY_DEFAULT_HEIGHT, 32);
 
   size_t buf_pixels = (size_t)width * height;
   uint16_t *buf = (uint16_t *)malloc(buf_pixels * sizeof(uint16_t));
@@ -200,7 +198,7 @@ int statusbar_main(int argc, char **argv) {
 
       if (height >= 26) {
         // Line 1: High-contrast cyan text (0x38DF) - Centered
-        int32_t base1 = (height >= 40) ? 18 : 13;
+        int32_t base1 = (height >= SBAR_TALL_HEIGHT_THRESHOLD) ? 18 : 13;
         uint32_t w1 = lvfont_measure_text(&lv_font_montserrat_14, cur_content.line1);
         int32_t x1 = (int32_t)(width > w1 ? (width - w1) / 2 : 2);
         lvfont_render_text(buf, width, height, &lv_font_montserrat_14,
@@ -214,7 +212,7 @@ int statusbar_main(int argc, char **argv) {
 
         // Line 2: Bright silver-white text (0xE71C) - Centered
         const char *l2 = cur_content.line2[0] ? cur_content.line2 : cur_content.line1;
-        int32_t base2 = (height >= 40) ? (int32_t)(div_y + 20) : (int32_t)(div_y + 14);
+        int32_t base2 = (height >= SBAR_TALL_HEIGHT_THRESHOLD) ? (int32_t)(div_y + 20) : (int32_t)(div_y + 14);
         uint32_t w2 = lvfont_measure_text(&lv_font_montserrat_14, l2);
         int32_t x2 = (int32_t)(width > w2 ? (width - w2) / 2 : 2);
         lvfont_render_text(buf, width, height, &lv_font_montserrat_14,
@@ -249,8 +247,8 @@ int statusbar_main(int argc, char **argv) {
       break;
     }
 
-    usleep(1000000);
-    elapsed_ms += 1000;
+    usleep(EOS_US_PER_SEC);
+    elapsed_ms += EOS_MS_PER_SEC;
   }
 
   free(buf);

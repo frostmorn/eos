@@ -1,6 +1,8 @@
 #include "SDL2/SDL.h"
 #include "ecore/ioctl.h"
 #include "ecore/input.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -16,7 +18,7 @@ typedef struct {
   int touch_fd;
   int width;
   int height;
-  char error_buf[256];
+  char error_buf[EOS_MID_STR_LEN];
   uint16_t last_touch_x;
   uint16_t last_touch_y;
   bool touch_pressed;
@@ -38,7 +40,7 @@ static sdl2_context_t *sdl2_get_context(void) {
 
 struct SDL_Window {
   int w, h;
-  char title[64];
+  char title[EOS_LINE_64_LEN];
 };
 
 struct SDL_Renderer {
@@ -108,8 +110,8 @@ SDL_Window *SDL_CreateWindow(const char *title, int x, int y, int w, int h, Uint
   if (!ctx) return NULL;
   sdl2_query_display_and_input(ctx);
 
-  if (ctx->width <= 0) ctx->width = 240;
-  if (ctx->height <= 0) ctx->height = 280;
+  if (ctx->width <= 0) ctx->width = EOS_DISPLAY_DEFAULT_HEIGHT;
+  if (ctx->height <= 0) ctx->height = EOS_DISPLAY_DEFAULT_WIDTH;
 
   int window_w = ctx->width;
   int window_h = ctx->height;
@@ -159,8 +161,8 @@ SDL_Texture *SDL_CreateTexture(SDL_Renderer *renderer, Uint32 format, int access
   sdl2_context_t *ctx = sdl2_get_context();
   if (w <= 0 || h <= 0) {
     if (ctx) sdl2_query_display_and_input(ctx);
-    w = (ctx && ctx->width > 0) ? ctx->width : 240;
-    h = (ctx && ctx->height > 0) ? ctx->height : 280;
+    w = (ctx && ctx->width > 0) ? ctx->width : EOS_DISPLAY_DEFAULT_HEIGHT;
+    h = (ctx && ctx->height > 0) ? ctx->height : EOS_DISPLAY_DEFAULT_WIDTH;
   }
   SDL_Texture *tex = malloc(sizeof(SDL_Texture));
   if (!tex) return NULL;
@@ -240,11 +242,11 @@ void SDL_RenderPresent(SDL_Renderer *renderer) {
 Uint32 __attribute__((weak)) SDL_GetTicks(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
-  return (Uint32)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
+  return (Uint32)(tv.tv_sec * (time_t)EOS_MS_PER_SEC + tv.tv_usec / (suseconds_t)EOS_US_PER_MS);
 }
 
 void __attribute__((weak)) SDL_Delay(Uint32 ms) {
-  usleep(ms * 1000);
+  usleep(ms * (Uint32)EOS_US_PER_MS);
 }
 
 void __attribute__((weak)) SDL_PumpEvents(void) {
@@ -331,6 +333,6 @@ int __attribute__((weak)) SDL_WaitEvent(SDL_Event *event) {
     if (SDL_PollEvent(event)) {
       return 1;
     }
-    usleep(10000);
+    usleep(EOS_DEFAULT_POLL_TIMEOUT_US);
   }
 }
