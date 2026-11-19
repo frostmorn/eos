@@ -108,6 +108,11 @@ int driver_storage_partition_write(eos_dev_t *dev, int fd, const void *buf, size
   if (!state || !dev->parent)
     return -1;
 
+  if (state->fat_mounted) {
+    errno = EBUSY;
+    return -1;
+  }
+
   uint32_t sectors = len / state->sector_size;
   off_t max = (off_t)state->info->lba_size;
 
@@ -371,6 +376,11 @@ int driver_storage_partition_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args
   case EOS_STORAGE_IOCTL_GET_CAPACITY: {
     uint32_t *out = va_arg(args, uint32_t *);
     *out = state->info->lba_size;
+    break;
+  }
+  case EOS_STORAGE_IOCTL_GET_PART_TYPE: {
+    uint8_t *out = va_arg(args, uint8_t *);
+    *out = state->info ? state->info->part_type : 0;
     break;
   }
   case EOS_STORAGE_IOCTL_MOUNT: {

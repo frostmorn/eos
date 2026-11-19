@@ -1,6 +1,7 @@
 #include "devfs.h"
 #include "ecore/dev.h"
 #include "ecore/driver.h"
+#include "ecore/fs.h"
 #include "ecore/proc.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
@@ -490,3 +491,22 @@ void eos_devfs_init(void) {
   eos_vfs_register_ops(EOS_DEVFS_ROOT, &ops, NULL);
   EOS_LOGI("devfs mounted at %s\n", EOS_DEVFS_ROOT);
 }
+
+static int devfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
+  eos_devfs_init();
+  return 0;
+}
+
+static int devfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
+  (void)ctx; (void)flags;
+  return (eos_vfs_unregister(tgt) == ESP_OK) ? 0 : -1;
+}
+
+EOS_FS_ATTR eos_fs_type_t eos_fs_devfs = {
+    .name = "devfs",
+    .flags = EOS_FS_FLAG_PSEUDO,
+    .mount = devfs_fs_mount,
+    .umount = devfs_fs_umount,
+};
+

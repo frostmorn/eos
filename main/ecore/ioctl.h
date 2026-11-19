@@ -290,6 +290,7 @@ typedef enum {
   //=====================================================
   EOS_STORAGE_IOCTL_GET_SECTOR_SIZE, // uint32_t *sector_size
   EOS_STORAGE_IOCTL_GET_CAPACITY,    // uint32_t *capacity
+  EOS_STORAGE_IOCTL_GET_PART_TYPE,   // uint8_t *part_type
   EOS_STORAGE_IOCTL_MOUNT,           // const char *path, bool *result
   EOS_STORAGE_IOCTL_UMOUNT,          // bool *result
 

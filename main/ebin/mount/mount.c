@@ -1,42 +1,80 @@
-#include <stdio.h>
-#include <sys/ioctl.h>
-
-#include "ecore/ioctl.h"
-#include "ecore/dev.h"
+#include "mount.h"
 #include "ecore/bin.h"
+#include "ecore/fs.h"
 
-int mount_main(int argc, char **argv){
-  if (argc < 3){
-    printf("mount Usage: mount <file> <path>\n");
-    return -1;
+#include <errno.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static int mount_print_table(void) {
+  FILE *f = fopen("/proc/mounts", "r");
+  if (!f) {
+    fprintf(stderr, "mount: cannot open /proc/mounts: %s\n", strerror(errno));
+    return 1;
   }
- 
-  const char *dev_path = argv[1];
-  const char *mount_path = argv[2];
- 
-  printf("Trying to mount %s to %s\n", dev_path, mount_path);
+  char line[MOUNT_LINE_BUF_SIZE];
+  while (fgets(line, sizeof(line), f)) {
+    fputs(line, stdout);
+  }
+  fclose(f);
+  return 0;
+}
 
-  // Actual mounting would be done by  EOS
-  FILE *dev_file = fopen(dev_path, "r");
+static void mount_print_usage(void) {
+  printf("Usage: mount [-t <type>] [-o <options>] [<source> <target>]\n");
+}
 
-  if (!dev_file) {
-    printf("Can't open device file. Is it in use?\n");
-    return -1;
+int mount_main(int argc, char **argv) {
+  if (argc == 1) {
+    return mount_print_table();
   }
 
-  int dev_fd = fileno(dev_file);
+  const char *fstype = NULL;
+  const char *opts = NULL;
+  const char *source = NULL;
+  const char *target = NULL;
+  uint32_t flags = EOS_MOUNT_FLAG_NONE;
 
-  bool mount_result;
-  ioctl(dev_fd, EOS_STORAGE_IOCTL_MOUNT, mount_path, &mount_result);
-
-  if (!mount_result){
-    printf("Mount failed\n");
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+      mount_print_usage();
+      return 0;
+    }
+    if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
+      fstype = argv[++i];
+      continue;
+    }
+    if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
+      opts = argv[++i];
+      if (strstr(opts, "ro")) {
+        flags |= EOS_MOUNT_FLAG_RDONLY;
+      }
+      continue;
+    }
+    if (!source) {
+      source = argv[i];
+    } else if (!target) {
+      target = argv[i];
+    } else {
+      mount_print_usage();
+      return 1;
+    }
   }
-  
-  fclose(dev_file); 
+
+  if (!source || !target) {
+    mount_print_usage();
+    return 1;
+  }
+
+  int rc = eos_mount(source, target, fstype, flags, opts);
+  if (rc != 0) {
+    fprintf(stderr, "mount: %s: %s\n", target, strerror(errno));
+    return 1;
+  }
 
   return 0;
-  
 }
 
 EOS_BIN_ATTR eos_bin_t mount_app = {

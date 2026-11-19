@@ -128,6 +128,9 @@ ssize_t eos_vfs_readlink(const char *path, char *buf, size_t bufsiz);
 int eos_vfs_lstat(const char *path, struct stat *st);
 int eos_vfs_resolve_symlinks(const char *path, char *out_buf, size_t out_size);
 
+// Mount busy query
+bool eos_vfs_is_mount_busy(const char *prefix);
+
 // Diagnostic dump
 void eos_vfs_dump_fds(FILE *f);
 

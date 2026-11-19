@@ -111,7 +111,7 @@ def jtag_reset(port):
     print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
-        time.sleep(1.0)
+        time.sleep(1.5)
     except Exception as e:
         print(f"{Colors.YELLOW}Warning: OpenOCD reset failed: {e}{Colors.RESET}")
 
@@ -140,6 +140,11 @@ class EOSTestHarness:
             self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=2.0)
         else:
             self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=2.0)
+        try:
+            self.ser.dtr = False
+            self.ser.rts = False
+        except Exception:
+            pass
 
     def _read_available(self):
         try:
@@ -355,7 +360,18 @@ class EOSTestHarness:
             self.check(suite, "Device tree /proc/devices has core interfaces", "cat /proc/devices", r"flash0[\s\S]+fb0")
         self.check(suite, "Memory stats in /proc/meminfo", "cat /proc/meminfo", r"MemFree:\s+\d+\s+kB")
         self.check(suite, "SPIRAM stats in /proc/meminfo", "cat /proc/meminfo", r"(SPIRAMFree|MemFree):\s+\d+\s+kB")
-        self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"(/proc|/dev|/spiffs)")
+        self.check(suite, "Filesystem types in /proc/filesystems", "cat /proc/filesystems", r"(nodev\s+tmpfs[\s\S]+fat|fat[\s\S]+nodev\s+tmpfs)")
+        self.check(suite, "VFS mount points in /proc/mounts", "cat /proc/mounts", r"none\s+/\s+tmpfs\s+rw\s+0\s+0[\s\S]+none\s+/proc\s+procfs\s+rw\s+0\s+0")
+        self.check(suite, "mount command dumps mounts", "mount", r"none\s+/\s+tmpfs\s+rw\s+0\s+0[\s\S]+none\s+/proc\s+procfs\s+rw\s+0\s+0")
+        self.check(suite, "Create test mount directory", "mkdir -p /tmp/mnt_test", r"^$|")
+        self.check(suite, "Mount tmpfs at /tmp/mnt_test", "mount -t tmpfs none /tmp/mnt_test", r"(Registered VFS mount|tmpfs mounted)")
+        self.check(suite, "Mounted directory visible in mount command", "mount", r"none\s+/tmp/mnt_test\s+tmpfs")
+        self.check(suite, "Write and read file in mounted tmpfs", "echo mnt_ok > /tmp/mnt_test/test.txt && cat /tmp/mnt_test/test.txt", r"mnt_ok")
+        self.check(suite, "Busy unmount rejection on root", "umount /", r"Device or resource busy")
+        self.check(suite, "Umount /tmp/mnt_test", "umount /tmp/mnt_test", r"^$|")
+        self.check(suite, "Umounted directory removed from mount command", "mount", r"none\s+/\s+tmpfs", not_pattern=r"/tmp/mnt_test")
+        self.check(suite, "Umount nonexistent mount failure", "umount /nonexistent", r"No such file or directory")
+        self.check(suite, "Cleanup test mount directory", "rmdir /tmp/mnt_test", r"^$|")
         self.check(suite, "Interrupt allocation in /proc/interrupts", "cat /proc/interrupts", r"(CPU|intr|alloc|Level|Edge)")
         self.check(suite, "File descriptors in /proc/fds", "cat /proc/fds", r"(VFS|fd|File|Handle|Driver)")
         self.check(suite, "GPIO pin matrix in /proc/gpio", "cat /proc/gpio", r"(GPIO|IO|pin|input|output|Pullup|direction)", wait=5.0)
@@ -686,6 +702,212 @@ class EOSTestHarness:
         else:
             self.failed += 1
             self.suite_counts[suite]["fail"] += 1
+
+    def test_fs(self):
+        suite = "fs"
+        print(f"\n{Colors.BOLD}=== Filesystem Registry & Mount Lifecycle Tests ==={Colors.RESET}")
+
+        # 1. Syntax & Help
+        self.check(suite, "mount usage / help", "mount --help", r"Usage:\s+mount")
+        self.check(suite, "umount usage / help", "umount --help", r"Usage:\s+umount")
+        self.check(suite, "umount without arguments shows usage", "umount", r"Usage:\s+umount")
+
+        # 2. Filesystem Registry & Seed Mount Verification
+        self.check(suite, "Filesystem types registered in /proc/filesystems", "cat /proc/filesystems",
+                   r"(nodev\s+tmpfs[\s\S]+fat|fat[\s\S]+nodev\s+tmpfs)")
+        self.check(suite, "Pseudo filesystem tmpfs registered", "cat /proc/filesystems", r"nodev\s+tmpfs")
+        self.check(suite, "Pseudo filesystem devfs registered", "cat /proc/filesystems", r"nodev\s+devfs")
+        self.check(suite, "Pseudo filesystem binfs registered", "cat /proc/filesystems", r"nodev\s+binfs")
+        self.check(suite, "Pseudo filesystem procfs registered", "cat /proc/filesystems", r"nodev\s+procfs")
+        self.check(suite, "Pseudo filesystem pipefs registered", "cat /proc/filesystems", r"nodev\s+pipefs")
+        self.check(suite, "Block filesystem fat registered", "cat /proc/filesystems", r"(\s+fat|\s+vfat)")
+        self.check(suite, "Default seeded mounts in /proc/mounts", "cat /proc/mounts",
+                   r"none\s+/\s+tmpfs\s+rw[\s\S]+none\s+/dev\s+devfs[\s\S]+none\s+/bin\s+binfs\s+ro[\s\S]+none\s+/proc\s+procfs")
+        self.check(suite, "mount command dumps active mount table", "mount",
+                   r"none\s+/\s+tmpfs\s+rw[\s\S]+none\s+/proc\s+procfs")
+
+        # 3. Mount & Umount Parameter Validation and Error Handling
+        self.check(suite, "Reject mount with non-absolute target path", "mount -t tmpfs none mnt_relative_bad",
+                   r"(Invalid argument|mount:)")
+        self.check(suite, "Reject mount with unknown filesystem type", "mount -t nonexistent_fs_xyz none /tmp/mnt_bad",
+                   r"(No such device|mount:)")
+        self.check(suite, "Reject mount of block fs without block device", "mount -t fat none /tmp/mnt_bad_fat",
+                   r"(Invalid argument|mount:)")
+        self.check(suite, "Reject unmounting root filesystem", "umount /",
+                   r"Device or resource busy")
+        self.check(suite, "Reject unmounting non-existent mount or device", "umount /nonexistent_path_xyz",
+                   r"No such file or directory")
+
+        # 4. Basic Pseudo-Filesystem Lifecycle Cycle
+        self.check(suite, "Create basic test mount directory", "mkdir -p /tmp/cycle_basic", r"^$|")
+        self.check(suite, "Mount tmpfs at /tmp/cycle_basic", "mount -t tmpfs none /tmp/cycle_basic",
+                   r"^$|(Registered VFS mount|tmpfs mounted)")
+        self.check(suite, "Verify /tmp/cycle_basic in mount table", "mount",
+                   r"none\s+/tmp/cycle_basic\s+tmpfs\s+rw")
+        self.check(suite, "Write and read file in mounted tmpfs",
+                   "echo 'cycle_basic_token_42' > /tmp/cycle_basic/verify.txt && cat /tmp/cycle_basic/verify.txt",
+                   r"cycle_basic_token_42")
+        self.check(suite, "Reject duplicate mount at same mountpoint", "mount -t tmpfs none /tmp/cycle_basic",
+                   r"Device or resource busy")
+        self.check(suite, "Unmount /tmp/cycle_basic", "umount /tmp/cycle_basic", r"^$|")
+        self.check(suite, "Verify /tmp/cycle_basic removed from mount table", "mount",
+                   r"none\s+/\s+tmpfs", not_pattern=r"/tmp/cycle_basic")
+        self.check(suite, "Clean up basic test mount directory", "rm -rf /tmp/cycle_basic", r"^$|")
+
+        # 5. Read-Only Mount Option Cycle
+        self.check(suite, "Create ro mount directory", "mkdir -p /tmp/cycle_ro", r"^$|")
+        self.check(suite, "Mount tmpfs read-only (-o ro)", "mount -t tmpfs -o ro none /tmp/cycle_ro",
+                   r"^$|(Registered VFS mount|tmpfs mounted)")
+        self.check(suite, "Verify ro flag in mount table", "mount",
+                   r"none\s+/tmp/cycle_ro\s+tmpfs\s+ro")
+        self.check(suite, "Unmount read-only tmpfs", "umount /tmp/cycle_ro", r"^$|")
+        self.check(suite, "Verify /tmp/cycle_ro removed from mount table", "mount",
+                   r"none\s+/\s+tmpfs", not_pattern=r"/tmp/cycle_ro")
+        self.check(suite, "Clean up ro mount directory", "rmdir /tmp/cycle_ro", r"^$|")
+
+        # 6. Hierarchical / Nested Mount Lifecycle Cycle
+        self.check(suite, "Create nested mount directories", "mkdir -p /tmp/cycle_tree/child", r"^$|")
+        self.check(suite, "Mount parent tmpfs at /tmp/cycle_tree", "mount -t tmpfs none /tmp/cycle_tree",
+                   r"^$|(Registered VFS mount|tmpfs mounted)")
+        self.check(suite, "Mount child tmpfs at /tmp/cycle_tree/child", "mount -t tmpfs none /tmp/cycle_tree/child",
+                   r"^$|(Registered VFS mount|tmpfs mounted)")
+        self.check(suite, "Verify parent and child in mount table", "mount",
+                   r"none\s+/tmp/cycle_tree\s+tmpfs[\s\S]+none\s+/tmp/cycle_tree/child\s+tmpfs")
+        self.check(suite, "Write data into parent and child mounts",
+                   "echo parent_secret > /tmp/cycle_tree/parent.txt && echo child_secret > /tmp/cycle_tree/child/child.txt",
+                   r"^$|")
+        self.check(suite, "Verify parent data readable", "cat /tmp/cycle_tree/parent.txt", r"parent_secret")
+        self.check(suite, "Verify child data readable", "cat /tmp/cycle_tree/child/child.txt", r"child_secret")
+        self.check(suite, "Topological reverse unmount: child first", "umount /tmp/cycle_tree/child", r"^$|")
+        self.check(suite, "Verify child removed from mount table", "mount",
+                   r"none\s+/tmp/cycle_tree\s+tmpfs", not_pattern=r"/tmp/cycle_tree/child")
+        self.check(suite, "Verify parent data intact after child unmount", "cat /tmp/cycle_tree/parent.txt", r"parent_secret")
+        self.check(suite, "Topological reverse unmount: parent second", "umount /tmp/cycle_tree", r"^$|")
+        self.check(suite, "Verify parent removed from mount table", "mount",
+                   r"none\s+/\s+tmpfs", not_pattern=r"/tmp/cycle_tree")
+        self.check(suite, "Clean up nested directory tree", "rm -rf /tmp/cycle_tree", r"^$|")
+
+        # 7. Storage Partition Block Device Mount Lifecycle Cycle (if storage partition exists)
+        devices_out = self.run_cmd("cat /proc/devices")
+        has_part = "part0" in devices_out or "storage/partition" in devices_out
+        if has_part:
+            mounts_out = self.run_cmd("cat /proc/mounts")
+            part_already_mounted = "/dev/part0" in mounts_out or "/sdcard" in mounts_out
+
+            if part_already_mounted:
+                self.check(suite, "Unmount existing partition by device (/dev/part0)", "umount /dev/part0",
+                           r"^$|(unmounted part0|fat: unmounted)")
+                self.check(suite, "Verify partition removed from mounts", "cat /proc/mounts",
+                           r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
+                self.check(suite, "Remount partition to /sdcard", "mount /dev/part0 /sdcard",
+                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Verify partition active in mounts", "cat /proc/mounts",
+                           r"/dev/part0\s+/sdcard\s+(vfat|fat)")
+                self.check(suite, "Reject duplicate mount of already mounted partition device", "mount /dev/part0 /sdcard",
+                           r"Device or resource busy")
+                self.check(suite, "Unmount partition by target path (/sdcard)", "umount /sdcard",
+                           r"^$|(unmounted part0|fat: unmounted)")
+                self.check(suite, "Verify partition removed after target unmount", "cat /proc/mounts",
+                           r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
+                # Restore original mounted state
+                self.check(suite, "Restore partition mount at /sdcard", "mount /dev/part0 /sdcard",
+                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+            else:
+                self.check(suite, "Mount partition /dev/part0 at /sdcard", "mount /dev/part0 /sdcard",
+                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Verify partition active in mounts", "cat /proc/mounts",
+                           r"/dev/part0\s+/sdcard\s+(vfat|fat)")
+                self.check(suite, "Reject duplicate mount of partition device", "mount /dev/part0 /sdcard",
+                           r"Device or resource busy")
+                self.check(suite, "Unmount partition by device path (/dev/part0)", "umount /dev/part0",
+                           r"^$|(unmounted part0|fat: unmounted)")
+                self.check(suite, "Verify partition unmounted by device path", "cat /proc/mounts",
+                           r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
+                self.check(suite, "Remount partition /dev/part0 at /sdcard", "mount /dev/part0 /sdcard",
+                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Unmount partition by target path (/sdcard)", "umount /sdcard",
+                           r"^$|(unmounted part0|fat: unmounted)")
+                self.check(suite, "Verify partition unmounted by target path", "cat /proc/mounts",
+                           r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
+
+        # 8. Dynamic Multi-Mount Hierarchy Lifecycle Validation
+        self.test_mount_lifecycle_cycle()
+
+    def test_mount_lifecycle_cycle(self):
+        suite = "fs"
+        print(f"\n{Colors.BOLD}--- Mount Table Detach & Reattach Lifecycle Validation ---{Colors.RESET}")
+
+        # Step 1: Create a dynamic hierarchy of 3 mounts
+        paths = [
+            "/tmp/dyn_cycle/lvl1",
+            "/tmp/dyn_cycle/lvl1/lvl2",
+            "/tmp/dyn_cycle/lvl1/lvl2/lvl3"
+        ]
+        self.run_cmd("mkdir -p /tmp/dyn_cycle/lvl1/lvl2/lvl3")
+
+        for p in paths:
+            self.run_cmd(f"mount -t tmpfs none {p}")
+
+        # Step 2: Discover active user mounts from /proc/mounts
+        mounts_out = self.run_cmd("cat /proc/mounts")
+        lines = [line.strip() for line in mounts_out.splitlines() if line.strip()]
+
+        discovered = []
+        for line in lines:
+            parts = line.split()
+            if len(parts) >= 3:
+                src, tgt, fstype = parts[0], parts[1], parts[2]
+                if tgt.startswith("/tmp/dyn_cycle"):
+                    discovered.append({"src": src, "target": tgt, "fstype": fstype})
+
+        if len(discovered) != 3:
+            print(f"  [{Colors.RED}FAIL{Colors.RESET}] Expected 3 dynamic mounts, found {len(discovered)}")
+            self.failed += 1
+            self.suite_counts[suite]["fail"] += 1
+            return
+
+        print(f"  Discovered {len(discovered)} active dynamic mounts: {[m['target'] for m in discovered]}")
+
+        # Step 3: Topologically sort for detachment (longest prefix / leaf first)
+        detach_order = sorted(discovered, key=lambda m: len(m["target"]), reverse=True)
+        attach_order = sorted(discovered, key=lambda m: len(m["target"]))
+
+        for m in detach_order:
+            tgt = m["target"]
+            self.check(suite, f"Detach mount {tgt} ({m['fstype']})",
+                       f"umount {tgt}", r"^$|")
+
+        # Step 4: Verify all dynamic mounts detached
+        curr_mounts = self.run_cmd("cat /proc/mounts")
+        self.check(suite, "Verify all dynamic mounts detached (/tmp/dyn_cycle clear)",
+                   "cat /proc/mounts", r"none\s+/\s+tmpfs", not_pattern=r"/tmp/dyn_cycle")
+
+        # Step 5: Re-attach in topological order (shortest prefix / root first)
+        for m in attach_order:
+            tgt = m["target"]
+            fstype = m["fstype"]
+            self.check(suite, f"Re-mount {tgt} ({fstype})",
+                       f"mount -t {fstype} none {tgt}", r"^$|(Registered VFS mount|tmpfs mounted)")
+
+        # Step 6: Verify all original mounts are back in /proc/mounts
+        final_mounts = self.run_cmd("cat /proc/mounts")
+        all_back = True
+        for m in discovered:
+            if m["target"] not in final_mounts:
+                all_back = False
+                print(f"  [{Colors.RED}FAIL{Colors.RESET}] Mount {m['target']} missing from /proc/mounts after re-mount")
+        if all_back:
+            print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All {len(discovered)} mounts verified active in /proc/mounts after lifecycle cycle")
+            self.passed += 1
+            self.suite_counts[suite]["pass"] += 1
+        else:
+            self.failed += 1
+            self.suite_counts[suite]["fail"] += 1
+
+        # Step 7: Final teardown & cleanup
+        for m in detach_order:
+            self.run_cmd(f"umount {m['target']}")
+        self.run_cmd("rm -rf /tmp/dyn_cycle")
 
     def test_wlanctl(self):
         suite = "wlanctl"
@@ -1077,6 +1299,7 @@ class EOSTestHarness:
             buf = b""
             last_ping = 0.0
             prompt_found = False
+            reopened_stale = False
 
             while time.time() < deadline:
                 chunk = self._read_available()
@@ -1086,6 +1309,15 @@ class EOSTestHarness:
                         prompt_found = True
                         break
                 now = time.time()
+                # Stale CDC-ACM endpoint recovery if no data received after 5s
+                if len(buf) == 0 and (now - (deadline - 25.0) > 5.0) and not reopened_stale:
+                    reopened_stale = True
+                    try:
+                        self.close()
+                        time.sleep(0.5)
+                        self._open_serial()
+                    except Exception:
+                        pass
                 # Wait until boot completes (~2.5s) before sending ping so we do not flood init.sh
                 if len(buf) > 3000 or (now - (deadline - 25.0) > 2.5):
                     if now - last_ping > 0.5:
@@ -1157,6 +1389,7 @@ SUITE_REGISTRY = {
     "procfs": {"name": "Virtual /proc Filesystem Tests", "tag": "qemu", "func": lambda h: h.test_procfs()},
     "pratt": {"name": "Shell & Pratt Parser Tests", "tag": "qemu", "func": lambda h: h.test_pratt_parser()},
     "devctl": {"name": "Device Control (devctl) Tests", "tag": "qemu", "func": lambda h: h.test_devctl()},
+    "fs": {"name": "Filesystem Registry & Mount Lifecycle Tests", "tag": "qemu", "func": lambda h: h.test_fs()},
     "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},

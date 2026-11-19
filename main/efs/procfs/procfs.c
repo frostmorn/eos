@@ -3,6 +3,7 @@
 #include "ecore/driver.h"
 #include "ecore/log.h"
 #include "ecore/proc.h"
+#include "ecore/fs.h"
 #include "emisc/kvec.h"
 #include "emisc/psram_alloc.h"
 #include "emisc/strlimits.h"
@@ -79,6 +80,7 @@ static const char *s_proc_entries[] = {
     "meminfo",
     "version",
     "mounts",
+    "filesystems",
     "interrupts",
     "fds",
     "gpio",
@@ -274,13 +276,11 @@ static char *procfs_gen_version(void) {
 }
 
 static char *procfs_gen_mounts(void) {
-  char *buf = NULL;
-  size_t sz = 0;
-  FILE *f = open_memstream(&buf, &sz);
-  if (!f) return NULL;
-  esp_vfs_dump_registered_paths(f);
-  fclose(f);
-  return buf;
+  return eos_fs_generate_mounts_proc();
+}
+
+static char *procfs_gen_filesystems(void) {
+  return eos_fs_generate_filesystems_proc();
 }
 
 static char *procfs_gen_interrupts(void) {
@@ -789,6 +789,7 @@ static char *procfs_gen_static_file(const char *p) {
   if (strcmp(p, "meminfo") == 0) return procfs_gen_meminfo();
   if (strcmp(p, "version") == 0) return procfs_gen_version();
   if (strcmp(p, "mounts") == 0) return procfs_gen_mounts();
+  if (strcmp(p, "filesystems") == 0) return procfs_gen_filesystems();
   if (strcmp(p, "interrupts") == 0) return procfs_gen_interrupts();
   if (strcmp(p, "fds") == 0) return procfs_gen_fds();
   if (strcmp(p, "gpio") == 0) return procfs_gen_gpio();
@@ -1205,3 +1206,22 @@ void eos_procfs_init(void) {
   eos_vfs_register_ops(EOS_PROCFS_ROOT, &ops, NULL);
   EOS_LOGI("procfs mounted at %s", EOS_PROCFS_ROOT);
 }
+
+static int procfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
+  eos_procfs_init();
+  return 0;
+}
+
+static int procfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
+  (void)ctx; (void)flags;
+  return (eos_vfs_unregister(tgt) == ESP_OK) ? 0 : -1;
+}
+
+EOS_FS_ATTR eos_fs_type_t eos_fs_procfs = {
+    .name = "procfs",
+    .flags = EOS_FS_FLAG_PSEUDO,
+    .mount = procfs_fs_mount,
+    .umount = procfs_fs_umount,
+};
+

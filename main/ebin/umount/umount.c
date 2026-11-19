@@ -1,41 +1,48 @@
-#include <stdio.h>
-#include <sys/ioctl.h>
-
-#include "ecore/ioctl.h"
-#include "ecore/dev.h"
+#include "umount.h"
 #include "ecore/bin.h"
+#include "ecore/fs.h"
 
-int umount_main(int argc, char **argv){
-  if (argc < 2){
-    printf("umount Usage: umount <file>\n");
-    return -1;
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+
+static void umount_print_usage(void) {
+  printf("Usage: umount <target | device>\n");
+}
+
+int umount_main(int argc, char **argv) {
+  if (argc < 2) {
+    umount_print_usage();
+    return 1;
   }
 
-  // TODO: allow unmount by vfs path as well 
-  const char *dev_path = argv[1];
-  printf("Trying to unmount %s\n", dev_path);
+  const char *target_or_dev = NULL;
 
-  // Actual unmounting would be done by  EOS
-  FILE *dev_file = fopen(dev_path, "r");
-
-  if (!dev_file) {
-    printf("Can't open device file. Is it in use?\n");
-    return -1;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+      umount_print_usage();
+      return 0;
+    }
+    if (!target_or_dev) {
+      target_or_dev = argv[i];
+    } else {
+      umount_print_usage();
+      return 1;
+    }
   }
 
-  int dev_fd = fileno(dev_file);
-
-  bool umount_result;
-  ioctl(dev_fd, EOS_STORAGE_IOCTL_UMOUNT, &umount_result);
-
-  if (!umount_result){
-    printf("unmount failed\n");
+  if (!target_or_dev) {
+    umount_print_usage();
+    return 1;
   }
-  
-  fclose(dev_file); 
+
+  int rc = eos_umount(target_or_dev, 0);
+  if (rc != 0) {
+    fprintf(stderr, "umount: %s: %s\n", target_or_dev, strerror(errno));
+    return 1;
+  }
 
   return 0;
-  
 }
 
 EOS_BIN_ATTR eos_bin_t umount_app = {

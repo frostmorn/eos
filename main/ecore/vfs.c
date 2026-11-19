@@ -1362,6 +1362,41 @@ int eos_vfs_lstat(const char *path, struct stat *st) {
   return __real__stat_r(__getreent(), resolved, st);
 }
 
+bool eos_vfs_is_mount_busy(const char *prefix) {
+  if (!prefix) return false;
+  if (!s_vfs_initialized) return false;
+
+  size_t plen = strlen(prefix);
+  while (plen > 1 && prefix[plen - 1] == '/') {
+    plen--;
+  }
+
+  pthread_mutex_lock(&s_vfs_table_lock);
+
+  for (size_t i = 3; i < kv_size(s_fd_descs); i++) {
+    eos_vfs_file_t *file = kv_A(s_fd_descs, i);
+    if (file && !atomic_load(&file->closing) && file->mount) {
+      if (file->mount->prefix_len == plen && strncmp(file->mount->prefix, prefix, plen) == 0) {
+        pthread_mutex_unlock(&s_vfs_table_lock);
+        return true;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < kv_size(s_dir_descs); i++) {
+    eos_vfs_dir_t *dir = kv_A(s_dir_descs, i);
+    if (dir && !atomic_load(&dir->closing) && dir->mount) {
+      if (dir->mount->prefix_len == plen && strncmp(dir->mount->prefix, prefix, plen) == 0) {
+        pthread_mutex_unlock(&s_vfs_table_lock);
+        return true;
+      }
+    }
+  }
+
+  pthread_mutex_unlock(&s_vfs_table_lock);
+  return false;
+}
+
 void eos_vfs_dump_fds(FILE *f) {
   if (!f) return;
   pthread_mutex_lock(&s_vfs_table_lock);

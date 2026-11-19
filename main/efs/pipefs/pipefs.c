@@ -1,4 +1,5 @@
 #include "pipefs.h"
+#include "ecore/fs.h"
 #include "ecore/proc.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
@@ -722,3 +723,22 @@ void eos_pipefs_init(void) {
   eos_vfs_register_ops(EOS_PIPEFS_ROOT, &ops, NULL);
   EOS_LOGI("pipefs mounted at %s\n", EOS_PIPEFS_ROOT);
 }
+
+static int pipefs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
+  eos_pipefs_init();
+  return 0;
+}
+
+static int pipefs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
+  (void)ctx; (void)flags;
+  return (eos_vfs_unregister(tgt) == ESP_OK) ? 0 : -1;
+}
+
+EOS_FS_ATTR eos_fs_type_t eos_fs_pipefs = {
+    .name = "pipefs",
+    .flags = EOS_FS_FLAG_PSEUDO,
+    .mount = pipefs_fs_mount,
+    .umount = pipefs_fs_umount,
+};
+

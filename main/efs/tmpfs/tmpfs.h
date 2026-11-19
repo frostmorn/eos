@@ -19,6 +19,9 @@
 
 #include "emisc/strlimits.h"
 
+// Forward declaration
+typedef struct tmpfs_state_t tmpfs_state_t;
+
 // Configuration:
 #ifndef EOS_TMPFS_ROOT
 #define EOS_TMPFS_ROOT "" // Mount as root dir
@@ -29,4 +32,6 @@
 #define TMP_FILE_MODE     (S_IFREG|0644)
 #define TMP_SECTOR_SIZE   512
 
-void eos_tmpfs_init();
+void eos_tmpfs_init(void);
+tmpfs_state_t *eos_tmpfs_mount(const char *path);
+int eos_tmpfs_umount(const char *path, tmpfs_state_t *state);

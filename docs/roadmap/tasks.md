@@ -23,7 +23,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | T06 | Hash and checksum utilities | Userland | S | F06 | 1 |
 | Done | T10 | Device-selection environment variables | Userland | S | – | 1 |
 | Done | T17 | Run-time stats and `/proc/loadavg` | Observability | S | – | 1 |
-| Partial | T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
+| Done | T07 | Filesystem registry, flexible `mount`/`umount` | Filesystems | M | F06 | 1 |
 | Done | T13 | Real per-process `/proc` | Observability | M | F04 | 1 |
 | Done | T20 | `ps` | Observability | S | T13 | 1 |
 | Pending | T18 | Signals (cooperative) and `kill` | Terminal | L | F04, F07 | 2 |
@@ -276,7 +276,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ### Epic: Filesystems and storage
 
-#### T07 — Filesystem registry and flexible `mount`/`umount` [PARTIAL]
+#### T07 — Filesystem registry and flexible `mount`/`umount` [DONE]
 `Size: M · Depends: F06 · Orig #7`
 
 **Scope**

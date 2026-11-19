@@ -1,4 +1,5 @@
 #include "tmpfs.h"
+#include "ecore/fs.h"
 #include "ecore/proc.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
@@ -60,10 +61,10 @@ typedef struct {
   struct dirent entry;
 } tmpfs_dir_t;
 
-typedef struct {
+struct tmpfs_state_t {
   tmpfs_fnode_t *root;
   pthread_mutex_t lock;
-} tmpfs_state_t;
+};
 
 static inline void tmpfs_lock(tmpfs_state_t *state) {
   if (state) pthread_mutex_lock(&state->lock);
@@ -1162,8 +1163,60 @@ tmpfs_state_t *eos_tmpfs_mount(const char *path) {
   return state;
 }
 
+static void tmpfs_on_detach_free(tmpfs_fnode_t *node, void *ctx) {
+  (void)ctx;
+  if (!node) return;
+  bool prev_k = eos_proc_enter_kernel();
+  if (node->inode) {
+    if (node->inode->nlink > 0) node->inode->nlink--;
+    if (node->inode->nlink == 0 && node->inode->refcount == 0) {
+      tmpfs_free_inode(node->inode);
+      node->inode = NULL;
+    }
+  }
+  free(node);
+  eos_proc_leave_kernel(prev_k);
+}
+
+int eos_tmpfs_umount(const char *path, tmpfs_state_t *state) {
+  if (!state) return -1;
+  eos_vfs_unregister(path);
+  tmpfs_lock(state);
+  if (state->root) {
+    tmpfs_fnode_t_tree_detach_subtree(state->root, tmpfs_on_detach_free, NULL);
+    state->root = NULL;
+  }
+  tmpfs_unlock(state);
+  pthread_mutex_destroy(&state->lock);
+  bool prev_k = eos_proc_enter_kernel();
+  free(state);
+  eos_proc_leave_kernel(prev_k);
+  return 0;
+}
+
 void eos_tmpfs_init(void) {
   eos_tmpfs_state = eos_tmpfs_mount(EOS_TMPFS_ROOT);
   mkdir("/tmp", 0777);
   mkdir("/proc", 0777);
 }
+
+static int tmpfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts;
+  tmpfs_state_t *st = eos_tmpfs_mount(tgt);
+  if (!st) return -1;
+  if (out_ctx) *out_ctx = st;
+  return 0;
+}
+
+static int tmpfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
+  (void)flags;
+  return eos_tmpfs_umount(tgt, (tmpfs_state_t *)ctx);
+}
+
+EOS_FS_ATTR eos_fs_type_t eos_fs_tmpfs = {
+    .name = "tmpfs",
+    .flags = EOS_FS_FLAG_PSEUDO,
+    .mount = tmpfs_fs_mount,
+    .umount = tmpfs_fs_umount,
+};
+

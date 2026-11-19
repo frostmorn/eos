@@ -39,7 +39,8 @@ This document serves as the authoritative specification, agent guidelines, and a
     *   **Driver Structure:** Every driver directory under `main/edriver/<scope>/<name>/` must define an `eos_drv_t` structure registered in the `.eos_drivers` section (`EOS_DRV_ATTR eos_drv_t driver_<scope>_<name> = { ... };`).
     *   **No Loose Driver Files:** No loose `.c` or `.h` files are permitted directly under `main/edriver/` or `main/edriver/<scope>/`.
     *   **IOCTL-Only Driver Communication:** Drivers must pass and consume functionality strictly via standard VFS and `ioctl` interfaces (`eos_dev_ioctl_call` on parent/child/peer devices) rather than loose C helper functions or ad-hoc cross-driver exports.
-*   **`ecore/`**: Core kernel subsystems (VFS, devfs, binfs, pipefs, procfs, driver model).
+*   **`ecore/`**: Core kernel subsystems (VFS, process table, capability manager, driver model, filesystem registry).
+*   **`efs/`**: Filesystem implementations (VFS providers: `tmpfs`, `devfs`, `binfs`, `procfs`, `pipefs`, `fat`). Every filesystem directory under `main/efs/<name>/` defines an `eos_fs_type_t` structure registered in the `.eos_fs` section (`EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };`).
 *   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables.
 *   **`eboard/`**: Board configurations and declarative startup scripts (`init.sh`, `sdkconfig`). Peripheral attachments are declared via `devctl attach` rather than hardcoded C initialization files.
 *   **`eld/`**: Linker and link-fragment scripts (`.ld`, `.lf`). **All linker scripts must reside exclusively within `main/eld/`**.

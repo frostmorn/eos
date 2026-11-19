@@ -1,0 +1,14 @@
+[sections:eos_fs]
+entries:
+    .eos_fs+
+
+[scheme:eos_fs_psram]
+entries:
+    eos_fs -> flash_rodata
+
+[mapping:eos_fs]
+archive: libmain.a
+
+entries:
+    * (eos_fs_psram);
+        eos_fs -> flash_rodata KEEP() ALIGN(4) SURROUND(eos_fs)

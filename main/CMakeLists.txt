@@ -4,7 +4,7 @@ idf_component_register(
     SRCS ${EOS_SRCS}
     INCLUDE_DIRS "include_override" "."
     WHOLE_ARCHIVE 
-    LDFRAGMENTS "eld/driver.lf" "eld/bin.lf" "eld/assets.lf"
+    LDFRAGMENTS "eld/driver.lf" "eld/bin.lf" "eld/assets.lf" "eld/fs.lf"
 )
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::mbedtls)
 idf_build_set_property(

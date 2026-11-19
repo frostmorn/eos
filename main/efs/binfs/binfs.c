@@ -1,5 +1,6 @@
 #include "binfs.h"
-#include "asset.h"
+#include "ecore/asset.h"
+#include "ecore/fs.h"
 #include "ecore/vfs.h"
 #include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
@@ -341,3 +342,22 @@ void eos_binfs_init(void) {
              binfs_bin_count(), binfs_asset_count());
   }
 }
+
+static int binfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
+  eos_binfs_init();
+  return 0;
+}
+
+static int binfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
+  (void)ctx; (void)flags;
+  return (eos_vfs_unregister(tgt) == ESP_OK) ? 0 : -1;
+}
+
+EOS_FS_ATTR eos_fs_type_t eos_fs_binfs = {
+    .name = "binfs",
+    .flags = EOS_FS_FLAG_PSEUDO | EOS_FS_FLAG_READONLY,
+    .mount = binfs_fs_mount,
+    .umount = binfs_fs_umount,
+};
+
