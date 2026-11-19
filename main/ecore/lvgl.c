@@ -367,7 +367,8 @@ static int eos_lvgl_write_full_frame_buf(eos_lvgl_ctx_t *ctx,
   if (!ctx || ctx->fb_fd < 0 || !frame_pixels)
     return -1;
 
-  size_t row_bytes = (size_t)ctx->width * sizeof(uint16_t);
+  size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(ctx->format);
+  size_t row_bytes = (size_t)ctx->width * bytes_per_pixel;
   uint32_t strip_h =
       (ctx->partial_lines > 0)
           ? ctx->partial_lines
@@ -406,7 +407,7 @@ static int eos_lvgl_write_full_frame_buf(eos_lvgl_ctx_t *ctx,
 
   // Unclipped single-write fallback if SET_WINDOW is not supported
   (void)ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, NULL);
-  size_t full_bytes = (size_t)ctx->width * ctx->height * sizeof(uint16_t);
+  size_t full_bytes = (size_t)ctx->width * ctx->height * bytes_per_pixel;
   ssize_t written = write(ctx->fb_fd, frame_pixels, full_bytes);
   if (written >= 0 && (written == 0 || (size_t)written == full_bytes)) {
     ctx->full_flushes++;
@@ -431,13 +432,15 @@ static void eos_lvgl_blit_to_shadow(eos_lvgl_ctx_t *ctx, const lv_area_t *area,
     return;
 
   // Respect LVGL's draw buffer stride alignment (LV_DRAW_BUF_STRIDE_ALIGN)
-  uint32_t src_stride_bytes =
-      lv_draw_buf_width_to_stride((uint32_t)w, LV_COLOR_FORMAT_RGB565);
-  if (src_stride_bytes < (uint32_t)w * sizeof(uint16_t)) {
-    src_stride_bytes = (uint32_t)w * sizeof(uint16_t);
+  lv_color_format_t lv_cf = (ctx->format == EOS_DISPLAY_FMT_RGB888) ? LV_COLOR_FORMAT_RGB888 : LV_COLOR_FORMAT_RGB565;
+  size_t bpp = eos_display_format_bytes_per_pixel(ctx->format);
+  uint32_t src_stride_bytes = lv_draw_buf_width_to_stride((uint32_t)w, lv_cf);
+  if (src_stride_bytes < (uint32_t)w * bpp) {
+    src_stride_bytes = (uint32_t)w * bpp;
   }
 
   const uint8_t *src_bytes = (const uint8_t *)src;
+  uint8_t *dst_base = (uint8_t *)ctx->full_buf;
 
   for (int32_t row = 0; row < h; row++) {
     int32_t dst_y = y1 + row;
@@ -453,10 +456,9 @@ static void eos_lvgl_blit_to_shadow(eos_lvgl_ctx_t *ctx, const lv_area_t *area,
     if (copy_w <= 0)
       continue;
 
-    const uint16_t *src_row =
-        (const uint16_t *)(src_bytes + (size_t)row * src_stride_bytes);
-    memcpy(&ctx->full_buf[(size_t)dst_y * ctx->width + (size_t)dst_x],
-           &src_row[src_x], (size_t)copy_w * sizeof(uint16_t));
+    const uint8_t *src_row = src_bytes + (size_t)row * src_stride_bytes;
+    memcpy(dst_base + ((size_t)dst_y * ctx->width + (size_t)dst_x) * bpp,
+           src_row + (size_t)src_x * bpp, (size_t)copy_w * bpp);
   }
 }
 
@@ -492,7 +494,8 @@ static void eos_lvgl_flush_cb(lv_display_t *display, const lv_area_t *area,
       };
 
       if (ioctl(ctx->fb_fd, EOS_DISPLAY_IOCTL_SET_WINDOW, &rect) == 0) {
-        size_t chunk_bytes = (size_t)w * (size_t)h * sizeof(uint16_t);
+        size_t bpp = eos_display_format_bytes_per_pixel(ctx->format);
+        size_t chunk_bytes = (size_t)w * (size_t)h * bpp;
         ssize_t written = write(ctx->fb_fd, px_map, chunk_bytes);
         if (written >= 0 && (written == 0 || (size_t)written == chunk_bytes)) {
           ctx->partial_flushes++;
@@ -552,6 +555,13 @@ static int lvgl_init_probe_fb(const char *fb_path, uint32_t *out_w, uint32_t *ou
   s_lvgl.pub.width = width;
   s_lvgl.pub.height = height;
 
+  uint32_t fmt = EOS_DISPLAY_FMT_RGB565;
+  if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_FORMAT, &fmt) == 0) {
+    s_lvgl.pub.format = fmt;
+  } else {
+    s_lvgl.pub.format = EOS_DISPLAY_FMT_RGB565;
+  }
+
   uint32_t off_x = 0, off_y = 0;
   if (ioctl(fb_fd, EOS_DISPLAY_IOCTL_GET_OFFSET_X, &off_x) == 0) {
     s_lvgl.fb_offset_x = off_x;
@@ -567,7 +577,8 @@ static int lvgl_init_probe_fb(const char *fb_path, uint32_t *out_w, uint32_t *ou
 
 static int lvgl_init_buffers(const eos_lvgl_cfg_t *cfg, uint32_t width,
                              uint32_t height, int fb_fd) {
-  size_t row_bytes = (size_t)width * sizeof(uint16_t);
+  size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(s_lvgl.pub.format);
+  size_t row_bytes = (size_t)width * bytes_per_pixel;
   uint32_t strip_h =
       (cfg && cfg->partial_lines > 0)
           ? cfg->partial_lines
@@ -579,7 +590,7 @@ static int lvgl_init_buffers(const eos_lvgl_cfg_t *cfg, uint32_t width,
 
   s_lvgl.pub.partial_lines = strip_h;
   s_lvgl.pub.partial_buf_size = (size_t)strip_h * row_bytes;
-  s_lvgl.pub.full_buf_size = (size_t)width * (size_t)height * sizeof(uint16_t);
+  s_lvgl.pub.full_buf_size = (size_t)width * (size_t)height * bytes_per_pixel;
 
 #ifdef MALLOC_CAP_SPIRAM
   s_lvgl.pub.full_buf = heap_caps_malloc(
@@ -744,7 +755,8 @@ int eos_lvgl_init(const eos_lvgl_cfg_t *cfg) {
     return -1;
   }
 
-  lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565);
+  lv_color_format_t lv_cf = (s_lvgl.pub.format == EOS_DISPLAY_FMT_RGB888) ? LV_COLOR_FORMAT_RGB888 : LV_COLOR_FORMAT_RGB565;
+  lv_display_set_color_format(disp, lv_cf);
 
   if (s_lvgl.pub.partial_buf) {
     lv_display_set_buffers(disp, s_lvgl.pub.partial_buf, NULL,

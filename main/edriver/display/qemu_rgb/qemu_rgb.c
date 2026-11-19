@@ -139,14 +139,18 @@ ssize_t driver_display_qemu_rgb_write(eos_dev_t *dev, int fd, const void *buf, s
   }
 
   qemu_rgb_state_t *state = dev->state;
+  uint8_t bytes_per_pixel = (state->bpp == RGB_QEMU_BPP_32) ? 4 : 2;
+  if ((len % bytes_per_pixel) != 0) {
+    errno = EINVAL;
+    return -1;
+  }
   if (state->lock) {
-    xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+    xSemaphoreTakeRecursive(state->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC));
   }
 
   eos_rect_t r;
   eos_clip_rect_consume(&state->clip, (uint32_t)state->width, (uint32_t)state->height, &r);
 
-  uint8_t bytes_per_pixel = (state->bpp == RGB_QEMU_BPP_32) ? 4 : 2;
   uint32_t total_rows = eos_rect_calc_rows(len, r.w, bytes_per_pixel, r.h);
   if (total_rows == 0) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
@@ -219,7 +223,7 @@ int driver_display_qemu_rgb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args)
     break;
   case EOS_DISPLAY_IOCTL_LOCK:
     if (state->lock) {
-      xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+      xSemaphoreTakeRecursive(state->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC));
     }
     break;
 
@@ -228,6 +232,37 @@ int driver_display_qemu_rgb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args)
       xSemaphoreGiveRecursive(state->lock);
     }
     break;
+
+  case EOS_DISPLAY_IOCTL_GET_FORMATS: {
+    uint32_t *fmts = va_arg(args, uint32_t *);
+    if (!fmts) {
+      errno = EINVAL;
+      return -1;
+    }
+    *fmts = (state->bpp == RGB_QEMU_BPP_32) ? EOS_DISPLAY_FMT_MASK_RGB888 : EOS_DISPLAY_FMT_MASK_RGB565;
+    break;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_FORMAT: {
+    uint32_t *fmt = va_arg(args, uint32_t *);
+    if (!fmt) {
+      errno = EINVAL;
+      return -1;
+    }
+    *fmt = (state->bpp == RGB_QEMU_BPP_32) ? EOS_DISPLAY_FMT_RGB888 : EOS_DISPLAY_FMT_RGB565;
+    break;
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_FORMAT: {
+    uint32_t fmt = va_arg(args, uint32_t);
+    uint32_t cur = (state->bpp == RGB_QEMU_BPP_32) ? EOS_DISPLAY_FMT_RGB888 : EOS_DISPLAY_FMT_RGB565;
+    if (fmt == cur) {
+      break;
+    }
+    errno = ENOTSUP;
+    ret = -1;
+    break;
+  }
 
   default:
     errno = ENOTTY;

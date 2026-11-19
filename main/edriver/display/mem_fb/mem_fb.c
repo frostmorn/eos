@@ -12,9 +12,10 @@
 #include <string.h>
 
 typedef struct {
-  uint16_t *vram;
+  void *vram;
   int32_t width;
   int32_t height;
+  uint32_t format;
   eos_clip_rect_t clip;
 } mem_fb_state_t;
 
@@ -44,7 +45,8 @@ bool driver_display_mem_fb_init(eos_dev_t *dev) {
 
   state->width = width;
   state->height = height;
-  size_t vram_bytes = (size_t)width * height * sizeof(uint16_t);
+  state->format = EOS_DISPLAY_FMT_RGB565;
+  size_t vram_bytes = (size_t)width * height * eos_display_format_bytes_per_pixel(state->format);
   state->vram = eos_psram_calloc_prefer(1, vram_bytes);
   if (!state->vram) {
     EOS_LOGE("mem_fb: failed to allocate %zu bytes for VRAM", vram_bytes);
@@ -70,7 +72,11 @@ ssize_t driver_display_mem_fb_write(eos_dev_t *dev, int fd, const void *buf, siz
   eos_rect_t draw_rect;
   eos_clip_rect_consume(&state->clip, (uint32_t)state->width, (uint32_t)state->height, &draw_rect);
 
-  size_t bytes_per_pixel = sizeof(uint16_t);
+  size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(state->format);
+  if ((len % bytes_per_pixel) != 0) {
+    errno = EINVAL;
+    return -1;
+  }
   size_t row_bytes = (size_t)draw_rect.w * bytes_per_pixel;
   if (row_bytes == 0) {
     errno = EINVAL;
@@ -87,10 +93,11 @@ ssize_t driver_display_mem_fb_write(eos_dev_t *dev, int fd, const void *buf, siz
   }
 
   const uint8_t *src = (const uint8_t *)buf;
+  uint8_t *vram_base = (uint8_t *)state->vram;
   for (uint32_t r = 0; r < total_rows; r++) {
     uint32_t row_idx = draw_rect.y + r;
     if (row_idx >= (uint32_t)state->height) break;
-    uint16_t *dst_row = state->vram + row_idx * state->width + draw_rect.x;
+    uint8_t *dst_row = vram_base + ((size_t)row_idx * (size_t)state->width + draw_rect.x) * bytes_per_pixel;
     memcpy(dst_row, src + r * row_bytes, row_bytes);
   }
 
@@ -126,6 +133,40 @@ int driver_display_mem_fb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
                              va_arg(args, eos_display_rect_t *));
   case EOS_DISPLAY_IOCTL_FLUSH:
     return 0;
+
+  case EOS_DISPLAY_IOCTL_GET_FORMATS: {
+    uint32_t *fmts = va_arg(args, uint32_t *);
+    if (!fmts) { errno = EINVAL; return -1; }
+    *fmts = EOS_DISPLAY_FMT_MASK_RGB565 | EOS_DISPLAY_FMT_MASK_RGB888 | EOS_DISPLAY_FMT_MASK_GRAY8;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_FORMAT: {
+    uint32_t *fmt = va_arg(args, uint32_t *);
+    if (!fmt) { errno = EINVAL; return -1; }
+    *fmt = state->format;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_FORMAT: {
+    uint32_t fmt = va_arg(args, uint32_t);
+    if (fmt == state->format) return 0;
+    if (fmt != EOS_DISPLAY_FMT_RGB565 && fmt != EOS_DISPLAY_FMT_RGB888 && fmt != EOS_DISPLAY_FMT_GRAY8) {
+      errno = ENOTSUP;
+      return -1;
+    }
+    size_t new_bpp = eos_display_format_bytes_per_pixel(fmt);
+    size_t new_bytes = (size_t)state->width * state->height * new_bpp;
+    void *new_vram = eos_psram_calloc_prefer(1, new_bytes);
+    if (!new_vram) {
+      errno = ENOMEM;
+      return -1;
+    }
+    free(state->vram);
+    state->vram = new_vram;
+    state->format = fmt;
+    return 0;
+  }
   default:
     errno = ENOTTY;
     return -1;

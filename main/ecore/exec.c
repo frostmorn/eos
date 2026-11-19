@@ -1,5 +1,6 @@
 #include "ecore/bin.h"
 #include "ecore/dev.h"
+#include "ecore/display.h"
 #include "ecore/elf.h"
 #include "ecore/ioctl.h"
 #include "ecore/proc.h"
@@ -225,6 +226,18 @@ int execve(const char *path, char *const argv[], char *const envp[]) {
 
   apply_envp(child_pid, envp);
   eos_proc_resolve_display_env(child_pid, bin ? bin->flags : EOS_BIN_FLAG_NONE);
+  if (bin && bin->display_format != 0) {
+    int rc_fmt = eos_display_apply_format_pid(child_pid, bin->display_format);
+    if (rc_fmt != 0) {
+      eos_proc_exit(child_pid, -1);
+      int dummy = 0;
+      waitpid(child_pid, &dummy, WNOHANG);
+      for (int i = 0; i < argc; i++) free(dup_argv[i]);
+      free(dup_argv);
+      free(ex);
+      return -1;
+    }
+  }
 
   pthread_t thread;
   int rc = eos_proc_spawn_thread(child_pid, exec_thread_entry, ex,

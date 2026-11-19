@@ -28,6 +28,10 @@ typedef struct {
   esp_ldo_channel_handle_t ldo_phy;
   int32_t width;
   int32_t height;
+  int32_t native_w;
+  int32_t native_h;
+  int32_t dpi_clk_mhz;
+  uint32_t format;
   uint8_t rotation;
   eos_clip_rect_t clip;
   int32_t bl_pin;
@@ -172,13 +176,15 @@ static bool st7701s_create_bus_and_io(st7701s_state_t *state, int32_t lane_num, 
   return true;
 }
 
-static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t native_w, int32_t native_h, int32_t dpi_clk_mhz, int32_t rst_pin) {
+static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t native_w, int32_t native_h, int32_t dpi_clk_mhz, int32_t rst_pin, uint32_t format) {
+  lcd_color_format_t clr_fmt = (format == EOS_DISPLAY_FMT_RGB888) ? LCD_COLOR_FMT_RGB888 : LCD_COLOR_FMT_RGB565;
+  uint32_t bpp = (format == EOS_DISPLAY_FMT_RGB888) ? 24 : 16;
   esp_lcd_dpi_panel_config_t dpi_config = {
       .virtual_channel = 0,
       .dpi_clk_src = MIPI_DSI_DPI_CLK_SRC_DEFAULT,
       .dpi_clock_freq_mhz = dpi_clk_mhz,
-      .in_color_format = LCD_COLOR_FMT_RGB565,
-      .out_color_format = LCD_COLOR_FMT_RGB565,
+      .in_color_format = clr_fmt,
+      .out_color_format = clr_fmt,
       .num_fbs = 1,
       .video_timing = {
           .h_size = native_w,
@@ -212,7 +218,7 @@ static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t
   esp_lcd_panel_dev_config_t panel_cfg = {
       .reset_gpio_num = rst_pin,
       .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
-      .bits_per_pixel = 16,
+      .bits_per_pixel = bpp,
       .vendor_config = &vendor_config,
   };
 
@@ -249,6 +255,10 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
   state->rst_pin = rst_pin;
   state->width = native_w;
   state->height = native_h;
+  state->native_w = native_w;
+  state->native_h = native_h;
+  state->dpi_clk_mhz = dpi_clk_mhz;
+  state->format = EOS_DISPLAY_FMT_RGB565;
   state->rotation = rotation;
 
   // Claim GPIOs
@@ -298,7 +308,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
     return false;
   }
 
-  if (!st7701s_create_panel(dev, state, native_w, native_h, dpi_clk_mhz, rst_pin)) {
+  if (!st7701s_create_panel(dev, state, native_w, native_h, dpi_clk_mhz, rst_pin, state->format)) {
     esp_lcd_panel_io_del(state->io);
     esp_lcd_del_dsi_bus(state->dsi_bus);
     if (state->ldo_phy)
@@ -356,13 +366,19 @@ ssize_t driver_display_st7701s_write(eos_dev_t *dev, int fd, const void *buf, si
   eos_rect_t r;
   eos_clip_rect_consume(&state->clip, (uint32_t)state->width, (uint32_t)state->height, &r);
 
-  uint32_t total_rows = eos_rect_calc_rows(len, r.w, sizeof(uint16_t), r.h);
+  size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(state->format);
+  if ((len % bytes_per_pixel) != 0) {
+    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    errno = EINVAL;
+    return -1;
+  }
+  uint32_t total_rows = eos_rect_calc_rows(len, r.w, bytes_per_pixel, r.h);
   if (total_rows == 0) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
     errno = EINVAL;
     return -1;
   }
-  size_t row_bytes = (size_t)r.w * sizeof(uint16_t);
+  size_t row_bytes = (size_t)r.w * bytes_per_pixel;
 
   if (esp_lcd_panel_draw_bitmap(state->panel, r.x, r.y, r.x + r.w, r.y + total_rows, buf) != ESP_OK) {
     if (state->lock) xSemaphoreGiveRecursive(state->lock);
@@ -419,6 +435,48 @@ int driver_display_st7701s_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) 
       xSemaphoreGiveRecursive(st->lock);
     }
     return 0;
+
+  case EOS_DISPLAY_IOCTL_GET_FORMATS: {
+    uint32_t *fmts = va_arg(args, uint32_t *);
+    if (!fmts) { errno = EINVAL; return -1; }
+    *fmts = EOS_DISPLAY_FMT_MASK_RGB565 | EOS_DISPLAY_FMT_MASK_RGB888;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_FORMAT: {
+    uint32_t *fmt = va_arg(args, uint32_t *);
+    if (!fmt) { errno = EINVAL; return -1; }
+    *fmt = st->format;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_FORMAT: {
+    uint32_t fmt = va_arg(args, uint32_t);
+    if (fmt == st->format) return 0;
+    if (fmt != EOS_DISPLAY_FMT_RGB565 && fmt != EOS_DISPLAY_FMT_RGB888) {
+      errno = ENOTSUP;
+      return -1;
+    }
+    if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+    if (st->panel) {
+      esp_lcd_panel_disp_on_off(st->panel, false);
+      esp_lcd_panel_del(st->panel);
+      st->panel = NULL;
+    }
+    if (!st7701s_create_panel(dev, st, st->native_w, st->native_h, st->dpi_clk_mhz, st->rst_pin, fmt)) {
+      if (st->lock) xSemaphoreGiveRecursive(st->lock);
+      errno = EIO;
+      return -1;
+    }
+    esp_lcd_panel_reset(st->panel);
+    vTaskDelay(pdMS_TO_TICKS(120));
+    esp_lcd_panel_init(st->panel);
+    esp_lcd_panel_disp_on_off(st->panel, true);
+    st->format = fmt;
+    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    EOS_LOGI("st7701s: color format switched to %s", (fmt == EOS_DISPLAY_FMT_RGB888) ? "RGB888" : "RGB565");
+    return 0;
+  }
 
   default:
     errno = ENOTTY;

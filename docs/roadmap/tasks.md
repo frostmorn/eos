@@ -16,7 +16,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
 | Done | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
 | Done | F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
-| Pending | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
+| Done | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
 | Done | F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
 | Pending | F07 | TTY layer (termios, echo, line discipline) | Terminal | L | F04 | 2 |
 | Partial | F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
@@ -35,7 +35,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
 | Pending | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
 | Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
-| Pending | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
+| Done | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
 | Pending | T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
 | Pending | T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
 | Pending | T05 | libcurl compatibility layer | Network libs | L | F03 | 5 |
@@ -117,7 +117,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F05 — Manifest v2 and ABI versioning policy
+### F05 — Manifest v2 and ABI versioning policy [DONE]
 `Size: S (design) · Depends: –`
 
 **Why:** `eos_bin_t` will be extended by T14 (display format) and reused by T08 (manifest inside an ELF). Changing it twice breaks 45+ binaries twice.
@@ -380,7 +380,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** `echo`/ioctl dims the backlight on Lilka and the P4 board; two channels at different frequencies conflict cleanly; detach releases the timer.
 
-#### T14 — Display colour mode
+#### T14 — Display colour mode [DONE]
 `Size: M · Depends: F05, F03, T10 · Orig #14`
 
 **Scope**

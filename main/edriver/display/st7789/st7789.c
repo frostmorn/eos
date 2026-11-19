@@ -205,7 +205,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
 ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   (void)fd;
-  if (!dev || !dev->state || !buf || len == 0) {
+  if (!dev || !dev->state || !buf || len == 0 || (len % sizeof(uint16_t)) != 0) {
     errno = EINVAL;
     return -1;
   }
@@ -301,6 +301,27 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   case EOS_DISPLAY_IOCTL_UNLOCK:
     if (st->lock) xSemaphoreGiveRecursive(st->lock);
     return 0;
+
+  case EOS_DISPLAY_IOCTL_GET_FORMATS: {
+    uint32_t *fmts = va_arg(args, uint32_t *);
+    if (!fmts) { errno = EINVAL; return -1; }
+    *fmts = EOS_DISPLAY_FMT_MASK_RGB565;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_FORMAT: {
+    uint32_t *fmt = va_arg(args, uint32_t *);
+    if (!fmt) { errno = EINVAL; return -1; }
+    *fmt = EOS_DISPLAY_FMT_RGB565;
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_FORMAT: {
+    uint32_t fmt = va_arg(args, uint32_t);
+    if (fmt == EOS_DISPLAY_FMT_RGB565) return 0;
+    errno = ENOTSUP;
+    return -1;
+  }
 
   default:
     errno = ENOTTY;

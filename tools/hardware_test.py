@@ -1344,6 +1344,26 @@ class EOSTestHarness:
             self.check(suite, f"Cycle {cycle}: /proc/devices verifies active device tree",
                        "cat /proc/devices", r"bus/root")
 
+    def test_disp_format(self):
+        suite = "disp_format"
+        print(f"\n{Colors.BOLD}=== Display Color Format & Manifest v2 Tests (T14/F05) ==={Colors.RESET}")
+        self.check(suite, "binfs exposes Manifest v2 for test_disp_format", "ls -l /bin/test_disp_format", r"test_disp_format", wait=2.0)
+        self.check(suite, "Display format self-test passes", "test_disp_format", r"Display Format Self-Test:\s+\d+\s+passed,\s+0\s+failed", wait=4.0)
+        self.check(suite, "Format query on /dev/fb0", "test_disp_format /dev/fb0", r"Supported formats mask:\s+0x[0-9a-fA-F]+", wait=3.0)
+        self.check(suite, "Default format on /dev/fb0 is RGB565", "test_disp_format /dev/fb0", r"Current format:\s+1", wait=3.0)
+
+        devices_out = self.run_cmd("cat /proc/devices", wait=2.0)
+        if "vfb0" in devices_out:
+            self.check(suite, "Compositor /dev/vfb0 forwards format query", "test_disp_format /dev/vfb0", r"Display Format Self-Test:\s+\d+\s+passed,\s+0\s+failed", wait=4.0)
+
+        has_rgb888 = "st7701s" in devices_out
+        if has_rgb888:
+            self.check(suite, "Manifest RGB888 app runs with active format 3", "test_disp_rgb888", r"running with active format 3", wait=3.0)
+            self.check(suite, "Display restored to RGB565 after test_disp_rgb888 exit", "test_disp_format /dev/fb0", r"Current format:\s+1", wait=3.0)
+        else:
+            self.check(suite, "Unsupported RGB888 rejected gracefully", "test_disp_rgb888", r"(not supported|failed|running with active format 1|^$)", wait=3.0)
+            self.check(suite, "Display remains RGB565", "test_disp_format /dev/fb0", r"Current format:\s+1", wait=3.0)
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -1390,6 +1410,7 @@ SUITE_REGISTRY = {
     "pratt": {"name": "Shell & Pratt Parser Tests", "tag": "qemu", "func": lambda h: h.test_pratt_parser()},
     "devctl": {"name": "Device Control (devctl) Tests", "tag": "qemu", "func": lambda h: h.test_devctl()},
     "fs": {"name": "Filesystem Registry & Mount Lifecycle Tests", "tag": "qemu", "func": lambda h: h.test_fs()},
+    "disp_format": {"name": "Display Color Format & Manifest v2 Tests", "tag": "qemu", "func": lambda h: h.test_disp_format()},
     "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},

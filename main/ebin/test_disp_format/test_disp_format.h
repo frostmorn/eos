@@ -1,0 +1,10 @@
+#pragma once
+///////////////////////////////////////////////////////
+// EOS Project header file
+// Display Format Test Utility (T14)
+///////////////////////////////////////////////////////
+
+#include <stdint.h>
+
+#define TEST_DISP_FMT_SUCCESS 0
+#define TEST_DISP_FMT_FAILURE 1

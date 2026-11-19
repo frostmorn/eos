@@ -75,6 +75,38 @@
 
 typedef eos_rect_t eos_display_rect_t;
 
+// Display color formats (T14)
+typedef enum {
+  EOS_DISPLAY_FMT_UNSPECIFIED = 0,
+  EOS_DISPLAY_FMT_RGB565      = 1,
+  EOS_DISPLAY_FMT_RGB666      = 2,
+  EOS_DISPLAY_FMT_RGB888      = 3,
+  EOS_DISPLAY_FMT_GRAY8       = 4,
+  EOS_DISPLAY_FMT_MONO1       = 5,
+} eos_display_format_t;
+
+#define EOS_DISPLAY_FMT_BIT(fmt)        (1U << (fmt))
+#define EOS_DISPLAY_FMT_MASK_RGB565     EOS_DISPLAY_FMT_BIT(EOS_DISPLAY_FMT_RGB565)
+#define EOS_DISPLAY_FMT_MASK_RGB666     EOS_DISPLAY_FMT_BIT(EOS_DISPLAY_FMT_RGB666)
+#define EOS_DISPLAY_FMT_MASK_RGB888     EOS_DISPLAY_FMT_BIT(EOS_DISPLAY_FMT_RGB888)
+#define EOS_DISPLAY_FMT_MASK_GRAY8      EOS_DISPLAY_FMT_BIT(EOS_DISPLAY_FMT_GRAY8)
+#define EOS_DISPLAY_FMT_MASK_MONO1      EOS_DISPLAY_FMT_BIT(EOS_DISPLAY_FMT_MONO1)
+
+static inline size_t eos_display_format_bytes_per_pixel(uint32_t fmt) {
+  switch (fmt) {
+  case EOS_DISPLAY_FMT_GRAY8:
+  case EOS_DISPLAY_FMT_MONO1:
+    return 1;
+  case EOS_DISPLAY_FMT_RGB565:
+    return 2;
+  case EOS_DISPLAY_FMT_RGB666:
+  case EOS_DISPLAY_FMT_RGB888:
+    return 3;
+  default:
+    return 2;
+  }
+}
+
 // Display surface roles
 #define EOS_DISPLAY_ROLE_MAIN       0
 #define EOS_DISPLAY_ROLE_FULL       1
@@ -284,6 +316,9 @@ typedef enum {
   EOS_DISPLAY_IOCTL_FLUSH,      // no args (flush immediate / commit)
   EOS_DISPLAY_IOCTL_LOCK,       // no args (lock display panel mutual exclusion)
   EOS_DISPLAY_IOCTL_UNLOCK,     // no args (unlock display panel mutual exclusion)
+  EOS_DISPLAY_IOCTL_GET_FORMATS,// uint32_t *formats_bitmask
+  EOS_DISPLAY_IOCTL_GET_FORMAT, // uint32_t *current_format
+  EOS_DISPLAY_IOCTL_SET_FORMAT, // uint32_t format or const uint32_t *format
 
   //=====================================================
   // edriver/storage

@@ -53,6 +53,7 @@ typedef struct {
   int touch_fd;
   uint32_t width;
   uint32_t height;
+  uint32_t format;
   uint32_t partial_lines;
   size_t partial_buf_size;
   size_t full_buf_size;

@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ecore/display.h"
 #include "efs/binfs/binfs.h"
 #include "ecore/elf.h"
 #include "efs/pipefs/pipefs.h"
@@ -1132,6 +1133,14 @@ static int exec_single_stage_spawn(eos_stage_exec_t *stg) {
   stg->sid = parent_sid;
   if (spid > 0 && !stg->is_builtin) {
     eos_proc_resolve_display_env(spid, stg->manifest.flags);
+    if (stg->manifest.display_format != 0) {
+      if (eos_display_apply_format_pid(spid, stg->manifest.display_format) != 0) {
+        eos_proc_exit(spid, -1);
+        int dummy = 0;
+        waitpid(spid, &dummy, WNOHANG);
+        return -1;
+      }
+    }
   }
 
   pthread_t thread;
@@ -1173,6 +1182,12 @@ static int exec_single_stage_direct(eos_stage_exec_t *stg) {
     if (cur_fb) saved_fb = strdup(cur_fb);
     if (!stg->is_builtin) {
       eos_proc_resolve_display_env(proc->pid, stg->manifest.flags);
+      if (stg->manifest.display_format != 0) {
+        if (eos_display_apply_format_pid(proc->pid, stg->manifest.display_format) != 0) {
+          if (saved_fb) free(saved_fb);
+          return -1;
+        }
+      }
     }
   }
 
@@ -1237,6 +1252,9 @@ static int exec_pipeline(size_t stage_count, eos_stage_exec_t *exec_stages, bool
     exec_stages[i].sid = parent_sid;
     if (spid > 0 && !exec_stages[i].is_builtin) {
       eos_proc_resolve_display_env(spid, exec_stages[i].manifest.flags);
+      if (exec_stages[i].manifest.display_format != 0) {
+        (void)eos_display_apply_format_pid(spid, exec_stages[i].manifest.display_format);
+      }
     }
   }
 
@@ -1368,6 +1386,9 @@ static void spawn_bg_node(eos_ast_node_t *sub_node) {
   eos_bin_t bin_m;
   if (load_bin_manifest(pname, &bin_m) == 0) {
     eos_proc_resolve_display_env(spid, bin_m.flags);
+    if (bin_m.display_format != 0) {
+      (void)eos_display_apply_format_pid(spid, bin_m.display_format);
+    }
   }
   bool prev_h = eos_proc_heap_tracking_disable();
   bg_wrapper_t *bg = (bg_wrapper_t *)eos_psram_malloc_prefer(sizeof(bg_wrapper_t));

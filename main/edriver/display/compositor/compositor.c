@@ -147,6 +147,21 @@ int driver_display_compositor_ioctl(eos_dev_t *dev, int fd, int cmd, va_list arg
   case EOS_DISPLAY_IOCTL_UNLOCK:
     return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_UNLOCK);
 
+  case EOS_DISPLAY_IOCTL_GET_FORMATS: {
+    uint32_t *fmts = va_arg(args, uint32_t *);
+    return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_GET_FORMATS, fmts);
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_FORMAT: {
+    uint32_t *fmt = va_arg(args, uint32_t *);
+    return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_GET_FORMAT, fmt);
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_FORMAT: {
+    uint32_t fmt = va_arg(args, uint32_t);
+    return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_SET_FORMAT, fmt);
+  }
+
   default:
     errno = ENOTTY;
     return -1;
