@@ -20,10 +20,14 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | **`procfs`** (Virtual /proc Filesystem) | `qemu` | 24 | **PASS** | **PASS** | **PASS** |
 | **`pratt`** (Shell & Pratt Parser) | `qemu` | 33 | **PASS** | **PASS** | **PASS** |
 | **`devctl`** (Device Control & DevTree) | `qemu` | 63 | **PASS** | **PASS** | **PASS** |
+| **`fs`** (Filesystem Registry & Mount Lifecycle) | `qemu` | 52 | **PASS** | **PASS** | **PASS** |
+| **`disp_format`** (Display Color Format & Manifest v2) | `qemu` | 7 | **PASS** | **PASS** | **PASS** |
+| **`caps`** (Capability Manager & Procfs Registry) | `qemu` | 5 | **PASS** | **PASS** | **PASS** |
 | **`gui`** (GUI Launcher & IPC) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
 | **`emisc`** (Hierarchy & Math Utils) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
 | **`coreutils`** (POSIX Core Utilities) | `qemu` | 46 | **PASS** | **PASS** | **PASS** |
 | **`hash`** (Cryptographic Hashes & Base64) | `qemu` | 26 | **PASS** | **PASS** | **PASS** |
+| **`leaks`** (Cleanup-Hook Registry & Resource Leaks) | `qemu` | 1 | **PASS** | **PASS** | **PASS** |
 | **`wlanctl`** (WLAN Radio & Sniffer) | `hardware-only` | 17 | SKIP | **PASS** | **PASS** |
 | **`netctl`** (Network Management (ip vibe)) | `hardware-only` | 30 | SKIP | **PASS** | **PASS** |
 | **`sdio`** (Generic SDIO Bus & Slot Attachment) | `hardware-only` | 9 | SKIP | SKIP | **PASS** |

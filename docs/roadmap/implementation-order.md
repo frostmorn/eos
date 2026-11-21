@@ -20,7 +20,7 @@ graph TD
   F04[F04 Process table]
   F02[F02 Memory ownership]
   F03[F03 Cleanup hooks]
-  F05[F05 Manifest v2]
+  F05[F05 Manifest & ABI]
   F06[F06 Test + audit infra]
   F08[F08 Typed ioctl]
   F07[F07 TTY layer]

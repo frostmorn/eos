@@ -30,7 +30,20 @@ static eos_disp_state_t s_disp = {
 
 static void eos_display_ensure_lock(void) {
   if (!s_disp.lock) {
-    s_disp.lock = xSemaphoreCreateMutex();
+    s_disp.lock = xSemaphoreCreateRecursiveMutex();
+  }
+}
+
+static inline void eos_disp_lock(void) {
+  eos_display_ensure_lock();
+  if (s_disp.lock) {
+    xSemaphoreTakeRecursive(s_disp.lock, portMAX_DELAY);
+  }
+}
+
+static inline void eos_disp_unlock(void) {
+  if (s_disp.lock) {
+    xSemaphoreGiveRecursive(s_disp.lock);
   }
 }
 
@@ -45,13 +58,7 @@ static const char *eos_display_resolve_path(pid_t pid) {
   return fb;
 }
 
-static void eos_display_format_cleanup_hook(void *arg) {
-  (void)arg;
-  eos_display_ensure_lock();
-  if (s_disp.lock) {
-    xSemaphoreTake(s_disp.lock, portMAX_DELAY);
-  }
-
+static void eos_display_format_cleanup_locked(void) {
   if (s_disp.owner_pid > 0 && s_disp.fb_path[0] != '\0') {
     int fd = open(s_disp.fb_path, O_RDWR);
     if (fd >= 0) {
@@ -64,10 +71,13 @@ static void eos_display_format_cleanup_hook(void *arg) {
     s_disp.active_fmt = s_disp.orig_fmt;
     s_disp.fb_path[0] = '\0';
   }
+}
 
-  if (s_disp.lock) {
-    xSemaphoreGive(s_disp.lock);
-  }
+static void eos_display_format_cleanup_hook(void *arg) {
+  (void)arg;
+  eos_disp_lock();
+  eos_display_format_cleanup_locked();
+  eos_disp_unlock();
 }
 
 int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
@@ -75,16 +85,13 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
     return 0;
   }
 
-  eos_display_ensure_lock();
-  if (s_disp.lock) {
-    xSemaphoreTake(s_disp.lock, portMAX_DELAY);
-  }
+  eos_disp_lock();
 
   const char *fb_path = eos_display_resolve_path(pid);
   int fd = open(fb_path, O_RDWR);
   if (fd < 0) {
     EOS_LOGE("display: cannot open '%s' for format negotiation: %s", fb_path, strerror(errno));
-    if (s_disp.lock) xSemaphoreGive(s_disp.lock);
+    eos_disp_unlock();
     return -1;
   }
 
@@ -95,7 +102,7 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
 
   if (orig_fmt == req_fmt) {
     close(fd);
-    if (s_disp.lock) xSemaphoreGive(s_disp.lock);
+    eos_disp_unlock();
     return 0;
   }
 
@@ -104,7 +111,7 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
     EOS_LOGW("display: '%s' format busy (held by PID %d), rejecting PID %d",
              fb_path, (int)s_disp.owner_pid, (int)pid);
     close(fd);
-    if (s_disp.lock) xSemaphoreGive(s_disp.lock);
+    eos_disp_unlock();
     errno = EBUSY;
     return -1;
   }
@@ -115,7 +122,7 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
     EOS_LOGE("display: format %u not supported by '%s' (supported mask: 0x%08x)",
              (unsigned int)req_fmt, fb_path, (unsigned int)supported);
     close(fd);
-    if (s_disp.lock) xSemaphoreGive(s_disp.lock);
+    eos_disp_unlock();
     errno = ENOTSUP;
     return -1;
   }
@@ -124,7 +131,7 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
     EOS_LOGE("display: failed to set format %u on '%s': %s",
              (unsigned int)req_fmt, fb_path, strerror(errno));
     close(fd);
-    if (s_disp.lock) xSemaphoreGive(s_disp.lock);
+    eos_disp_unlock();
     return -1;
   }
 
@@ -140,25 +147,17 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt) {
   EOS_LOGI("display: PID %d claimed '%s' with format %u (original %u)",
            (int)pid, fb_path, (unsigned int)req_fmt, (unsigned int)orig_fmt);
 
-  if (s_disp.lock) {
-    xSemaphoreGive(s_disp.lock);
-  }
+  eos_disp_unlock();
   return 0;
 }
 
 void eos_display_release_format_pid(pid_t pid) {
-  eos_display_ensure_lock();
-  if (s_disp.lock) {
-    xSemaphoreTake(s_disp.lock, portMAX_DELAY);
-  }
-
+  eos_disp_lock();
   if (s_disp.owner_pid == pid) {
-    eos_display_format_cleanup_hook(NULL);
+    eos_display_format_cleanup_locked();
   }
-
-  if (s_disp.lock) {
-    xSemaphoreGive(s_disp.lock);
-  }
+  eos_disp_unlock();
+  eos_proc_cancel_exit_match(pid, eos_display_format_cleanup_hook, NULL);
 }
 
 uint32_t eos_display_get_active_format(const char *fb_path) {

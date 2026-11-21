@@ -10,13 +10,13 @@ EOS defines binary manifests (`eos_bin_t`) for built-in commands (`ebin`) and dy
 
 The binary manifest is placed in the `.eos_bins` section (for firmware binaries) or embedded inside an ELF binary section (for dynamic binaries).
 
-### Structure Layout (Manifest v2)
+### Structure Layout
 
 ```c
 typedef struct {
   uint32_t magic;          // EOS_BIN_MAGIC (0x0C0A00AC)
   uint32_t struct_size;    // sizeof(eos_bin_t)
-  uint32_t abi_version;    // EOS_BIN_ABI_VERSION (currently 2)
+  uint32_t abi_version;    // EOS_BIN_ABI_VERSION (1)
   uint32_t min_api;        // Minimum required OS API level (0 = any)
   uint32_t display_format; // Requested eos_display_format_t (0 = default/inherit)
   uint32_t caps_required;  // Capability bitmask required by binary
@@ -36,9 +36,10 @@ typedef struct {
 
 ### Compatibility Rules:
 1. **Size-Prefixing (`struct_size`)**: The loader reads `struct_size`. If an older binary with a smaller `struct_size` is executed on a newer kernel, fields beyond `struct_size` default to 0 / neutral.
-2. **ABI Versions**:
-   - `EOS_BIN_ABI_VERSION_1`: Legacy manifest without size/display_format headers.
-   - `EOS_BIN_ABI_VERSION_2`: Explicit versioning with `struct_size`, `abi_version`, `min_api`, `display_format`, `caps_required`, and reserved words.
+2. **ABI Version**:
+   - Manifest ABI is locked to version 1 (`EOS_BIN_ABI_VERSION = 1`).
+   - The manifest header standardizes `struct_size`, `abi_version`, `min_api`, `display_format`, `caps_required`, and reserved words.
+   - Version bumps are not needed at this stage; ABI version increments will only be considered in the future if breaking structural changes are required after a broad application ecosystem is established.
 3. **`EOS_BIN_INITIALIZER`**: Any new field must be initialized with default values in `EOS_BIN_INITIALIZER` so that existing C source manifests continue to compile without modification.
 
 ---

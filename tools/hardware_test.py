@@ -1364,6 +1364,14 @@ class EOSTestHarness:
             self.check(suite, "Unsupported RGB888 rejected gracefully", "test_disp_rgb888", r"(not supported|failed|running with active format 1|^$)", wait=3.0)
             self.check(suite, "Display remains RGB565", "test_disp_format /dev/fb0", r"Current format:\s+1", wait=3.0)
 
+    def test_caps(self):
+        suite = "caps"
+        print(f"\n{Colors.BOLD}=== Capability Manager Tests (T16) ==={Colors.RESET}")
+        self.check(suite, "binfs exposes test_caps", "ls -l /bin/test_caps", r"test_caps", wait=2.0)
+        self.check(suite, "/proc/capabilities exists and has headers", "cat /proc/capabilities", r"TYPE\s+ID\s+OWNER", wait=2.0)
+        self.check(suite, "/proc/capabilities contains system:flash", "cat /proc/capabilities", r"system:flash", wait=2.0)
+        self.check(suite, "Capability manager self-test passes", "test_caps", r"Capability Manager Tests:\s+\d+\s+passed,\s+0\s+failed", wait=4.0)
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -1411,6 +1419,7 @@ SUITE_REGISTRY = {
     "devctl": {"name": "Device Control (devctl) Tests", "tag": "qemu", "func": lambda h: h.test_devctl()},
     "fs": {"name": "Filesystem Registry & Mount Lifecycle Tests", "tag": "qemu", "func": lambda h: h.test_fs()},
     "disp_format": {"name": "Display Color Format & Manifest v2 Tests", "tag": "qemu", "func": lambda h: h.test_disp_format()},
+    "caps": {"name": "Capability Manager Tests", "tag": "qemu", "func": lambda h: h.test_caps()},
     "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},

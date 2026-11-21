@@ -8,31 +8,29 @@
 #include <unistd.h>
 #include <esp_heap_caps.h>
 
+#include "ebin/test_common.h"
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
+#include "emisc/psram_alloc.h"
 
-static uint16_t fire_palette(uint8_t heat) {
-  uint8_t r, g, b;
-
+static void fire_palette_rgb(uint8_t heat, uint8_t *r, uint8_t *g, uint8_t *b) {
   if (heat < 85) {
-    r = heat * 3;
-    g = 0;
-    b = 0;
+    *r = heat * 3;
+    *g = 0;
+    *b = 0;
   } else if (heat < 170) {
-    r = 255;
-    g = (heat - 85) * 3;
-    b = 0;
+    *r = EOS_COLOR_8BIT_MAX;
+    *g = (heat - 85) * 3;
+    *b = 0;
   } else {
-    r = 255;
-    g = 255;
-    b = (heat - 170) * 3;
+    *r = EOS_COLOR_8BIT_MAX;
+    *g = EOS_COLOR_8BIT_MAX;
+    *b = (heat - 170) * 3;
   }
-
-  return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
 }
 
-static void test_doom_fire(int fd) {
+static void test_doom_fire(int fd, uint32_t fmt, int max_frames) {
   int w = 0, h = 0;
   if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_WIDTH, &w) != 0 || w <= 0)
     return;
@@ -40,28 +38,26 @@ static void test_doom_fire(int fd) {
     return;
 
   size_t fire_bytes = (size_t)w * (size_t)h;
-  size_t frame_bytes = fire_bytes * sizeof(uint16_t);
+  size_t bpp = eos_display_format_bytes_per_pixel(fmt);
+  size_t frame_bytes = fire_bytes * bpp;
 
-#ifdef MALLOC_CAP_SPIRAM
-  uint8_t *fire = heap_caps_calloc(w * h, 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  uint16_t *buf = heap_caps_malloc(frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#else
-  uint8_t *fire = NULL;
-  uint16_t *buf = NULL;
-#endif
-  if (!fire)
-    fire = calloc(w * h, 1);
-  if (!buf)
-    buf = malloc(frame_bytes);
+  uint8_t *fire = (uint8_t *)eos_psram_malloc_prefer(fire_bytes);
+  uint8_t *buf = (uint8_t *)eos_psram_malloc_prefer(frame_bytes);
 
-  if (!fire || !buf)
-    goto cleanup;
+  if (!fire || !buf) {
+    free(fire);
+    free(buf);
+    return;
+  }
+
+  memset(fire, 0, fire_bytes);
 
   // ignite bottom
   for (int x = 0; x < w; x++)
-    fire[(h - 1) * w + x] = 255;
+    fire[(h - 1) * w + x] = EOS_COLOR_8BIT_MAX;
 
-  while (1) {
+  int frame = 0;
+  while (max_frames <= 0 || frame < max_frames) {
     // propagate fire upward
     for (int y = 0; y < h - 1; y++) {
       for (int x = 0; x < w; x++) {
@@ -82,45 +78,66 @@ static void test_doom_fire(int fd) {
 
     // keep bottom hot
     for (int x = 0; x < w; x++)
-      fire[(h - 1) * w + x] = 255;
+      fire[(h - 1) * w + x] = EOS_COLOR_8BIT_MAX;
 
-    // convert heat -> RGB565
-    for (int i = 0; i < w * h; i++)
-      buf[i] = fire_palette(fire[i]);
+    // convert heat -> pixel buffer
+    if (fmt == EOS_DISPLAY_FMT_RGB888) {
+      for (int i = 0; i < w * h; i++) {
+        uint8_t r = 0, g = 0, b = 0;
+        fire_palette_rgb(fire[i], &r, &g, &b);
+        buf[i * 3 + 0] = r;
+        buf[i * 3 + 1] = g;
+        buf[i * 3 + 2] = b;
+      }
+    } else {
+      uint16_t *buf16 = (uint16_t *)buf;
+      for (int i = 0; i < w * h; i++) {
+        uint8_t r = 0, g = 0, b = 0;
+        fire_palette_rgb(fire[i], &r, &g, &b);
+        buf16[i] = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+      }
+    }
 
     if (write(fd, buf, frame_bytes) < 0)
       break;
 
+    frame++;
     usleep(30 * EOS_US_PER_MS);
   }
 
-cleanup:
   free(fire);
   free(buf);
 }
 
 static int test_disp_doom_fire_main(int argc, char **argv) {
-  const char *path = argc > 1 ? argv[1] : (getenv("EOS_FB") ? getenv("EOS_FB") : (access("/dev/vfb0", F_OK) == 0 ? "/dev/vfb0" : "/dev/fb0"));
+  eos_disp_test_args_t args = eos_disp_parse_args(argc, argv);
+  int max_frames = 0;
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
+      max_frames = atoi(argv[++i]);
+    }
+  }
 
-  int fd = open(path, O_RDWR);
+  uint32_t active_fmt = EOS_DISPLAY_FMT_RGB565;
+  uint32_t orig_fmt = EOS_DISPLAY_FMT_RGB565;
+  int fd = eos_disp_open_and_configure(&args, &active_fmt, &orig_fmt);
   if (fd < 0) {
     perror("test_disp_doom_fire: open display device");
     return -1;
   }
 
-  test_doom_fire(fd);
+  test_doom_fire(fd, active_fmt, max_frames);
 
-  close(fd);
-
+  eos_disp_close_and_restore(fd, orig_fmt, active_fmt);
   return 0;
 }
 
 EOS_BIN_ATTR eos_bin_t test_disp_doom_fire = {
     EOS_BIN_INITIALIZER,
-    .flags = EOS_BIN_FLAG_GUI,
+    .flags = EOS_BIN_FLAG_GUI | EOS_BIN_FLAG_ROLE_FULL,
     .stack_size = EOS_BIN_DEFAULT_STACK_SIZE,
     .filename = "test_disp_doom_fire",
     .name = "Doom Fire",
     .group = "Tests",
-    .description = "Classic Doom procedural fire animation simulating framebuffer particle updates",
+    .description = "Classic Doom procedural fire animation in RGB565 / RGB888",
     .entry_point = test_disp_doom_fire_main};

@@ -323,6 +323,7 @@ static void test_loadavg_and_uptime(test_ctx_t *ctx) {
     int pid = 0;
     int parsed = sscanf(buf, "%lf %lf %lf 1/%u %d", &l1, &l5, &l15, &total, &pid);
     report_test(ctx, "procfs: /proc/loadavg format matches Linux", parsed >= 3 && l1 >= 0.0);
+    report_test(ctx, "procfs: load average on idle system is sane (< 1.5)", l1 < 1.5);
   }
 
   f = fopen("/proc/stat", "r");
@@ -350,6 +351,77 @@ static void test_loadavg_and_uptime(test_ctx_t *ctx) {
   pid_t reaped = waitpid(-1, &status, 0);
   report_test(ctx, "uptime: waitpid reaped uptime process", reaped > 0);
   report_test(ctx, "uptime: uptime process exited with 0", WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+
+typedef struct {
+  volatile bool running;
+} load_stress_ctx_t;
+
+static void *load_stress_worker(void *arg) {
+  load_stress_ctx_t *sctx = (load_stress_ctx_t *)arg;
+  volatile uint32_t val = 0;
+  while (sctx->running) {
+    val = (val * 1664525u + 1013904223u) ^ (val >> 1);
+  }
+  (void)val;
+  return NULL;
+}
+
+static void test_loadavg_stress_and_decay(test_ctx_t *ctx) {
+  printf("--- Testing load average under CPU burn and subsequent decay ---\n");
+  double l1_baseline = -1.0;
+  FILE *f = fopen("/proc/loadavg", "r");
+  if (f) {
+    (void)fscanf(f, "%lf", &l1_baseline);
+    fclose(f);
+  }
+  report_test(ctx, "loadavg: initial baseline load is sane (< 1.0)", l1_baseline >= 0.0 && l1_baseline < 1.0);
+
+  load_stress_ctx_t sctx = {.running = true};
+  pthread_t threads[2];
+  int spawned = 0;
+  for (int i = 0; i < 2; i++) {
+    if (pthread_create(&threads[i], NULL, load_stress_worker, &sctx) == 0) {
+      spawned++;
+    }
+  }
+  report_test(ctx, "loadavg: spawned dual-core CPU burn worker threads", spawned == 2);
+
+  // Burn CPU at maximum capacity across all cores
+  for (int i = 0; i < 3; i++) {
+    usleep(EOS_US_PER_SEC);
+  }
+
+  // Stop the CPU burn workers and join threads
+  sctx.running = false;
+  for (int i = 0; i < spawned; i++) {
+    pthread_join(threads[i], NULL);
+  }
+
+  // Sample load after stopping burn to capture peak
+  usleep(EOS_US_PER_SEC);
+  double l1_peak = l1_baseline;
+  FILE *fp = fopen("/proc/loadavg", "r");
+  if (fp) {
+    (void)fscanf(fp, "%lf", &l1_peak);
+    fclose(fp);
+  }
+
+  report_test(ctx, "loadavg: load rises under max multi-thread CPU burn", l1_peak > l1_baseline);
+
+  // Allow system to idle and verify that load average drops
+  double l1_decay = l1_peak;
+  for (int i = 0; i < 5; i++) {
+    usleep(EOS_US_PER_SEC);
+    FILE *fp_dec = fopen("/proc/loadavg", "r");
+    if (fp_dec) {
+      (void)fscanf(fp_dec, "%lf", &l1_decay);
+      fclose(fp_dec);
+    }
+  }
+
+  report_test(ctx, "loadavg: load drops after removing CPU burn", l1_decay < l1_peak);
+  report_test(ctx, "loadavg: post-decay load remains in reasonable range (< 1.0)", l1_decay < 1.0);
 }
 
 static void *cross_thread_free_worker(void *arg) {
@@ -1032,6 +1104,7 @@ int test_proc_main(int argc, char **argv) {
   test_procfs_process_hierarchy(&ctx);
   test_ps_utility(&ctx);
   test_loadavg_and_uptime(&ctx);
+  test_loadavg_stress_and_decay(&ctx);
   test_memory_ownership_f02(&ctx);
   test_bg_process_and_threads(&ctx);
   test_vfs_concurrency(&ctx);

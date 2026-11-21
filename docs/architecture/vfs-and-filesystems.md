@@ -20,7 +20,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ---
 
-## 2. tmpfs (Root Filesystem, `ecore/tmpfs.c`)
+## 2. tmpfs (Root Filesystem, `efs/tmpfs/tmpfs.c`)
 
 `tmpfs` serves as the primary root filesystem (`/`), providing hierarchical in-memory file, directory, symlink, and hard link creation, modification, and deletion.
 
@@ -32,7 +32,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ---
 
-## 3. devfs (Device Filesystem, `ecore/devfs.c`)
+## 3. devfs (Device Filesystem, `efs/devfs/devfs.c`)
 
 `devfs` dynamically maps hierarchical device tree nodes and system pseudo-devices to pathnames under `/dev/`:
 
@@ -45,7 +45,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ---
 
-## 4. binfs (Binary Filesystem, `ecore/binfs.c`)
+## 4. binfs (Binary Filesystem, `efs/binfs/binfs.c`)
 
 `binfs` provides an in-memory execution environment for statically linked system commands, native applications, and embedded scripts residing under `/bin/`:
 
@@ -56,7 +56,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ---
 
-## 5. pipefs (Pipe Filesystem & Ring Buffers, `ecore/pipefs.c`)
+## 5. pipefs (Pipe Filesystem & Ring Buffers, `efs/pipefs/pipefs.c`)
 
 `pipefs` exposes anonymous pipes (`pipe(int pipefd[2])`) and named pipe nodes under `/proc/pipes/`:
 
@@ -66,7 +66,7 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 
 ---
 
-## 6. procfs (Process & Diagnostic Filesystem, `ecore/procfs.c`)
+## 6. procfs (Process & Diagnostic Filesystem, `efs/procfs/procfs.c`)
 
 `procfs` mounts at `/proc` to expose live process status, thread execution contexts, and device tree diagnostics as virtual files:
 
@@ -75,14 +75,21 @@ Unlike vanilla ESP-IDF, which restricts mounting to root sub-paths (`/spiffs`, `
 | `/proc/scopes` | Enumerates available driver scopes (`bus`, `display`, `storage`, `net`, `input`, `sound`, `power`). | `devctl scopes` |
 | `/proc/drivers` | Lists registered drivers, their scopes, and priorities. | `devctl drivers` |
 | `/proc/devices` | Lists active devices attached to the device tree, showing parent-child links. | `devctl devices` |
+| `/proc/capabilities` | Lists hardware resource claims (LEDC timers, channels, GDMA channels, peripherals). | System diagnostics, `caps` |
 | `/proc/mounts` | Displays active VFS filesystem mount points. | User scripts, `mount` |
 | `/proc/meminfo` | Displays runtime DRAM, PSRAM, and DMA memory capacity and free heap. | `cat`, `lvgl_sysmon` |
 | `/proc/uptime` | Displays system uptime in seconds and jiffies. | `uptime` |
+| `/proc/loadavg` | Exponentially damped 1, 5, and 15-minute load averages and running task counts computed via delta idle-time accounting. | `uptime`, `statusbar`, `lvgl_sysmon` |
 | `/proc/cpuinfo` | Displays CPU architecture, core count, frequency, and revision. | System diagnostics |
 | `/proc/stat` | Displays CPU time counters (`user_us`, `sys_us`, `wait_us`) and system IRQ accounting. | `time`, `top`, `ps` |
 | `/proc/<pid>/` | Per-process virtual directories (`status`, `stat`, `cmdline`, `cwd`, `environ`, `fd/`). | `ps`, process monitors |
 
 Dynamic diagnostic buffers inside `procfs` allocate from external PSRAM via `kvec_psram_t` / `MALLOC_CAP_SPIRAM`, ensuring diagnostic queries never consume scarce internal SRAM.
+
+### 6.1 Multi-Core Load Average Calculation
+`/proc/loadavg` adheres to Linux load average semantics ($1$, $5$, and $15$-minute exponentially decaying moving averages) while adapting to FreeRTOS dual-core scheduling:
+- **Idle Delta Runtime:** Rather than treating FreeRTOS `IDLE0` and `IDLE1` tasks as active processes (which previously caused 2-core CPUs to incorrectly climb to load average $3.0+$), `update_loadavg()` calculates the non-idle active execution time across CPU cores using the cumulative microsecond run-time counters of idle tasks (`ulRunTimeCounter`).
+- **Core Saturation & Run Queue Backlog:** The instantaneous active load is calculated as $\text{busy\_cores} = \frac{\Delta T_{\text{capacity}} - \Delta T_{\text{idle}}}{\Delta t_{\text{elapsed}}}$. Only when CPU cores are saturated ($\text{busy\_cores} \ge N_{\text{cores}} - 0.1$) is additional ready task backlog added to the queue length, ensuring idle tasks never inflate load while genuine CPU spikes and queue saturation are accurately captured.
 
 ---
 

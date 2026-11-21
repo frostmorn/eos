@@ -1,4 +1,5 @@
 #include "dev.h"
+#include "ecore/capsmgr.h"
 #include "ecore/driver.h"
 #include "ecore/proc.h"
 #include <errno.h>
@@ -332,6 +333,9 @@ static int eos_dev_detach_internal(eos_dev_t *dev) {
 
   // Shutdown device driver
   eos_drv_shutdown(dev);
+
+  // Release all capabilities claimed by this device
+  eos_cap_release_all_dev(dev);
 
   // Unlink dev from the tree. Any child that refused detach_req above
   // (still attached at this point) gets reparented onto dev->parent

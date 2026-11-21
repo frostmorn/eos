@@ -1199,6 +1199,9 @@ static int exec_single_stage_direct(eos_stage_exec_t *stg) {
   }
 
   if (proc) {
+    if (!stg->is_builtin && stg->manifest.display_format != 0) {
+      eos_display_release_format_pid(proc->pid);
+    }
     if (saved_fb) {
       eos_proc_setenv_pid(proc->pid, "EOS_FB", saved_fb, 1);
       free(saved_fb);

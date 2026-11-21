@@ -16,7 +16,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | F02 | Memory ownership by process, not thread | Foundation | M | F04 | 0 |
 | Done | F03 | Cleanup-hook registry (sockets, timers, tasks, ISRs) | Foundation | M | F04 | 0 |
 | Done | F04 | Process table (pid / ppid / pgid / wait) | Foundation | M | – | 0 |
-| Done | F05 | Manifest v2 and ABI versioning policy | Foundation | S | – | 0 |
+| Done | F05 | Manifest and ABI versioning policy | Foundation | S | – | 0 |
 | Done | F06 | Test and audit infrastructure | Foundation | S–M | – | 0 |
 | Pending | F07 | TTY layer (termios, echo, line discipline) | Terminal | L | F04 | 2 |
 | Partial | F08 | Typed ioctl convention and lint | Foundation | S | F06 | 0 |
@@ -33,7 +33,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T22 | NVS filesystem and Preferences API | Filesystems | M | T07 | 3 |
 | Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
 | Done | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
-| Pending | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
+| Done | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
 | Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
 | Done | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
 | Pending | T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
@@ -117,7 +117,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ---
 
-### F05 — Manifest v2 and ABI versioning policy [DONE]
+### F05 — Manifest and ABI versioning policy [DONE]
 `Size: S (design) · Depends: –`
 
 **Why:** `eos_bin_t` will be extended by T14 (display format) and reused by T08 (manifest inside an ELF). Changing it twice breaks 45+ binaries twice.
@@ -127,7 +127,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - `EOS_BIN_INITIALIZER` fills the new fields so existing binaries keep compiling.
 - Write an ABI policy: what counts as a breaking change, how the version number moves, how the export table (T08) is versioned.
 
-**Acceptance:** all binaries build unchanged. `binfs` still returns the manifest on `read()`; `launcher` handles v1 and v2 structures.
+**Acceptance:** all binaries build unchanged. `binfs` still returns the manifest on `read()`; `launcher` handles manifest structures.
 
 ---
 
@@ -352,7 +352,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 ### Epic: Drivers
 
-#### T16 — Capability manager: PWM, DMA, interrupts
+#### T16 — Capability manager: PWM, DMA, interrupts [DONE]
 `Size: M · Depends: – · Orig #16`
 
 **Reframing "load already claimed ones by default":** build it as three layers.

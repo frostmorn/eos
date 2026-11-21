@@ -79,7 +79,7 @@ To maximize internal SRAM availability for DMA and hardware peripherals, all non
 2. **Kernel Process Context (`s_kernel_proc`):** Removed static 1,744 B `.bss` allocation; allocated on-demand in PSRAM heap during `eos_proc_init()` in [proc.c](../../main/ecore/proc.c).
 3. **FAPI Scratch Buffer (`eos_fapi_buffer`):** Removed static 4,096 B `.bss` path normalization buffer; dynamically allocated in PSRAM with heap tracking disabled in [fapi.c](../../main/ecore/fapi.c).
 4. **File Descriptor Map (`proc->fd_map`):** Migrated from fixed array `int fd_map[FD_SETSIZE]` (256 B per process) to dynamic `kvec_psram_t(int) fd_map` with inline helpers `eos_proc_fd_map_get` and `eos_proc_fd_map_set`.
-5. **Procfs Enumeration Buffers:** Replaced static `pid_t pids[EOS_MAX_PROCS]` and `int fds[EOS_MAX_PROCS]` in `procfs_dir_t` with `kvec_psram_t(pid_t)` and `kvec_psram_t(int)` in [procfs.c](../../main/ecore/procfs.c).
+5. **Procfs Enumeration Buffers:** Replaced static `pid_t pids[EOS_MAX_PROCS]` and `int fds[EOS_MAX_PROCS]` in `procfs_dir_t` with `kvec_psram_t(pid_t)` and `kvec_psram_t(int)` in [procfs.c](../../main/efs/procfs/procfs.c).
 6. **Task Flags Tracking (`s_task_flags`):** Dynamic internal SRAM allocation via `heap_caps_calloc(..., MALLOC_CAP_INTERNAL)` for spinlock-guarded fast-path access.
 
 ### B. Network & TCB Shrinkification

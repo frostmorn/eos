@@ -30,17 +30,15 @@
 #define EOS_BIN_LARGE_STACK_SIZE   12288U
 #define EOS_BIN_GUI_STACK_SIZE     16384U
 
-#define EOS_BIN_ABI_VERSION_1 1U
-#define EOS_BIN_ABI_VERSION_2 2U
-#define EOS_BIN_ABI_VERSION   EOS_BIN_ABI_VERSION_2
+#define EOS_BIN_ABI_VERSION 1U
 
-// Bin manifest v2
+// Bin manifest
 typedef struct {
   // Magic number which allows us to distinguish eos bin from something else
   uint32_t magic;
   // Size of the manifest structure for forward/backward compatibility
   uint32_t struct_size;
-  // ABI version of manifest (EOS_BIN_ABI_VERSION_1, EOS_BIN_ABI_VERSION_2)
+  // ABI version of manifest (EOS_BIN_ABI_VERSION)
   uint32_t abi_version;
   // Minimum OS API level required by binary (0 = any)
   uint32_t min_api;

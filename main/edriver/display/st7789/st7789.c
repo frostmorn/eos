@@ -205,7 +205,8 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
 
 ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
   (void)fd;
-  if (!dev || !dev->state || !buf || len == 0 || (len % sizeof(uint16_t)) != 0) {
+  size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(EOS_DISPLAY_FMT_RGB565);
+  if (!dev || !dev->state || !buf || len == 0 || (len % bytes_per_pixel) != 0) {
     errno = EINVAL;
     return -1;
   }
@@ -214,7 +215,7 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
   eos_rect_t r;
   eos_clip_rect_consume(&st->clip, (uint32_t)st->width, (uint32_t)st->height, &r);
 
-  uint32_t total_rows = eos_rect_calc_rows(len, r.w, sizeof(uint16_t), r.h);
+  uint32_t total_rows = eos_rect_calc_rows(len, r.w, bytes_per_pixel, r.h);
   if (total_rows == 0) {
     errno = EINVAL;
     return -1;
@@ -223,7 +224,7 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
   if (st->lock) {
     xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
   }
-  size_t row_bytes = (size_t)r.w * sizeof(uint16_t);
+  size_t row_bytes = (size_t)r.w * bytes_per_pixel;
 
   // Transfer in horizontal strips using persistent ping-pong DMA buffers.
   // Because esp_lcd_panel_draw_bitmap sends CASET/RASET synchronously via

@@ -1,4 +1,5 @@
 #include "procfs.h"
+#include "ecore/capsmgr.h"
 #include "ecore/dev.h"
 #include "ecore/driver.h"
 #include "ecore/log.h"
@@ -89,6 +90,7 @@ static const char *s_proc_entries[] = {
     "uptime",
     "loadavg",
     "stat",
+    "capabilities",
     "pipes",
     "self",
 };
@@ -450,31 +452,92 @@ static double s_load1 = 0.0;
 static double s_load5 = 0.0;
 static double s_load15 = 0.0;
 static uint64_t s_last_load_sample = 0;
+static uint32_t s_last_idle_time[EOS_PROCFS_MAX_CORES] = {0};
+static bool s_idle_initialized = false;
 
 static void update_loadavg(void) {
   uint64_t now = esp_timer_get_time();
   if (s_last_load_sample == 0) {
     s_last_load_sample = now;
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+    UBaseType_t task_count = uxTaskGetNumberOfTasks();
+    TaskStatus_t *status_arr = eos_psram_calloc_prefer(task_count, sizeof(TaskStatus_t));
+    if (status_arr) {
+      UBaseType_t actual = uxTaskGetSystemState(status_arr, task_count, NULL);
+      for (UBaseType_t i = 0; i < actual; i++) {
+        if (strncmp(status_arr[i].pcTaskName, "IDLE", 4) == 0) {
+          int core = 0;
+          if (status_arr[i].pcTaskName[4] >= '0' && status_arr[i].pcTaskName[4] <= '9') {
+            core = status_arr[i].pcTaskName[4] - '0';
+          }
+          if (core >= 0 && core < EOS_PROCFS_MAX_CORES) {
+            s_last_idle_time[core] = status_arr[i].ulRunTimeCounter;
+          }
+        }
+      }
+      s_idle_initialized = true;
+      eos_psram_free(status_arr);
+    }
+#endif
     return;
   }
+
   uint64_t elapsed_us = now - s_last_load_sample;
   if (elapsed_us < EOS_US_PER_SEC) return; // Sample at most once every second
   s_last_load_sample = now;
 
+  // If interval is excessively long (> 1 hour), re-baseline to avoid multi-rollover ambiguity
+  if (elapsed_us > 3600ULL * EOS_US_PER_SEC) {
+    s_idle_initialized = false;
+  }
+
   double dt = (double)elapsed_us / (double)EOS_US_PER_SEC;
-  double active = 1.0;
+  double active = 0.0;
+
 #if CONFIG_FREERTOS_USE_TRACE_FACILITY
   UBaseType_t task_count = uxTaskGetNumberOfTasks();
   TaskStatus_t *status_arr = eos_psram_calloc_prefer(task_count, sizeof(TaskStatus_t));
   if (status_arr) {
     UBaseType_t actual = uxTaskGetSystemState(status_arr, task_count, NULL);
-    active = 0.0;
+    uint32_t total_idle_delta = 0;
+    uint32_t ready_count = 0;
+
     for (UBaseType_t i = 0; i < actual; i++) {
-      if (status_arr[i].eCurrentState == eRunning || status_arr[i].eCurrentState == eReady) {
-        active += 1.0;
+      if (strncmp(status_arr[i].pcTaskName, "IDLE", 4) == 0) {
+        int core = 0;
+        if (status_arr[i].pcTaskName[4] >= '0' && status_arr[i].pcTaskName[4] <= '9') {
+          core = status_arr[i].pcTaskName[4] - '0';
+        }
+        if (core >= 0 && core < EOS_PROCFS_MAX_CORES) {
+          uint32_t cur = status_arr[i].ulRunTimeCounter;
+          if (s_idle_initialized) {
+            uint32_t delta = cur - s_last_idle_time[core];
+            total_idle_delta += delta;
+          }
+          s_last_idle_time[core] = cur;
+        }
+      } else if (status_arr[i].eCurrentState == eReady) {
+        ready_count++;
       }
     }
+    s_idle_initialized = true;
     eos_psram_free(status_arr);
+
+#if CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS
+    uint64_t total_capacity_us = (uint64_t)EOS_PROCFS_MAX_CORES * elapsed_us;
+    uint64_t busy_us = 0;
+    if (total_idle_delta < total_capacity_us) {
+      busy_us = total_capacity_us - total_idle_delta;
+    }
+    double busy_cores = (double)busy_us / (double)elapsed_us;
+    if (busy_cores >= (double)EOS_PROCFS_MAX_CORES - 0.1) {
+      active = busy_cores + (double)ready_count;
+    } else {
+      active = busy_cores;
+    }
+#else
+    active = (double)ready_count;
+#endif
   }
 #endif
 
@@ -798,6 +861,7 @@ static char *procfs_gen_static_file(const char *p) {
   if (strcmp(p, "uptime") == 0) return procfs_gen_uptime();
   if (strcmp(p, "loadavg") == 0) return procfs_gen_loadavg();
   if (strcmp(p, "stat") == 0) return procfs_gen_stat();
+  if (strcmp(p, "capabilities") == 0) return eos_capsmgr_dump_proc();
   return NULL;
 }
 

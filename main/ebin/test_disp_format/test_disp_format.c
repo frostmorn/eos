@@ -102,7 +102,7 @@ int test_disp_format_main(int argc, char **argv) {
 
 EOS_BIN_ATTR eos_bin_t test_disp_format_bin = {
     EOS_BIN_INITIALIZER,
-    .flags = EOS_BIN_FLAG_GUI,
+    .flags = EOS_BIN_FLAG_GUI | EOS_BIN_FLAG_ROLE_FULL,
     .stack_size = EOS_BIN_DEFAULT_STACK_SIZE,
     .filename = "test_disp_format",
     .name = "Display Format Test",
