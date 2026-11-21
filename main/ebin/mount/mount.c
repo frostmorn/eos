@@ -1,12 +1,18 @@
 #include "mount.h"
 #include "ecore/bin.h"
 #include "ecore/fs.h"
+#include "emisc/fancymacro.h"
+#include "emisc/strlimits.h"
 
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static int mount_print_table(void) {
   FILE *f = fopen("/proc/mounts", "r");
@@ -22,8 +28,84 @@ static int mount_print_table(void) {
   return 0;
 }
 
+static bool is_partition_mounted(const char *dev_path) {
+  FILE *f = fopen("/proc/mounts", "r");
+  if (!f) return false;
+  char line[MOUNT_LINE_BUF_SIZE];
+  bool mounted = false;
+  size_t dlen = strlen(dev_path);
+  while (fgets(line, sizeof(line), f)) {
+    if (strncmp(line, dev_path, dlen) == 0 && line[dlen] == ' ') {
+      mounted = true;
+      break;
+    }
+  }
+  fclose(f);
+  return mounted;
+}
+
+static int mount_all_partitions(void) {
+  DIR *d = opendir("/dev");
+  if (!d) return 0;
+
+  char part_names[MOUNT_MAX_PARTS][EOS_XSMALL_STR_LEN];
+  int part_count = 0;
+
+  struct dirent *de;
+  while ((de = readdir(d)) != NULL) {
+    if (strncmp(de->d_name, "part", 4) == 0 && isdigit((unsigned char)de->d_name[4])) {
+      if (part_count < MOUNT_MAX_PARTS) {
+        strlcpy(part_names[part_count++], de->d_name, sizeof(part_names[0]));
+      }
+    }
+  }
+  closedir(d);
+
+  if (part_count == 0) {
+    return 0;
+  }
+
+  for (int i = 0; i < part_count - 1; i++) {
+    for (int j = 0; j < part_count - i - 1; j++) {
+      if (strcmp(part_names[j], part_names[j + 1]) > 0) {
+        char tmp[EOS_XSMALL_STR_LEN];
+        memcpy(tmp, part_names[j], sizeof(tmp));
+        memcpy(part_names[j], part_names[j + 1], sizeof(tmp));
+        memcpy(part_names[j + 1], tmp, sizeof(tmp));
+      }
+    }
+  }
+
+  (void)mkdir("/mnt", EOS_DEFAULT_DIR_MODE);
+
+  for (int i = 0; i < part_count; i++) {
+    char dev_path[EOS_SMALL_STR_LEN];
+    snprintf(dev_path, sizeof(dev_path), "/dev/%s", part_names[i]);
+
+    if (is_partition_mounted(dev_path)) {
+      continue;
+    }
+
+    char target[EOS_SMALL_STR_LEN];
+    if (strcmp(part_names[i], "part0") == 0) {
+      strlcpy(target, "/mnt/sd", sizeof(target));
+    } else {
+      snprintf(target, sizeof(target), "/mnt/sd%d", i);
+    }
+
+    (void)mkdir(target, EOS_DEFAULT_DIR_MODE);
+
+    int rc = eos_mount(dev_path, target, "auto", EOS_MOUNT_FLAG_NONE, NULL);
+    if (rc == 0) {
+      printf("mount: mounted %s at %s\n", dev_path, target);
+    }
+  }
+
+  return 0;
+}
+
 static void mount_print_usage(void) {
-  printf("Usage: mount [-t <type>] [-o <options>] [<source> <target>]\n");
+  printf("Usage: mount [-a|--all] [-t <type>] [-o <options>] [<source> <target>]\n");
 }
 
 int mount_main(int argc, char **argv) {
@@ -41,6 +123,9 @@ int mount_main(int argc, char **argv) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       mount_print_usage();
       return 0;
+    }
+    if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--all") == 0) {
+      return mount_all_partitions();
     }
     if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
       fstype = argv[++i];

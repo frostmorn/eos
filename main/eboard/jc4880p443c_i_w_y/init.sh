@@ -8,6 +8,7 @@ devctl attach bus gpio root
 devctl attach input gpio_keyboard gpio --pin b=35 --cfg mode=1,pull=1
 devctl attach bus sdio root --pin clk=43,cmd=44,d0=39,d1=40,d2=41,d3=42 --cfg slot=0,width=4,freq_khz=40000,ldo_chan=4
 devctl attach storage sd sdio0 --cfg clock_speed_hz=40000000
+mount -a
 devctl attach bus sdio root --pin clk=18,cmd=19,d0=14,d1=15,d2=16,d3=17 --cfg slot=1,width=4,freq_khz=40000,lazy_slot=1
 devctl attach net wifi sdio1 --pin chip_pu=54
 devctl attach net sta wifi0

@@ -235,9 +235,12 @@ int driver_storage_sd_write(eos_dev_t *dev, int fd, const void *buf, size_t len)
 
   size_t cntsectors = len / sector_size;
 
-  if (ESP_OK !=
-      sdmmc_write_sectors(&state->card, buf, state->offset, cntsectors))
+  esp_err_t err = sdmmc_write_sectors(&state->card, buf, state->offset, cntsectors);
+  if (err != ESP_OK) {
+    EOS_LOGE("sd_write: sdmmc_write_sectors failed: %s (0x%x) offset=%lld, cnt=%zu",
+             esp_err_to_name(err), err, (long long)state->offset, cntsectors);
     return -1;
+  }
 
   return len;
 }

@@ -224,6 +224,8 @@ class EOSTestHarness:
             jtag_reset(self.port)
             if not self._wait_and_reopen(12.0):
                 return
+            time.sleep(0.5)
+            self._drain_serial(0.5)
             deadline = time.time() + 15.0
             buf = b""
             last_ping = 0.0
@@ -699,6 +701,8 @@ class EOSTestHarness:
             print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All {len(devices)} devices verified active in /proc/devices after lifecycle cycle")
             self.passed += 1
             self.suite_counts[suite]["pass"] += 1
+            # Re-establish boot automounts for re-attached block devices
+            self.run_cmd("mount -a")
         else:
             self.failed += 1
             self.suite_counts[suite]["fail"] += 1
@@ -733,6 +737,7 @@ class EOSTestHarness:
                    r"(No such device|mount:)")
         self.check(suite, "Reject mount of block fs without block device", "mount -t fat none /tmp/mnt_bad_fat",
                    r"(Invalid argument|mount:)")
+        self.check(suite, "mount -a automount completes cleanly", "mount -a", r"^$|mount: mounted")
         self.check(suite, "Reject unmounting root filesystem", "umount /",
                    r"Device or resource busy")
         self.check(suite, "Reject unmounting non-existent mount or device", "umount /nonexistent_path_xyz",
@@ -792,40 +797,40 @@ class EOSTestHarness:
         has_part = "part0" in devices_out or "storage/partition" in devices_out
         if has_part:
             mounts_out = self.run_cmd("cat /proc/mounts")
-            part_already_mounted = "/dev/part0" in mounts_out or "/sdcard" in mounts_out
+            part_already_mounted = "/dev/part0" in mounts_out or "/mnt/sd" in mounts_out
 
             if part_already_mounted:
                 self.check(suite, "Unmount existing partition by device (/dev/part0)", "umount /dev/part0",
                            r"^$|(unmounted part0|fat: unmounted)")
                 self.check(suite, "Verify partition removed from mounts", "cat /proc/mounts",
                            r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
-                self.check(suite, "Remount partition to /sdcard", "mount /dev/part0 /sdcard",
-                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Remount partition to /mnt/sd", "mount /dev/part0 /mnt/sd",
+                           r"^$|(mounted part0 at /mnt/sd|fat: mounted)")
                 self.check(suite, "Verify partition active in mounts", "cat /proc/mounts",
-                           r"/dev/part0\s+/sdcard\s+(vfat|fat)")
-                self.check(suite, "Reject duplicate mount of already mounted partition device", "mount /dev/part0 /sdcard",
+                           r"/dev/part0\s+/mnt/sd\s+(vfat|fat)")
+                self.check(suite, "Reject duplicate mount of already mounted partition device", "mount /dev/part0 /mnt/sd",
                            r"Device or resource busy")
-                self.check(suite, "Unmount partition by target path (/sdcard)", "umount /sdcard",
+                self.check(suite, "Unmount partition by target path (/mnt/sd)", "umount /mnt/sd",
                            r"^$|(unmounted part0|fat: unmounted)")
                 self.check(suite, "Verify partition removed after target unmount", "cat /proc/mounts",
                            r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
                 # Restore original mounted state
-                self.check(suite, "Restore partition mount at /sdcard", "mount /dev/part0 /sdcard",
-                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Restore partition mount at /mnt/sd", "mount /dev/part0 /mnt/sd",
+                           r"^$|(mounted part0 at /mnt/sd|fat: mounted)")
             else:
-                self.check(suite, "Mount partition /dev/part0 at /sdcard", "mount /dev/part0 /sdcard",
-                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
+                self.check(suite, "Mount partition /dev/part0 at /mnt/sd", "mount /dev/part0 /mnt/sd",
+                           r"^$|(mounted part0 at /mnt/sd|fat: mounted)")
                 self.check(suite, "Verify partition active in mounts", "cat /proc/mounts",
-                           r"/dev/part0\s+/sdcard\s+(vfat|fat)")
-                self.check(suite, "Reject duplicate mount of partition device", "mount /dev/part0 /sdcard",
+                           r"/dev/part0\s+/mnt/sd\s+(vfat|fat)")
+                self.check(suite, "Reject duplicate mount of partition device", "mount /dev/part0 /mnt/sd",
                            r"Device or resource busy")
                 self.check(suite, "Unmount partition by device path (/dev/part0)", "umount /dev/part0",
                            r"^$|(unmounted part0|fat: unmounted)")
                 self.check(suite, "Verify partition unmounted by device path", "cat /proc/mounts",
                            r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
-                self.check(suite, "Remount partition /dev/part0 at /sdcard", "mount /dev/part0 /sdcard",
-                           r"^$|(mounted part0 at /sdcard|fat: mounted)")
-                self.check(suite, "Unmount partition by target path (/sdcard)", "umount /sdcard",
+                self.check(suite, "Remount partition /dev/part0 at /mnt/sd", "mount /dev/part0 /mnt/sd",
+                           r"^$|(mounted part0 at /mnt/sd|fat: mounted)")
+                self.check(suite, "Unmount partition by target path (/mnt/sd)", "umount /mnt/sd",
                            r"^$|(unmounted part0|fat: unmounted)")
                 self.check(suite, "Verify partition unmounted by target path", "cat /proc/mounts",
                            r"none\s+/\s+tmpfs", not_pattern=r"/dev/part0")
@@ -1019,6 +1024,9 @@ class EOSTestHarness:
     def test_gui_launcher(self):
         suite = "gui"
         print(f"\n{Colors.BOLD}=== 6. GUI Launcher & lvgl_net IPC Tests ==={Colors.RESET}")
+        self.check(suite, "lvgl_fm help banner", "lvgl_fm -h",
+                   r"Usage:\s+lvgl_fm", wait=2.0)
+
         if "launcher.active" not in self.run_cmd("ls /tmp"):
             self.run_cmd("launcher &")
             for _ in range(20):
@@ -1035,6 +1043,10 @@ class EOSTestHarness:
         self.check(suite, "Launch test_lvgl automated test through launcher IPC",
                    "launcher test_lvgl -a -t 500 &",
                    r"(requesting launch of 'test_lvgl'|Starting 'test_lvgl')", wait=2.5)
+        time.sleep(1.0)
+        self.check(suite, "Launch lvgl_fm automated test through launcher IPC",
+                   "launcher lvgl_fm -a -t 500 &",
+                   r"(requesting launch of 'lvgl_fm'|Starting 'lvgl_fm')", wait=2.5)
         time.sleep(1.0)
         self.check(suite, "lvgl_term help banner", "lvgl_term -h",
                    r"Usage:\s+<cmd> \| lvgl_term", wait=2.0)
@@ -1293,6 +1305,7 @@ class EOSTestHarness:
                 continue
 
             time.sleep(0.5)
+            self._drain_serial(0.5)
 
             ready_marker = b"__EOS_READY__"
             deadline = time.time() + 25.0
@@ -1318,8 +1331,8 @@ class EOSTestHarness:
                         self._open_serial()
                     except Exception:
                         pass
-                # Wait until boot completes (~2.5s) before sending ping so we do not flood init.sh
-                if len(buf) > 3000 or (now - (deadline - 25.0) > 2.5):
+                # Wait until boot completes (~4.5s) before sending ping so we do not flood init.sh
+                if (now - (deadline - 25.0) > 4.5):
                     if now - last_ping > 0.5:
                         try:
                             self.ser.write(b"\r\necho __EOS_READY__\r\n")
@@ -1330,7 +1343,7 @@ class EOSTestHarness:
 
             if not prompt_found:
                 print(f"  [{Colors.RED}FAIL{Colors.RESET}] Cycle {cycle}: Prompt ready canary timed out after reset (buf len={len(buf)})")
-                print(buf.decode("utf-8", errors="replace")[-1500:])
+                print(buf.decode("utf-8", errors="replace")[-4000:])
                 self.failed += 1
                 self.suite_counts[suite]["fail"] += 1
                 continue

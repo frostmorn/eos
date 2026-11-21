@@ -66,9 +66,15 @@ bool driver_storage_partition_init(eos_dev_t *dev) {
   return true;
 }
 
+bool driver_storage_partition_fat_umount(eos_dev_t *dev);
+
 void driver_storage_partition_shutdown(eos_dev_t *dev) {
-  if (dev->state) {
-    free(dev->state);
+  partition_state_t *state = dev->state;
+  if (state) {
+    if (state->fat_mounted) {
+      driver_storage_partition_fat_umount(dev);
+    }
+    free(state);
     dev->state = NULL;
   }
 }
@@ -108,7 +114,7 @@ int driver_storage_partition_write(eos_dev_t *dev, int fd, const void *buf, size
   if (!state || !dev->parent)
     return -1;
 
-  if (state->fat_mounted) {
+  if (state->fat_mounted && fd != EOS_DRV_FD) {
     errno = EBUSY;
     return -1;
   }
@@ -214,11 +220,17 @@ static DRESULT eos_ff_disk_write(BYTE pdrv, const BYTE *buff, uint32_t sector,
   partition_state_t *state = dev->state;
   size_t len = (size_t)count * state->sector_size;
 
-  if (eos_dev_lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector)
+  if (eos_dev_lseek(dev, EOS_DRV_FD, (off_t)sector, SEEK_SET) != (off_t)sector) {
+    EOS_LOGE("ff_disk_write: lseek failed on sector %lu", (unsigned long)sector);
     return RES_ERROR;
+  }
 
-  return (eos_dev_write(dev, EOS_DRV_FD, (void *)buff, len) == (int)len) ? RES_OK
-                                                                  : RES_ERROR;
+  int wret = eos_dev_write(dev, EOS_DRV_FD, (void *)buff, len);
+  if (wret != (int)len) {
+    EOS_LOGE("ff_disk_write: write failed, ret=%d, expected=%zu", wret, len);
+    return RES_ERROR;
+  }
+  return RES_OK;
 }
 
 static DRESULT eos_ff_disk_ioctl(BYTE pdrv, BYTE cmd, void *buff) {
@@ -273,8 +285,9 @@ bool driver_storage_partition_fat_mount(eos_dev_t *dev, const char *path) {
   };
 
   FATFS *fs;
-  if (esp_vfs_fat_register(&conf, &fs) != ESP_OK) {
-    EOS_LOGE("partition: esp_vfs_fat_register failed for %s", path);
+  esp_err_t err = esp_vfs_fat_register(&conf, &fs);
+  if (err != ESP_OK) {
+    EOS_LOGE("partition: esp_vfs_fat_register failed for %s (%s)", path, esp_err_to_name(err));
     goto fail;
   }
 
@@ -355,10 +368,10 @@ bool driver_storage_partition_umount(eos_dev_t *dev) {
 }
 
 bool driver_storage_partition_mount(eos_dev_t *dev, const char *path) {
-  EOS_LOGI("Trying to mount %s to %s\n", dev->name, path);
   partition_state_t *state = dev->state;
+  EOS_LOGI("Trying to mount %s to %s", dev->name, path);
 
-  if (eos_diskpart_is_fat(state->info->part_type))
+  if (state && state->info && eos_diskpart_is_fat(state->info->part_type))
     return driver_storage_partition_fat_mount(dev, path);
 
   return false;

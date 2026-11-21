@@ -1,6 +1,7 @@
 #include "dev.h"
 #include "ecore/capsmgr.h"
 #include "ecore/driver.h"
+#include "ecore/fs.h"
 #include "ecore/proc.h"
 #include <errno.h>
 #include <stdlib.h>
@@ -329,6 +330,13 @@ static int eos_dev_detach_internal(eos_dev_t *dev) {
     eos_dev_t *next = child->next;
     eos_dev_detach_internal(child);
     child = next;
+  }
+
+  // Unmount any filesystem mounted from this device node
+  if (dev->name[0] != '\0') {
+    char dev_node[EOS_LINE_64_LEN];
+    snprintf(dev_node, sizeof(dev_node), "/dev/%s", dev->name);
+    (void)eos_umount(dev_node, 0);
   }
 
   // Shutdown device driver

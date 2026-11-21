@@ -42,6 +42,10 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T11 | libmicrohttpd compatibility layer | Network libs | L | F03 | 5 |
 | Pending | T04 | SDL / SDL2 completion | Apps | XL | T02, T10, T14 | 5 |
 | Done | T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
+| Pending | T23 | SD/SDIO partition automounting on boot (/mnt/sd) | Filesystems | S | T07 | 3 |
+| Pending | T24 | lvgl_fm — Graphical File Manager | Apps | M | T07, T10 | 3 |
+| Pending | T25 | eos_open — File opener and MIME dispatcher | Userland | S | T08 | 3 |
+| Pending | T26 | lvgl_edit — Graphical text editor and viewer | Apps | M | T10 | 3 |
 
 ---
 
@@ -328,6 +332,18 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Why early:** T21 and T08 verify hashes.
 
+#### T23 — SD/SDIO partition automounting on boot (/mnt/sd)
+`Size: S · Depends: T07`
+
+**Scope**
+- Implement `mount -a` in `main/ebin/mount/mount.c` to iterate over detected partition block devices in `/dev/part*`.
+- Auto-detect filesystem types via `eos_fs_detect_type()` and mount partitions to `/mnt/sd` (and `/mnt/sd1`, etc.).
+- SD partition is mounted exclusively at `/mnt/sd` (no legacy `/sdcard`).
+- Add `mount -a` to declarative board startup scripts (`main/eboard/*/init.sh`).
+- Silent pass if no SD card or partitions exist at boot (exit code 0).
+
+**Acceptance:** `mount -a` automounts partition 0 to `/mnt/sd` on boot; partition is accessible at `/mnt/sd`; boot succeeds without errors when no card is inserted; automated tests pass in `tools/hardware_test.py`.
+
 ---
 
 ### Epic: Security
@@ -500,3 +516,46 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - **Export Table:** Registered symbol resolution in `main/ecore/elf_symbols.c` mapping standard C runtime, POSIX wrappers, FreeRTOS primitives, and EOS syscalls without exposing internal memory allocators.
 - **Path and Shell Integration:** Resolves direct paths (`/path/to/binary`), relative cwd paths (`./prog`), and `$PATH` directory search from `system()` and `ush`.
 - **Verification:** Tested via `test_elf_loader` ebin (`main/ebin/test_elf_loader/test_elf_loader.c`) with relocations, parameter passing, relative path execution, and $PATH search.
+
+#### T24 — lvgl_fm — Graphical File Manager
+`Size: M · Depends: T07, T10, T23`
+
+**Scope**
+- Graphical directory and file browser in `main/ebin/lvgl_fm/`.
+- File list with type indicators (`[DIR]`, `[APP]`, `[FILE]`) and formatted file sizes.
+- Full file management actions:
+  - **Open**: Invokes `eos_open <path>`.
+  - **Edit**: Launches `lvgl_edit <path>`.
+  - **Delete / Remove**: Confirmation dialog, unlinks file or removes directory.
+  - **New Folder (mkdir)**: Directory creation dialog.
+- Dual controls: Touch interface and Keypad (`KEY_UP`, `KEY_DOWN`, `KEY_A`, `KEY_B`, `KEY_DEL`).
+- Toolbar bindings in `/tmp/tbar`.
+- Headless test mode with `--auto` and `-t <timeout_ms>` adhering to Rule A2 and `AGENTS.md §5`.
+
+**Acceptance:** Launches from launcher; browses directories; creates folders; deletes files; opens files; passes `--auto` test headlessly.
+
+#### T25 — eos_open — File opener and MIME dispatcher
+`Size: S · Depends: T08`
+
+**Scope**
+- Standard file opening utility in `main/ebin/eos_open/` (analogous to `xdg-open`).
+- Dispatching rules based on executable status and file extensions:
+  - Executables / binaries in `/bin/` or `access(X_OK)`: `system(path)`.
+  - `.elf` binaries: loaded and executed via ELF loader / runner.
+  - `.sh` scripts: executed via `ush <path>`.
+  - Text and config files (`.txt`, `.c`, `.h`, `.json`, `.md`, `.log`, `.conf`): launched in `lvgl_edit <path>`.
+  - Fallback to text viewer / `cat`.
+
+**Acceptance:** `eos_open <file>` launches correct viewer/interpreter; returns exit status of launched target.
+
+#### T26 — lvgl_edit — Graphical text editor and viewer
+`Size: M · Depends: T10`
+
+**Scope**
+- Standalone graphical text viewer and editor in `main/ebin/lvgl_edit/`.
+- Scrollable text display with monospace font.
+- View and edit modes with on-screen virtual keypad or hardware keyboard input.
+- Save modifications back to file path via VFS.
+- Headless smoke test mode (`--auto`, `-t <timeout_ms>`).
+
+**Acceptance:** Opens and renders text files; supports editing and saving; exits cleanly without leaks.
