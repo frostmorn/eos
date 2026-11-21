@@ -9,9 +9,23 @@
 
 int test_sdl_input_main(int argc, char **argv) {
   int max_events = 20;
-  if (argc > 1) {
-    max_events = atoi(argv[1]);
+  int timeout_ms = -1;
+  bool auto_mode = false;
+
+  for (int i = 1; i < argc; i++) {
+    if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--auto") == 0) {
+      auto_mode = true;
+      if (timeout_ms < 0) {
+        timeout_ms = EOS_MS_PER_SEC;
+      }
+      max_events = 1;
+    } else if ((strcmp(argv[i], "-t") == 0 || strcmp(argv[i], "--timeout") == 0) && i + 1 < argc) {
+      timeout_ms = atoi(argv[++i]);
+    } else if (argv[i][0] != '-') {
+      max_events = atoi(argv[i]);
+    }
   }
+  (void)auto_mode;
 
   printf("Initializing SDL for input testing...\n");
   if (SDL_Init(SDL_INIT_VIDEO) < 0) {
@@ -26,12 +40,22 @@ int test_sdl_input_main(int argc, char **argv) {
     return -1;
   }
 
-  printf("SDL input test started. Press keys (ESC to exit, max %d events)...\n", max_events);
+  printf("SDL input test started. Press keys (ESC to exit, max %d events, timeout %d ms)...\n",
+         max_events, timeout_ms);
 
   int count = 0;
   SDL_Event e;
+  uint32_t start_ms = SDL_GetTicks();
 
   while (count < max_events) {
+    if (timeout_ms >= 0) {
+      uint32_t elapsed = SDL_GetTicks() - start_ms;
+      if (elapsed >= (uint32_t)timeout_ms) {
+        printf("Timeout (%d ms) reached.\n", timeout_ms);
+        break;
+      }
+    }
+
     if (SDL_PollEvent(&e)) {
       count++;
       if (e.type == SDL_KEYDOWN) {

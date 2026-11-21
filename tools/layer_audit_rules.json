@@ -1,13 +1,18 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "version": "1.2",
+  "version": "1.3",
   "rules": [
     {
       "id": "rtos_in_ebin",
       "name": "RTOS primitives in user-space (ebin)",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\bvTaskDelay\\b",
         "\\bxTaskCreate\\b",
@@ -25,8 +30,13 @@
       "id": "esp_idf_hardware_in_ecore",
       "name": "ESP-IDF vendor hardware/bus APIs in core kernel (ecore)",
       "type": "forbidden_patterns",
-      "paths": ["main/ecore"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ecore"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\besp_wifi_\\w+\\b",
         "\\bgpio_set_level\\b",
@@ -59,8 +69,13 @@
       "id": "esp_idf_hardware_in_ebin",
       "name": "ESP-IDF vendor hardware/bus APIs in user-space (ebin)",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\besp_wifi_\\w+\\b",
         "\\bgpio_set_level\\b",
@@ -93,8 +108,13 @@
       "id": "raw_printf_in_drivers",
       "name": "Raw printf/puts in drivers (edriver)",
       "type": "forbidden_patterns",
-      "paths": ["main/edriver"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/edriver"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\b(printf|puts)\\s*\\("
       ],
@@ -104,8 +124,13 @@
       "id": "no_direct_http_client",
       "name": "Direct ESP-IDF HTTP client in user-space (ebin)",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\besp_http_client\\.h\\b",
         "\\besp_tls\\.h\\b"
@@ -116,8 +141,13 @@
       "id": "no_direct_http_server",
       "name": "Direct ESP-IDF HTTP server in user-space (ebin)",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\besp_http_server\\.h\\b"
       ],
@@ -127,8 +157,14 @@
       "id": "no_direct_nvs",
       "name": "Direct NVS access outside NVS driver",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin", "main/ecore"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin",
+        "main/ecore"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\bnvs_open\\b",
         "\\bnvs_set_\\w+\\b",
@@ -140,8 +176,13 @@
       "id": "no_direct_idf_vfs",
       "name": "Direct IDF VFS registration in apps",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "\\besp_vfs_register\\b",
         "\\besp_vfs_unregister\\b"
@@ -152,21 +193,27 @@
       "id": "no_globals_in_ebin",
       "name": "Unauthorized global/static variables in main/ebin",
       "type": "no_globals",
-      "paths": ["main/ebin"],
+      "paths": [
+        "main/ebin"
+      ],
       "rationale": "Applications must not use unmanaged file-scope state to ensure clean restarts and thread safety."
     },
     {
       "id": "no_globals_in_edriver",
       "name": "Unauthorized global/static variables in main/edriver",
       "type": "no_globals",
-      "paths": ["main/edriver"],
+      "paths": [
+        "main/edriver"
+      ],
       "rationale": "Drivers must store instance state in eos_drv_t / device contexts."
     },
     {
       "id": "mandatory_include_guards",
       "name": "Missing #pragma once in header files",
       "type": "mandatory_include_guards",
-      "paths": ["main"],
+      "paths": [
+        "main"
+      ],
       "rationale": "All header files must contain #pragma once or include guards."
     },
     {
@@ -174,9 +221,18 @@
       "name": "Linker scripts (.ld, .lf) outside main/eld",
       "type": "allowed_directory",
       "base_dir": ".",
-      "file_extensions": [".ld", ".lf"],
+      "file_extensions": [
+        ".ld",
+        ".lf"
+      ],
       "allowed_prefix": "main/eld",
-      "exclude_dirs": [".git", "build", "components", "managed_components", ".board_cache"],
+      "exclude_dirs": [
+        ".git",
+        "build",
+        "components",
+        "managed_components",
+        ".board_cache"
+      ],
       "rationale": "All custom linker scripts must reside in main/eld."
     },
     {
@@ -185,14 +241,22 @@
       "type": "wrapper_definitions",
       "base_dir": "main",
       "allowed_prefix": "main/ewrap",
-      "exclude_dirs": [".git", "build", "components", "managed_components", ".board_cache"],
+      "exclude_dirs": [
+        ".git",
+        "build",
+        "components",
+        "managed_components",
+        ".board_cache"
+      ],
       "rationale": "Linker wrap definitions must reside exclusively in main/ewrap."
     },
     {
       "id": "driver_enable_guards",
       "name": "Driver source files (.c) missing EOS_DRV_*_ENABLED guard",
       "type": "driver_enable_guards",
-      "paths": ["main/edriver"],
+      "paths": [
+        "main/edriver"
+      ],
       "pattern": "#\\s*if(def)?\\s+EOS_DRV_\\w+_ENABLED",
       "rationale": "Every driver C source file must be guarded by its Kconfig enable macro."
     },
@@ -200,7 +264,9 @@
       "id": "driver_structures",
       "name": "Driver directories missing eos_drv_t / eos_driver_t definition",
       "type": "driver_structure",
-      "paths": ["main/edriver"],
+      "paths": [
+        "main/edriver"
+      ],
       "pattern": "\\b(eos_drv_t|eos_driver_t)\\b\\s+\\w+\\s*=",
       "rationale": "Every driver module folder must declare a driver structure and no loose files may exist."
     },
@@ -208,8 +274,13 @@
       "id": "no_io_under_vfs_lock",
       "name": "No blocking/real I/O calls while eos_vfs_* lock held",
       "type": "no_calls_between_patterns",
-      "paths": ["main"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "lock_patterns": [
         "\\beos_vfs_alloc_lock\\s*\\(",
         "\\beos_vfs_table_lock\\s*\\(",
@@ -244,8 +315,14 @@
       "id": "no_adhoc_path_tokenizing",
       "name": "Ad-hoc PATH tokenization outside ecore",
       "type": "forbidden_patterns",
-      "paths": ["main/ebin", "main/ewrap"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ebin",
+        "main/ewrap"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "patterns": [
         "strtok_r\\s*\\([^,]+,\\s*\":\""
       ],
@@ -255,8 +332,12 @@
       "id": "no_excessive_strcmp_chains_in_ebin",
       "name": "Monolithic subcommand strcmp chains in ebin",
       "type": "max_pattern_occurrences_per_file",
-      "paths": ["main/ebin"],
-      "file_extensions": [".c"],
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
       "pattern": "\\bif\\s*\\(\\s*strcmp\\s*\\(\\s*(cmd|argv\\[1\\])\\s*,",
       "max_count": 5,
       "rationale": "CLI tools with more than 5 subcommands must use a const subcommand dispatch table and centralize device open/close."
@@ -265,8 +346,18 @@
       "id": "function_complexity_limits",
       "name": "Function length, cyclomatic complexity, and nesting limits",
       "type": "function_metrics",
-      "paths": ["main/ecore", "main/efs", "main/edriver", "main/ewrap", "main/ebin", "main/emisc"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ecore",
+        "main/efs",
+        "main/edriver",
+        "main/ewrap",
+        "main/ebin",
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "max_lines": 120,
       "max_branches": 30,
       "max_indent_levels": 5,
@@ -276,8 +367,18 @@
       "id": "no_cross_file_code_clones",
       "name": "Copy-pasted code blocks across files",
       "type": "duplicate_blocks",
-      "paths": ["main/ecore", "main/efs", "main/edriver", "main/ewrap", "main/ebin", "main/emisc"],
-      "file_extensions": [".c", ".h"],
+      "paths": [
+        "main/ecore",
+        "main/efs",
+        "main/edriver",
+        "main/ewrap",
+        "main/ebin",
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
       "min_normalized_lines": 8,
       "rationale": "Shared logic of 8+ normalized lines across multiple files must be extracted into main/emisc/ or a shared subsystem helper."
     },
@@ -285,21 +386,62 @@
       "id": "macros_in_headers_only",
       "name": "Macro constants (#define) inside .c files instead of .h headers",
       "type": "macros_in_headers_only",
-      "paths": ["main/ecore", "main/efs", "main/edriver", "main/ewrap", "main/ebin", "main/emisc", "main/eos.c"],
-      "file_extensions": [".c"],
-      "allowed_macros": ["_GNU_SOURCE", "_POSIX_C_SOURCE", "_DEFAULT_SOURCE"],
+      "paths": [
+        "main/ecore",
+        "main/efs",
+        "main/edriver",
+        "main/ewrap",
+        "main/ebin",
+        "main/emisc",
+        "main/eos.c"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "allowed_macros": [
+        "_GNU_SOURCE",
+        "_POSIX_C_SOURCE",
+        "_DEFAULT_SOURCE"
+      ],
       "rationale": "All #define constants and configuration macros must reside in .h header files so hardware dimensions, limits, and protocol constants have a single source of truth."
     },
     {
       "id": "no_magic_constants_in_code",
       "name": "Hardcoded magic numbers and raw array bounds in .c files",
       "type": "magic_numbers",
-      "paths": ["main/ecore", "main/efs", "main/edriver", "main/ewrap", "main/ebin", "main/emisc", "main/eos.c"],
-      "file_extensions": [".c"],
+      "paths": [
+        "main/ecore",
+        "main/efs",
+        "main/edriver",
+        "main/ewrap",
+        "main/ebin",
+        "main/emisc",
+        "main/eos.c"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
       "ignore_const_tables": true,
       "flag_array_declarators": true,
-      "allowed_array_sizes": [1, 2, 3, 4, 6],
-      "allowed_literals": [-1, 0, 1, 2, 3, 4, 8, 10, 16, 100],
+      "allowed_array_sizes": [
+        1,
+        2,
+        3,
+        4,
+        6
+      ],
+      "allowed_literals": [
+        -1,
+        0,
+        1,
+        2,
+        3,
+        4,
+        8,
+        10,
+        16,
+        100
+      ],
       "min_cross_file_value": 36,
       "max_cross_file_occurrences": 4,
       "flagged_literals": {
@@ -340,6 +482,308 @@
         "0x7F": "I2C 7-bit address ceiling (use EOS_I2C_ADDR_MAX in header)"
       },
       "rationale": "Hardware dimensions, pixel formats, UI theme colors, buffer sizes, timeouts, and file modes must be defined as named macros in .h headers rather than scattered as magic numbers in .c files."
+    },
+    {
+      "id": "emisc_no_os_includes",
+      "name": "emisc must not include OS, IDF, hardware or upper-layer headers",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "exclude_files": [
+        "psram_alloc.h"
+      ],
+      "patterns": [
+        "#\\s*include\\s*[<\"](esp_[\\w/]*|freertos/[\\w/]*|driver/[\\w/]*|soc/[\\w/]*|hal/[\\w/]*)\\.h",
+        "#\\s*include\\s*\"(ecore|ewrap|edriver|efs)/",
+        "#\\s*include\\s*\"emisc/fancymacro\\.h\""
+      ],
+      "rationale": "AGENTS.md: emisc has zero OS/hardware dependencies. psram_alloc.h is excluded because it includes the IDF header only under __has_include."
+    },
+    {
+      "id": "emisc_compiles_on_host",
+      "name": "emisc sources compile on the host (catches transitive IDF includes)",
+      "type": "host_syntax_check",
+      "paths": [
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "include_dirs": [
+        "main"
+      ],
+      "rationale": "A regex cannot see transitive includes. If gcc on a PC cannot parse the file, it depends on the target SDK."
+    },
+    {
+      "id": "host_tests_run_in_ci",
+      "name": "Every host test is run by CI",
+      "type": "files_referenced_by",
+      "sources": [
+        "tools/host_tests/*.py"
+      ],
+      "referenced_in": [
+        ".github/workflows/*.yml"
+      ],
+      "rationale": "hash_host_test.py broke at a9f5ea5 and stayed broken because CI never ran it."
+    },
+    {
+      "id": "no_value_named_constants",
+      "name": "Constants must not be named after their own value",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main"
+      ],
+      "file_extensions": [
+        ".h"
+      ],
+      "patterns": [
+        "#\\s*define\\s+\\w*MAGIC_\\d+\\b",
+        "#\\s*define\\s+\\w*?_(\\d+)_(MS|US|SEC|TICK)\\w*\\s+\\(?\\1\\b",
+        "#\\s*define\\s+\\w*?(STR|LINE|BUF)_(\\d+)_LEN\\s+\\(?\\2\\b",
+        "#\\s*define\\s+\\w*TICK_\\d+\\s+\\d+"
+      ],
+      "rationale": "EOS_DEFAULT_MAGIC_42 and EOS_TIMEOUT_5000_MS satisfy the magic-number rule without saying what the number means. Name the purpose, not the value."
+    },
+    {
+      "id": "no_blanket_warning_suppression",
+      "name": "No global warning suppression flags",
+      "type": "forbidden_patterns",
+      "paths": [
+        "CMakeLists.txt",
+        "main/CMakeLists.txt"
+      ],
+      "file_extensions": [
+        ".txt"
+      ],
+      "patterns": [
+        "-Wno-deprecated-declarations",
+        "-Wno-error\\b",
+        "(^|\\s)-w(\\s|$)",
+        "-Wno-unused",
+        "-Wno-all"
+      ],
+      "rationale": "Silencing a whole warning class hides deprecated IDF API use. Scope suppressions to one file with a pragma and a comment."
+    },
+    {
+      "id": "no_hardcoded_fb_paths_in_ebin",
+      "name": "No hard-coded framebuffer paths in ebin",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\"/dev/(fb|vfb)\\d+\""
+      ],
+      "rationale": "Apps get their display from EOS_FB (set by exec from the app role). Fallbacks belong in one shared helper."
+    },
+    {
+      "id": "no_task_name_matching",
+      "name": "No behaviour keyed on FreeRTOS task names",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ecore",
+        "main/ewrap",
+        "main/efs",
+        "main/edriver"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "strn?cmp\\s*\\([^)]*\\b(tname|task_name)\\b",
+        "strn?cmp\\s*\\(\\s*pcTaskGetName"
+      ],
+      "rationale": "A user process named like a system task would be misclassified (the F02 'ipc' prefix bug). Use task flags."
+    },
+    {
+      "id": "no_always_true_test_assertions",
+      "name": "Test assertions must be able to fail",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "report_test\\s*\\([^;]*,\\s*true\\s*\\)\\s*;",
+        "\\bassert\\s*\\(\\s*(1|true)\\s*\\)"
+      ],
+      "rationale": "F02 shipped report_test(..., true) checks that can never fail."
+    },
+    {
+      "id": "fs_preserve_errno",
+      "name": "fs.c must not replace specific errors with EIO",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ecore/fs.c"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "errno\\s*=\\s*EIO\\b"
+      ],
+      "rationale": "Mount and umount failures all become EIO, which hides EBUSY, ENODEV and permission errors from the caller."
+    },
+    {
+      "id": "no_return_while_mutex_held",
+      "name": "No return between pthread_mutex_lock and unlock",
+      "type": "no_calls_between_patterns",
+      "paths": [
+        "main/ecore",
+        "main/efs",
+        "main/ewrap",
+        "main/edriver"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "lock_patterns": [
+        "\\bpthread_mutex_lock\\s*\\("
+      ],
+      "unlock_patterns": [
+        "\\bpthread_mutex_unlock\\s*\\("
+      ],
+      "forbidden_calls": [
+        "\\breturn\\b"
+      ],
+      "rationale": "An early return on an error path while the mutex is held deadlocks the next caller. Needs the function-scope reset in the engine patch."
+    },
+    {
+      "id": "ioctl_symbols_documented",
+      "name": "ioctl codes appear in the docs (ratchet)",
+      "type": "symbols_documented",
+      "headers": [
+        "main/ecore/ioctl.h"
+      ],
+      "symbol_pattern": "#\\s*define\\s+(EOS_\\w*IOCTL\\w*)\\b",
+      "docs": [
+        "docs/**/*.md"
+      ],
+      "max_undocumented": 0,
+      "rationale": "Typed, documented ioctls (F08). Set max_undocumented to today's count first, then lower it."
+    },
+    {
+      "id": "docs_no_machine_paths",
+      "name": "Docs must not contain machine-specific paths",
+      "type": "forbidden_patterns",
+      "paths": [
+        "docs",
+        "AGENTS.md",
+        "Readme.md"
+      ],
+      "file_extensions": [
+        ".md"
+      ],
+      "patterns": [
+        "file:///",
+        "/home/[a-z][\\w.-]*/"
+      ],
+      "rationale": "Absolute home-directory paths only work on one machine. Use $IDF_TOOLS_PATH or ~/.espressif."
+    },
+    {
+      "id": "diagnostic_tools_have_timeout_option",
+      "name": "Diagnostic and event-listening test tools must implement bounded timeout and auto self-test options",
+      "type": "required_patterns",
+      "paths": [
+        "main/ebin/test_input",
+        "main/ebin/test_sound",
+        "main/ebin/test_lvgl",
+        "main/ebin/test_sdl_input"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "(\"-t\"|--auto|\\btimeout_ms\\b)"
+      ],
+      "rationale": "AGENTS.md §5: Any diagnostic binary that listens on an input stream or can wait for events (e.g. test_input, test_sound) must implement an automated self-test mode (--auto) and bounded timeouts (-t <ms>) to guarantee headless test execution without hanging."
+    },
+    {
+      "id": "fs_structure_and_no_loose_files",
+      "name": "Filesystem registry structure and no loose files under main/efs",
+      "type": "filesystem_structure",
+      "paths": [
+        "main/efs"
+      ],
+      "pattern": "\\bEOS_FS_ATTR\\s+eos_fs_type_t\\b",
+      "rationale": "AGENTS.md §3: Every filesystem directory under main/efs/<name>/ defines an eos_fs_type_t structure registered in the .eos_fs section (EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };). No loose .c or .h files are permitted directly under main/efs/."
+    },
+    {
+      "id": "no_direct_register_access_outside_drivers",
+      "name": "No direct hardware register access outside edriver",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin",
+        "main/ecore",
+        "main/efs",
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\b(REG_WRITE|REG_READ|WRITE_PERI_REG|READ_PERI_REG|DPORT_\\w+)\\b"
+      ],
+      "rationale": "Direct memory-mapped register access bypasses the Unified Device Model (/dev VFS and ioctl). Only low-level driver implementations in main/edriver/ may manipulate registers."
+    },
+    {
+      "id": "no_relative_parent_includes",
+      "name": "No relative parent includes in main/",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "#\\s*include\\s*\"\\.\\./"
+      ],
+      "rationale": "Eliminates relative directory traversal escapes (#include \"../../\"). Subsystems must include cleanly via module roots (ecore/..., edriver/..., emisc/..., efs/...)."
+    },
+    {
+      "id": "no_excessive_stack_buffers_in_ebin",
+      "name": "No excessive stack buffer arrays in ebin",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "\\b(?:char|uint8_t|int8_t|uint16_t|int16_t|uint32_t|int32_t)\\s+\\w+\\[\\s*(?:[1-9]\\d{3,}|[5-9]\\d{2})\\s*\\]"
+      ],
+      "rationale": "User-space applications run in FreeRTOS tasks with constrained SRAM stacks (typically 4–8 KB). Declaring large arrays on the stack causes silent stack overflows; large buffers must be heap/PSRAM allocated."
+    },
+    {
+      "id": "bulk_buffers_in_psram",
+      "name": "Bulk display and network buffers must reside in PSRAM",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/edriver/display",
+        "main/edriver/net"
+      ],
+      "file_extensions": [
+        ".c"
+      ],
+      "patterns": [
+        "\\b(?:malloc|calloc)\\s*\\(\\s*(?:\\w+\\s*\\*\\s*)?(?:width|height|fb_size|frame_size|pcap|480|800|280|240)"
+      ],
+      "rationale": "AGENTS.md §4: Bulk buffers (framebuffers, render targets, packet capture rings) must not consume limited internal SRAM, requiring heap_caps_malloc(..., MALLOC_CAP_SPIRAM) or psram allocation helpers."
     }
   ]
 }

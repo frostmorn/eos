@@ -8,9 +8,11 @@ Rules are declaratively defined in tools/layer_audit_rules.json (or specified vi
 
 import argparse
 import collections
+import glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 
@@ -579,6 +581,9 @@ def run_rule_no_calls_between_patterns(rule):
                 stripped = line.strip()
                 if not stripped or stripped.startswith(("//", "/*", "*")):
                     continue
+                if line.startswith("}"):
+                    lock_stack = []
+                    continue
                 code_part = line.split("//")[0]
                 for lpat in lock_patterns:
                     if lpat.search(code_part):
@@ -802,6 +807,199 @@ def run_rule_driver_structure(rule):
     return violations
 
 
+def run_rule_filesystem_structure(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", ["main/efs"])
+    fs_struct_pat = re.compile(rule.get("pattern", r"\bEOS_FS_ATTR\s+eos_fs_type_t\b"))
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for dir_path in paths:
+        if not os.path.exists(dir_path):
+            continue
+
+        # 1. Check for loose files directly under dir_path
+        for item in sorted(os.listdir(dir_path)):
+            item_path = os.path.join(dir_path, item)
+            if os.path.isfile(item_path):
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Loose file outside filesystem folder: {item_path}")
+                violations += 1
+
+        # 2. Check each filesystem directory for EOS_FS_ATTR eos_fs_type_t definition
+        for fs_name in sorted(os.listdir(dir_path)):
+            fs_path = os.path.join(dir_path, fs_name)
+            if not os.path.isdir(fs_path):
+                continue
+
+            has_fs_struct = False
+            for root, _, files in os.walk(fs_path):
+                for file in files:
+                    if file.endswith(".c"):
+                        filepath = os.path.join(root, file)
+                        try:
+                            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                                content = f.read()
+                            if fs_struct_pat.search(content):
+                                has_fs_struct = True
+                                break
+                        except Exception as e:
+                            print(f"Error reading {filepath}: {e}")
+                if has_fs_struct:
+                    break
+
+            if not has_fs_struct:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Filesystem directory missing eos_fs_type_t structure: {fs_path}")
+                violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All filesystem folders contain an eos_fs_type_t structure and no loose files exist.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} filesystem structure violation(s).")
+    return violations
+
+
+def run_rule_required_patterns(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    raw_patterns = rule.get("patterns", [])
+    file_exts = tuple(rule.get("file_extensions", [".c"]))
+    exclude_dirs = rule.get("exclude_dirs")
+    exclude_files = rule.get("exclude_files")
+
+    compiled_patterns = [re.compile(p) for p in raw_patterns]
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, exclude_dirs, exclude_files):
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+            continue
+
+        for pat in compiled_patterns:
+            if not pat.search(content):
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}")
+                print(f"    Required pattern '{pat.pattern}' not found in file")
+                violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} violation(s) for {name}.")
+    return violations
+
+
+def run_rule_host_syntax_check(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", [])
+    file_exts = tuple(rule.get("file_extensions", [".c"]))
+    include_dirs = rule.get("include_dirs", [])
+    inc_args = [f"-I{d}" for d in include_dirs]
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        cmd = ["gcc", "-fsyntax-only"] + inc_args + [filepath]
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            err_line = proc.stderr.strip().splitlines()[0] if proc.stderr else "syntax check failed"
+            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}")
+            print(f"    Host compilation failed: {err_line}")
+            violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} violation(s) for {name}.")
+    return violations
+
+
+def run_rule_files_referenced_by(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    sources = rule.get("sources", [])
+    referenced_in = rule.get("referenced_in", [])
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    ref_files = []
+    for pat in referenced_in:
+        ref_files.extend(glob.glob(pat, recursive=True))
+
+    combined_text = ""
+    for rf in ref_files:
+        try:
+            with open(rf, "r", encoding="utf-8", errors="ignore") as f:
+                combined_text += f.read() + "\n"
+        except Exception:
+            pass
+
+    src_files = []
+    for pat in sources:
+        src_files.extend(glob.glob(pat, recursive=True))
+
+    for sf in src_files:
+        basename = os.path.basename(sf)
+        if basename not in combined_text and sf not in combined_text:
+            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {sf}")
+            print(f"    File not referenced in any configured destination ({referenced_in})")
+            violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name}.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} violation(s) for {name}.")
+    return violations
+
+
+def run_rule_symbols_documented(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    headers = rule.get("headers", [])
+    symbol_pattern = re.compile(rule.get("symbol_pattern", ""))
+    docs = rule.get("docs", [])
+    max_undoc = rule.get("max_undocumented", 0)
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    doc_files = []
+    for pat in docs:
+        doc_files.extend(glob.glob(pat, recursive=True))
+
+    all_docs = ""
+    for df in doc_files:
+        try:
+            with open(df, "r", encoding="utf-8", errors="ignore") as f:
+                all_docs += f.read() + "\n"
+        except Exception:
+            pass
+
+    symbols = []
+    for h in headers:
+        try:
+            with open(h, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    m = symbol_pattern.search(line)
+                    if m:
+                        symbols.append((h, m.group(1)))
+        except Exception as e:
+            print(f"Error reading {h}: {e}")
+
+    undocumented = [(h, s) for h, s in symbols if s not in all_docs]
+    if len(undocumented) > max_undoc:
+        excess = len(undocumented) - max_undoc
+        for h, s in undocumented[:excess]:
+            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {h}")
+            print(f"    Symbol '{s}' is not documented in any {docs}")
+            violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No violations found for {name} ({len(undocumented)} undocumented <= {max_undoc} allowed).")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} undocumented symbol violation(s) for {name}.")
+    return violations
+
+
 DISPATCHER = {
     "forbidden_patterns": run_rule_forbidden_patterns,
     "max_pattern_occurrences_per_file": run_rule_max_pattern_occurrences_per_file,
@@ -816,6 +1014,11 @@ DISPATCHER = {
     "wrapper_definitions": run_rule_wrapper_definitions,
     "driver_enable_guards": run_rule_driver_enable_guards,
     "driver_structure": run_rule_driver_structure,
+    "host_syntax_check": run_rule_host_syntax_check,
+    "files_referenced_by": run_rule_files_referenced_by,
+    "symbols_documented": run_rule_symbols_documented,
+    "filesystem_structure": run_rule_filesystem_structure,
+    "required_patterns": run_rule_required_patterns,
 }
 
 
