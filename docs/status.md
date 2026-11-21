@@ -42,6 +42,7 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | `bus` | `gpio` | **Implemented** | devctl, test_input | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
 | `bus` | `i2c` | **Implemented** | devctl, lsi2c | jc4880p443c_i_w_y, lilka_v23 |
 | `bus` | `onewire` | **Partial** | devctl | Manual / Optional |
+| `bus` | `pwm` | **Partial** | devctl attach/detach | jc4880p443c_i_w_y, lilka_v23 |
 | `bus` | `root` | **Partial** | devctl DevTree Lifecycle | Manual / Optional |
 | `bus` | `sdio` | **Implemented** | sdio (hardware_test.py) | jc4880p443c_i_w_y |
 | `bus` | `spi` | **Implemented** | devctl | lilka_v23 |

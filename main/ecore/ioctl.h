@@ -204,6 +204,23 @@ typedef struct {
   uint32_t v_empty_mv;         // Nominal empty threshold in mV (e.g. 3200)
   uint32_t v_full_mv;          // Nominal full threshold in mV (e.g. 4200)
 } eos_battery_info_t;
+
+// PWM fade structure for EOS_PWM_IOCTL_FADE
+typedef struct {
+  uint16_t target_duty;        // Target duty (0 - 65535)
+  uint32_t duration_ms;        // Transition time in milliseconds
+} eos_pwm_fade_t;
+
+// PWM capabilities structure for EOS_PWM_IOCTL_GET_CAPS
+typedef struct {
+  uint32_t freq_hz;            // Active frequency in Hz
+  uint32_t resolution_bits;    // Hardware timer resolution bits
+  uint32_t max_duty;           // Maximum raw duty value (2^res - 1)
+  int32_t timer_idx;           // LEDC timer index
+  int32_t channel_idx;         // LEDC channel index
+  int32_t pin;                 // Output GPIO pin number
+  bool enabled;                // Output active state
+} eos_pwm_caps_t;
 //=====================================================
 // ioctl call table
 // IOCTL CODE, ARGS
@@ -324,6 +341,8 @@ typedef enum {
   EOS_DISPLAY_IOCTL_GET_FORMATS,// uint32_t *formats_bitmask
   EOS_DISPLAY_IOCTL_GET_FORMAT, // uint32_t *current_format
   EOS_DISPLAY_IOCTL_SET_FORMAT, // uint32_t format or const uint32_t *format
+  EOS_DISPLAY_IOCTL_SET_BRIGHTNESS, // uint8_t brightness_pct (0 - 100)
+  EOS_DISPLAY_IOCTL_GET_BRIGHTNESS, // uint8_t *out_brightness_pct
 
   //=====================================================
   // edriver/storage
@@ -437,6 +456,19 @@ typedef enum {
   // edriver/power/battery
   //=====================================================
   EOS_POWER_IOCTL_GET_BATTERY_INFO = 650, // eos_battery_info_t *out_info
+
+  //=====================================================
+  // edriver/bus/pwm
+  //=====================================================
+  EOS_PWM_IOCTL_BASE = 750,
+  EOS_PWM_IOCTL_SET_FREQ = 750,      // uint32_t freq_hz
+  EOS_PWM_IOCTL_GET_FREQ,           // uint32_t *out_freq_hz
+  EOS_PWM_IOCTL_SET_DUTY,           // uint16_t duty (0-65535, or uint8_t 0-100)
+  EOS_PWM_IOCTL_GET_DUTY,           // uint16_t *out_duty
+  EOS_PWM_IOCTL_ENABLE,             // bool enable
+  EOS_PWM_IOCTL_SET_POLARITY,       // uint32_t polarity (0=active-high, 1=active-low)
+  EOS_PWM_IOCTL_FADE,               // const eos_pwm_fade_t *fade
+  EOS_PWM_IOCTL_GET_CAPS,           // eos_pwm_caps_t *out_caps
 } eos_ioctl_t;
 
 // (^__^)==\~

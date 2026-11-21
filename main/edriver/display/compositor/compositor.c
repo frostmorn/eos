@@ -162,6 +162,16 @@ int driver_display_compositor_ioctl(eos_dev_t *dev, int fd, int cmd, va_list arg
     return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_SET_FORMAT, fmt);
   }
 
+  case EOS_DISPLAY_IOCTL_SET_BRIGHTNESS: {
+    uint32_t b = va_arg(args, uint32_t);
+    return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_SET_BRIGHTNESS, b);
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_BRIGHTNESS: {
+    uint8_t *out = va_arg(args, uint8_t *);
+    return eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_DISPLAY_IOCTL_GET_BRIGHTNESS, out);
+  }
+
   default:
     errno = ENOTTY;
     return -1;

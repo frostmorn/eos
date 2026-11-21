@@ -1,6 +1,7 @@
 #!/bin/ush
 echo "=== Booting EOS (Guition JC4880P443C) ==="
-devctl attach display st7701s root --pin rst=5,backlight=23 --cfg width=480,height=800,rotation=0,lane_num=2,bitrate_mbps=750,dpi_clk_mhz=28,ldo_chan=3,ldo_voltage_mv=2500
+devctl attach bus pwm root --pin out=23 --cfg freq=5000,duty=100
+devctl attach display st7701s root --pin rst=5 --cfg pwm=pwm0,width=480,height=800,rotation=0,lane_num=2,bitrate_mbps=750,dpi_clk_mhz=28,ldo_chan=3,ldo_voltage_mv=2500
 devctl attach bus i2c root --pin sda=7,scl=8 --cfg port=0,clk_speed=400000
 devctl attach input gt911 i2c0 --pin rst=-1,int=-1 --cfg clk_speed=400000,width=480,height=800,addr=0x5D
 devctl attach bus gpio root

@@ -823,8 +823,6 @@ static void *pipeline_stage_thread(void *arg) {
   fflush(stdout);
   fflush(stderr);
   fsync(STDOUT_FILENO);
-  extern void esp_reent_cleanup(void);
-  esp_reent_cleanup();
 
   close_stage_fds(opened_fds, st->pipe_in_fd, st->pipe_out_fd);
 

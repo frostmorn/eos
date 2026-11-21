@@ -37,6 +37,8 @@ typedef struct {
   int32_t bl_pin;
   int32_t rst_pin;
   bool bl_ledc_active;
+  uint8_t brightness;
+  char pwm_dev_name[EOS_SMALL_STR_LEN];
   SemaphoreHandle_t lock;
 } st7701s_state_t;
 
@@ -176,7 +178,70 @@ static bool st7701s_create_bus_and_io(st7701s_state_t *state, int32_t lane_num, 
   return true;
 }
 
+static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t native_w, int32_t native_h, int32_t dpi_clk_mhz, int32_t rst_pin, uint32_t format);
+
+static void st7701s_power_phy_ldo(st7701s_state_t *state, int32_t ldo_chan, int32_t ldo_mv) {
+  if (ldo_chan < 0) return;
+  esp_ldo_channel_config_t ldo_cfg = {
+      .chan_id = ldo_chan,
+      .voltage_mv = ldo_mv,
+  };
+  esp_err_t err = esp_ldo_acquire_channel(&ldo_cfg, &state->ldo_phy);
+  if (err != ESP_OK) {
+    EOS_LOGE("st7701s: acquire LDO chan %d failed: %s", (int)ldo_chan, esp_err_to_name(err));
+    state->ldo_phy = NULL;
+  } else {
+    EOS_LOGI("st7701s: MIPI DSI PHY powered via LDO %d (%dmV)", (int)ldo_chan, (int)ldo_mv);
+  }
+}
+
+static int st7701s_set_brightness(st7701s_state_t *st, uint32_t b) {
+  if (b > 100) b = 100;
+  st->brightness = (uint8_t)b;
+  eos_dev_t *pdev = eos_dev_find_by_name(st->pwm_dev_name[0] ? st->pwm_dev_name : "pwm0");
+  if (pdev) {
+    eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_PWM_IOCTL_SET_DUTY, b);
+  } else if (st->bl_pin >= 0) {
+    if (st->bl_ledc_active) {
+      uint32_t hw = (b * 1023) / 100;
+      ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, hw);
+      ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
+    } else {
+      gpio_set_level(st->bl_pin, b > 0 ? 1 : 0);
+    }
+  }
+  return 0;
+}
+
+static int st7701s_switch_format(eos_dev_t *dev, st7701s_state_t *st, uint32_t fmt) {
+  if (fmt == st->format) return 0;
+  if (fmt != EOS_DISPLAY_FMT_RGB565 && fmt != EOS_DISPLAY_FMT_RGB888) {
+    errno = ENOTSUP;
+    return -1;
+  }
+  if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+  if (st->panel) {
+    esp_lcd_panel_disp_on_off(st->panel, false);
+    esp_lcd_panel_del(st->panel);
+    st->panel = NULL;
+  }
+  if (!st7701s_create_panel(dev, st, st->native_w, st->native_h, st->dpi_clk_mhz, st->rst_pin, fmt)) {
+    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    errno = EIO;
+    return -1;
+  }
+  esp_lcd_panel_reset(st->panel);
+  vTaskDelay(pdMS_TO_TICKS(120));
+  esp_lcd_panel_init(st->panel);
+  esp_lcd_panel_disp_on_off(st->panel, true);
+  st->format = fmt;
+  if (st->lock) xSemaphoreGiveRecursive(st->lock);
+  EOS_LOGI("st7701s: color format switched to %s", (fmt == EOS_DISPLAY_FMT_RGB888) ? "RGB888" : "RGB565");
+  return 0;
+}
+
 static bool st7701s_create_panel(eos_dev_t *dev, st7701s_state_t *state, int32_t native_w, int32_t native_h, int32_t dpi_clk_mhz, int32_t rst_pin, uint32_t format) {
+  (void)dev;
   lcd_color_format_t clr_fmt = (format == EOS_DISPLAY_FMT_RGB888) ? LCD_COLOR_FMT_RGB888 : LCD_COLOR_FMT_RGB565;
   uint32_t bpp = (format == EOS_DISPLAY_FMT_RGB888) ? 24 : 16;
   esp_lcd_dpi_panel_config_t dpi_config = {
@@ -253,6 +318,9 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
 
   state->bl_pin = bl_pin;
   state->rst_pin = rst_pin;
+  state->brightness = 100;
+  char *pwm_s = eos_cfg_get_s(dev->cfg, "pwm", "");
+  if (pwm_s) snprintf(state->pwm_dev_name, sizeof(state->pwm_dev_name), "%s", pwm_s);
   state->width = native_w;
   state->height = native_h;
   state->native_w = native_w;
@@ -282,19 +350,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
   }
 
   // Supply power to MIPI DSI PHY via internal LDO if configured
-  if (ldo_chan >= 0) {
-    esp_ldo_channel_config_t ldo_cfg = {
-        .chan_id = ldo_chan,
-        .voltage_mv = ldo_mv,
-    };
-    esp_err_t err = esp_ldo_acquire_channel(&ldo_cfg, &state->ldo_phy);
-    if (err != ESP_OK) {
-      EOS_LOGE("st7701s: acquire LDO chan %d failed: %s", (int)ldo_chan, esp_err_to_name(err));
-      state->ldo_phy = NULL;
-    } else {
-      EOS_LOGI("st7701s: MIPI DSI PHY powered via LDO %d (%dmV)", (int)ldo_chan, (int)ldo_mv);
-    }
-  }
+  st7701s_power_phy_ldo(state, ldo_chan, ldo_mv);
 
   if (!st7701s_create_bus_and_io(state, lane_num, bitrate_mbps)) {
     if (state->ldo_phy)
@@ -452,29 +508,18 @@ int driver_display_st7701s_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) 
 
   case EOS_DISPLAY_IOCTL_SET_FORMAT: {
     uint32_t fmt = va_arg(args, uint32_t);
-    if (fmt == st->format) return 0;
-    if (fmt != EOS_DISPLAY_FMT_RGB565 && fmt != EOS_DISPLAY_FMT_RGB888) {
-      errno = ENOTSUP;
-      return -1;
-    }
-    if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
-    if (st->panel) {
-      esp_lcd_panel_disp_on_off(st->panel, false);
-      esp_lcd_panel_del(st->panel);
-      st->panel = NULL;
-    }
-    if (!st7701s_create_panel(dev, st, st->native_w, st->native_h, st->dpi_clk_mhz, st->rst_pin, fmt)) {
-      if (st->lock) xSemaphoreGiveRecursive(st->lock);
-      errno = EIO;
-      return -1;
-    }
-    esp_lcd_panel_reset(st->panel);
-    vTaskDelay(pdMS_TO_TICKS(120));
-    esp_lcd_panel_init(st->panel);
-    esp_lcd_panel_disp_on_off(st->panel, true);
-    st->format = fmt;
-    if (st->lock) xSemaphoreGiveRecursive(st->lock);
-    EOS_LOGI("st7701s: color format switched to %s", (fmt == EOS_DISPLAY_FMT_RGB888) ? "RGB888" : "RGB565");
+    return st7701s_switch_format(dev, st, fmt);
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_BRIGHTNESS: {
+    uint32_t b = va_arg(args, uint32_t);
+    return st7701s_set_brightness(st, b);
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_BRIGHTNESS: {
+    uint8_t *out = va_arg(args, uint8_t *);
+    if (!out) { errno = EINVAL; return -1; }
+    *out = st->brightness;
     return 0;
   }
 

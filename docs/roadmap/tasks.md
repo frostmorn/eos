@@ -34,7 +34,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Pending | T21 | Autoload `.eos/init.sh` with trust store | Security | M | T07, T22, T06, F07 | 3 |
 | Done | T12 | Symlinks, `ln`, cross-device handling (a–c); own VFS (d) | Filesystems | M + decision | T07 | 3 |
 | Done | T16 | Capability manager: PWM, DMA, interrupts | Drivers | M | – | 4 |
-| Pending | T15 | PWM driver | Drivers | M | T16 | 4 |
+| Done | T15 | PWM driver | Drivers | M | T16 | 4 |
 | Done | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
 | Pending | T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
 | Pending | T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
@@ -368,7 +368,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** attach two drivers wanting the same LEDC channel → second fails with a message naming the first; `cat /proc/capabilities` matches reality on S3 and P4.
 
-#### T15 — PWM driver
+#### T15 — PWM driver [DONE]
 `Size: M · Depends: T16 · Orig #15`
 
 **Scope**

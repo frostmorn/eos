@@ -95,8 +95,6 @@ static void *exec_thread_entry(void *arg) {
 
   fflush(stdout);
   fflush(stderr);
-  extern void esp_reent_cleanup(void);
-  esp_reent_cleanup();
 
   if (ex) {
     bool prev_h = eos_proc_heap_tracking_disable();

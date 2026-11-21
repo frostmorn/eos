@@ -1372,6 +1372,23 @@ class EOSTestHarness:
         self.check(suite, "/proc/capabilities contains system:flash", "cat /proc/capabilities", r"system:flash", wait=2.0)
         self.check(suite, "Capability manager self-test passes", "test_caps", r"Capability Manager Tests:\s+\d+\s+passed,\s+0\s+failed", wait=4.0)
 
+    def test_pwm(self):
+        suite = "pwm"
+        print(f"\n{Colors.BOLD}=== Hardware PWM & Backlight Tests (T15) ==={Colors.RESET}")
+        self.check(suite, "binfs exposes pwmctl", "ls -l /bin/pwmctl", r"pwmctl", wait=1.0)
+        self.check(suite, "binfs exposes lvgl_backlight", "ls -l /bin/lvgl_backlight", r"lvgl_backlight", wait=1.0)
+        self.check(suite, "/dev/pwm0 device node exists", "ls -l /dev/pwm0", r"pwm0", wait=1.0)
+        self.check(suite, "/proc/capabilities shows dev:pwm0", "cat /proc/capabilities", r"dev:pwm0", wait=1.0)
+        self.check(suite, "pwmctl list shows /dev/pwm0", "pwmctl list", r"/dev/pwm0\s+\d+\s+\d+", wait=1.0)
+        self.check(suite, "echo 60 > /dev/pwm0 sets duty", "echo 60 > /dev/pwm0", r"^$", wait=1.0)
+        self.check(suite, "cat /dev/pwm0 returns updated duty", "cat /dev/pwm0", r"(59|60)", wait=1.0)
+        self.check(suite, "pwmctl set pwm0 80 updates duty", "pwmctl set pwm0 80", r"duty set to 80%", wait=1.0)
+        self.check(suite, "pwmctl get pwm0 reports duty", "pwmctl get pwm0", r"(79%|80%)", wait=1.0)
+        self.check(suite, "pwmctl fade pwm0 50 200 executes", "pwmctl fade pwm0 50 200", r"fading to 50%", wait=1.0)
+        time.sleep(0.3)
+        self.check(suite, "pwmctl get reports faded duty", "pwmctl get pwm0", r"(49%|50%)", wait=1.0)
+        self.check(suite, "Restore duty to 100%", "pwmctl set pwm0 100", r"duty set to 100%", wait=1.0)
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -1420,6 +1437,7 @@ SUITE_REGISTRY = {
     "fs": {"name": "Filesystem Registry & Mount Lifecycle Tests", "tag": "qemu", "func": lambda h: h.test_fs()},
     "disp_format": {"name": "Display Color Format & Manifest v2 Tests", "tag": "qemu", "func": lambda h: h.test_disp_format()},
     "caps": {"name": "Capability Manager Tests", "tag": "qemu", "func": lambda h: h.test_caps()},
+    "pwm": {"name": "Hardware PWM & Backlight Tests", "tag": "hardware-only", "func": lambda h: h.test_pwm()},
     "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},

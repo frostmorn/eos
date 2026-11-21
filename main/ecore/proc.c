@@ -2497,8 +2497,6 @@ void *eos_proc_wrap_pthread(void *data) {
 
   fflush(stdout);
   fflush(stderr);
-  extern void esp_reent_cleanup(void);
-  esp_reent_cleanup();
 
   if (proc) {
     eos_proc_remove_thread(proc, cur_task);

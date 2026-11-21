@@ -27,6 +27,9 @@ typedef struct {
   uint8_t *dma_buf[2];
   uint8_t dma_idx;
   SemaphoreHandle_t lock;
+  int32_t en_pin;
+  uint8_t brightness;
+  char pwm_dev_name[EOS_SMALL_STR_LEN];
 } st7789_state_t;
 
 // Placement options
@@ -127,6 +130,11 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
     dev->state = NULL;
     return false;
   }
+
+  state->en_pin = en_pin;
+  state->brightness = 100;
+  char *pwm_s = eos_cfg_get_s(dev->cfg, "pwm", "");
+  if (pwm_s) snprintf(state->pwm_dev_name, sizeof(state->pwm_dev_name), "%s", pwm_s);
 
   // Enable display power before anything else
   if (en_pin >= 0) {
@@ -322,6 +330,26 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     if (fmt == EOS_DISPLAY_FMT_RGB565) return 0;
     errno = ENOTSUP;
     return -1;
+  }
+
+  case EOS_DISPLAY_IOCTL_SET_BRIGHTNESS: {
+    uint32_t b = va_arg(args, uint32_t);
+    if (b > 100) b = 100;
+    st->brightness = (uint8_t)b;
+    eos_dev_t *pdev = eos_dev_find_by_name(st->pwm_dev_name[0] ? st->pwm_dev_name : "pwm0");
+    if (pdev) {
+      eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_PWM_IOCTL_SET_DUTY, b);
+    } else if (st->en_pin >= 0) {
+      gpio_set_level(st->en_pin, b > 0 ? 1 : 0);
+    }
+    return 0;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_BRIGHTNESS: {
+    uint8_t *out = va_arg(args, uint8_t *);
+    if (!out) { errno = EINVAL; return -1; }
+    *out = st->brightness;
+    return 0;
   }
 
   default:

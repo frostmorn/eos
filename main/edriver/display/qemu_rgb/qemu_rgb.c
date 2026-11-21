@@ -264,6 +264,21 @@ int driver_display_qemu_rgb_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args)
     break;
   }
 
+  case EOS_DISPLAY_IOCTL_SET_BRIGHTNESS: {
+    uint32_t b = va_arg(args, uint32_t);
+    (void)b;
+    ret = 0;
+    break;
+  }
+
+  case EOS_DISPLAY_IOCTL_GET_BRIGHTNESS: {
+    uint8_t *out = va_arg(args, uint8_t *);
+    if (!out) { errno = EINVAL; ret = -1; break; }
+    *out = 100;
+    ret = 0;
+    break;
+  }
+
   default:
     errno = ENOTTY;
     ret = -1;
