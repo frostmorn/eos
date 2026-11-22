@@ -856,6 +856,47 @@ eos_proc_t *eos_proc_current(void) {
   return NULL;
 }
 
+typedef struct {
+  SemaphoreHandle_t sem;
+  int type;
+} esp_pthread_mutex_raw_t;
+
+static void proc_destroy_mutex(pthread_mutex_t *mutex) {
+  if (!mutex || !*mutex) return;
+  if (pthread_mutex_destroy(mutex) != 0) {
+    esp_pthread_mutex_raw_t *mux = (esp_pthread_mutex_raw_t *)*mutex;
+    if (mux) {
+      if (mux->sem) {
+        vSemaphoreDelete(mux->sem);
+      }
+      free(mux);
+    }
+  }
+  *mutex = 0;
+}
+
+static void proc_destroy_sync_primitives(eos_proc_t *p) {
+  proc_destroy_mutex(&p->mem_mutex);
+  proc_destroy_mutex(&p->fd_mutex);
+  proc_destroy_mutex(&p->cleanup_mutex);
+  if (p->wait_cond) {
+    pthread_cond_broadcast(&p->wait_cond);
+    pthread_cond_destroy(&p->wait_cond);
+    p->wait_cond = 0;
+  }
+}
+
+static void proc_init_sync_primitives(eos_proc_t *p) {
+  pthread_mutexattr_t m_attr;
+  pthread_mutexattr_init(&m_attr);
+  pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
+  pthread_mutex_init(&p->mem_mutex, &m_attr);
+  pthread_mutex_init(&p->fd_mutex, &m_attr);
+  pthread_mutex_init(&p->cleanup_mutex, &m_attr);
+  pthread_mutexattr_destroy(&m_attr);
+  pthread_cond_init(&p->wait_cond, NULL);
+}
+
 static eos_proc_t *proc_alloc_initial_context(pid_t pid, pid_t ppid, pid_t pgid, pid_t sid, const char *name) {
   eos_proc_t *p = (eos_proc_t *)eos_psram_calloc_prefer(1, sizeof(eos_proc_t));
   if (!p) {
@@ -884,14 +925,7 @@ static eos_proc_t *proc_alloc_initial_context(pid_t pid, pid_t ppid, pid_t pgid,
   kv_init(p->cleanup_hooks);
   p->next_hook_id = 1;
 
-  pthread_mutexattr_t m_attr;
-  pthread_mutexattr_init(&m_attr);
-  pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&p->mem_mutex, &m_attr);
-  pthread_mutex_init(&p->fd_mutex, &m_attr);
-  pthread_mutex_init(&p->cleanup_mutex, &m_attr);
-  pthread_mutexattr_destroy(&m_attr);
-  pthread_cond_init(&p->wait_cond, NULL);
+  proc_init_sync_primitives(p);
 
   return p;
 }
@@ -974,15 +1008,6 @@ static eos_proc_t *find_or_alloc_proc_slot_locked(void) {
     return NULL;
   }
 
-  pthread_mutexattr_t m_attr;
-  pthread_mutexattr_init(&m_attr);
-  pthread_mutexattr_settype(&m_attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&p->mem_mutex, &m_attr);
-  pthread_mutex_init(&p->fd_mutex, &m_attr);
-  pthread_mutex_init(&p->cleanup_mutex, &m_attr);
-  pthread_mutexattr_destroy(&m_attr);
-  pthread_cond_init(&p->wait_cond, NULL);
-
   kv_push(eos_proc_t *, s_proc_table->procs, p);
   return p;
 }
@@ -1035,15 +1060,8 @@ pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t p
 
   eos_proc_t *cur = eos_proc_current();
 
-  pthread_mutex_t saved_mem_mutex = p->mem_mutex;
-  pthread_mutex_t saved_fd_mutex = p->fd_mutex;
-  pthread_mutex_t saved_cleanup_mutex = p->cleanup_mutex;
-  pthread_cond_t saved_wait_cond = p->wait_cond;
   memset(p, 0, sizeof(eos_proc_t));
-  p->mem_mutex = saved_mem_mutex;
-  p->fd_mutex = saved_fd_mutex;
-  p->cleanup_mutex = saved_cleanup_mutex;
-  p->wait_cond = saved_wait_cond;
+  proc_init_sync_primitives(p);
   p->next_hook_id = 1;
   kv_init(p->cleanup_hooks);
 
@@ -1233,10 +1251,10 @@ static bool proc_drain_cleanup_hooks(pid_t pid) {
 }
 
 static void proc_close_fds_and_dirs(eos_proc_t *p) {
-  int fds_to_close[EOS_LINE_64_LEN];
+  int fds_to_close[EOS_LINE_STR_LEN];
   size_t num_fds = 0;
   pthread_mutex_lock(&p->fd_mutex);
-  while (kv_size(p->fds) > 0 && num_fds < EOS_LINE_64_LEN) {
+  while (kv_size(p->fds) > 0 && num_fds < EOS_LINE_STR_LEN) {
     fds_to_close[num_fds++] = kv_pop(p->fds);
   }
   DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
@@ -1371,6 +1389,12 @@ eos_proc_t *eos_proc_find(pid_t pid) {
     }
   }
   return NULL;
+}
+
+bool eos_proc_is_alive(pid_t pid) {
+  if (pid == 0) return true;
+  eos_proc_t *p = eos_proc_find(pid);
+  return (p && p->in_use && p->state != EOS_PROC_STATE_ZOMBIE);
 }
 
 bool eos_proc_get_copy(pid_t pid, eos_proc_t *out_proc) {
@@ -1710,10 +1734,10 @@ static void proc_reap_zombie_locked(eos_proc_t *z) {
   extern int __real__close_r(struct _reent *r, int fd);
   extern int __real_closedir(DIR *pdir);
 
-  int fds_to_close[EOS_LINE_64_LEN];
+  int fds_to_close[EOS_LINE_STR_LEN];
   size_t num_fds = 0;
   pthread_mutex_lock(&z->fd_mutex);
-  while (kv_size(z->fds) > 0 && num_fds < EOS_LINE_64_LEN) {
+  while (kv_size(z->fds) > 0 && num_fds < EOS_LINE_STR_LEN) {
     fds_to_close[num_fds++] = kv_pop(z->fds);
   }
   DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
@@ -1797,15 +1821,8 @@ static void proc_reap_zombie_locked(eos_proc_t *z) {
   kv_destroy(z->cleanup_hooks);
   kv_destroy(z->memblocks);
 
-  pthread_mutex_t saved_mem_mutex = z->mem_mutex;
-  pthread_mutex_t saved_fd_mutex = z->fd_mutex;
-  pthread_mutex_t saved_cleanup_mutex = z->cleanup_mutex;
-  pthread_cond_t saved_wait_cond = z->wait_cond;
+  proc_destroy_sync_primitives(z);
   memset(z, 0, sizeof(eos_proc_t));
-  z->mem_mutex = saved_mem_mutex;
-  z->fd_mutex = saved_fd_mutex;
-  z->cleanup_mutex = saved_cleanup_mutex;
-  z->wait_cond = saved_wait_cond;
   z->in_use = false;
   z->state = EOS_PROC_STATE_UNUSED;
 }
@@ -1845,7 +1862,6 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
       eos_proc_heap_tracking_restore(prev_h);
 
       proc_unlock();
-      vTaskDelay(1);
       return reaped_pid;
     }
 
@@ -1931,6 +1947,7 @@ static int memblock_bsearch(const eos_memblock_t *arr, size_t n, const void *ptr
 
 void eos_proc_mem_insert(eos_proc_t *proc, void *ptr, size_t size, bool is_psram) {
   if (!proc || !ptr) return;
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext() || !xPortCanYield()) return;
 
   bool prev_h = eos_proc_heap_tracking_disable();
   pthread_mutex_lock(&proc->mem_mutex);
@@ -1986,7 +2003,7 @@ static bool proc_memblock_remove_locked(eos_proc_t *proc, void *ptr, size_t *out
 
 void eos_proc_mem_remove(eos_proc_t *proc, void *ptr) {
   if (!ptr) return;
-  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext()) return;
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext() || !xPortCanYield()) return;
   if (eos_proc_task_is_system() || eos_proc_heap_tracking_is_disabled()) return;
 
   if (proc && proc->in_use) {
@@ -2213,7 +2230,7 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
     return;
   }
 
-  int fds_to_close[EOS_LINE_64_LEN];
+  int fds_to_close[EOS_LINE_STR_LEN];
   size_t num_fds_to_close = 0;
   DIR *dirs_to_close[EOS_XSMALL_STR_LEN];
   size_t num_dirs_to_close = 0;
@@ -2230,7 +2247,7 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap) {
         }
       }
     }
-    if (!was_present && num_fds_to_close < EOS_LINE_64_LEN) {
+    if (!was_present && num_fds_to_close < EOS_LINE_STR_LEN) {
       fds_to_close[num_fds_to_close++] = fd;
     }
   }
@@ -2468,6 +2485,54 @@ int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
   return rc;
 }
 
+static void proc_disown_reent_blocks(eos_proc_t *proc, struct _reent *r) {
+#if CONFIG_LIBC_NEWLIB
+  if (!proc || !r || r == _GLOBAL_REENT) return;
+  pthread_mutex_lock(&proc->mem_mutex);
+#ifdef _REENT_SMALL
+  if (r->_mp) {
+    if (r->_mp->_result) proc_memblock_remove_locked(proc, r->_mp->_result, NULL, NULL);
+    if (r->_mp->_p5s) proc_memblock_remove_locked(proc, r->_mp->_p5s, NULL, NULL);
+    if (r->_mp->_freelist) proc_memblock_remove_locked(proc, (void *)r->_mp->_freelist, NULL, NULL);
+    proc_memblock_remove_locked(proc, r->_mp, NULL, NULL);
+  }
+  if (r->__sf) proc_memblock_remove_locked(proc, r->__sf, NULL, NULL);
+  if (r->_emergency) proc_memblock_remove_locked(proc, r->_emergency, NULL, NULL);
+  if (r->_cvtbuf) proc_memblock_remove_locked(proc, r->_cvtbuf, NULL, NULL);
+  if (r->_r48) proc_memblock_remove_locked(proc, r->_r48, NULL, NULL);
+  if (r->_localtime_buf) proc_memblock_remove_locked(proc, r->_localtime_buf, NULL, NULL);
+  if (r->_asctime_buf) proc_memblock_remove_locked(proc, r->_asctime_buf, NULL, NULL);
+  if (r->_misc) proc_memblock_remove_locked(proc, r->_misc, NULL, NULL);
+  if (r->_signal_buf) proc_memblock_remove_locked(proc, r->_signal_buf, NULL, NULL);
+#else
+  if (r->_freelist) {
+    for (int i = 0; i <= _Kmax; i++) {
+      struct _Bigint *b = r->_freelist[i];
+      while (b) {
+        proc_memblock_remove_locked(proc, b, NULL, NULL);
+        b = b->_next;
+      }
+    }
+    proc_memblock_remove_locked(proc, r->_freelist, NULL, NULL);
+  }
+  if (r->_result) proc_memblock_remove_locked(proc, r->_result, NULL, NULL);
+  if (r->_p5s) proc_memblock_remove_locked(proc, r->_p5s, NULL, NULL);
+  if (r->_cvtbuf) proc_memblock_remove_locked(proc, r->_cvtbuf, NULL, NULL);
+  if (r->_sig_func) proc_memblock_remove_locked(proc, r->_sig_func, NULL, NULL);
+#endif
+  extern struct _glue __sglue;
+  struct _glue *g = __sglue._next;
+  while (g) {
+    proc_memblock_remove_locked(proc, g, NULL, NULL);
+    g = g->_next;
+  }
+  pthread_mutex_unlock(&proc->mem_mutex);
+#else
+  (void)proc;
+  (void)r;
+#endif
+}
+
 void *eos_proc_wrap_pthread(void *data) {
   eos_pwrap_t *pwrap = (eos_pwrap_t *)data;
   if (!pwrap) return NULL;
@@ -2501,6 +2566,11 @@ void *eos_proc_wrap_pthread(void *data) {
   if (proc) {
     eos_proc_remove_thread(proc, cur_task);
     if (is_main) {
+#if CONFIG_LIBC_NEWLIB
+      extern void esp_reent_cleanup(void);
+      esp_reent_cleanup();
+#endif
+      proc_disown_reent_blocks(proc, __getreent());
       proc_lock();
       if (proc->main_thread == cur_task) {
         proc->main_thread = NULL;
@@ -2540,6 +2610,7 @@ void eos_proc_wrap_freertos(void *data) {
   }
 
   if (proc) {
+    proc_disown_reent_blocks(proc, __getreent());
     if (is_main) {
       eos_proc_exit(proc->pid, 0);
     }

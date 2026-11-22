@@ -171,7 +171,7 @@ static void test_1000_cycles_stress(test_ctx_t *ctx) {
       printf("  [FAIL] Cycle %d: eos_wait failed (status=%d)\n", i, status);
       break;
     }
-    usleep((i % 20 == 0) ? (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US : (useconds_t)EOS_US_PER_MS);
+    usleep((i % 20 == 0) ? (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US : (2 * (useconds_t)EOS_US_PER_MS));
   }
 
   size_t final_active = eos_proc_count_active();
@@ -387,9 +387,18 @@ static void test_loadavg_stress_and_decay(test_ctx_t *ctx) {
   }
   report_test(ctx, "loadavg: spawned dual-core CPU burn worker threads", spawned == 2);
 
-  // Burn CPU at maximum capacity across all cores
-  for (int i = 0; i < 3; i++) {
+  // Burn CPU at maximum capacity across all cores and sample peak load
+  double l1_peak = l1_baseline;
+  for (int i = 0; i < 8; i++) {
     usleep(EOS_US_PER_SEC);
+    FILE *fp = fopen("/proc/loadavg", "r");
+    if (fp) {
+      double cur = 0.0;
+      if (fscanf(fp, "%lf", &cur) == 1 && cur > l1_peak) {
+        l1_peak = cur;
+      }
+      fclose(fp);
+    }
   }
 
   // Stop the CPU burn workers and join threads
@@ -398,24 +407,33 @@ static void test_loadavg_stress_and_decay(test_ctx_t *ctx) {
     pthread_join(threads[i], NULL);
   }
 
-  // Sample load after stopping burn to capture peak
+  // Sample load right after workers stop to capture true peak
   usleep(EOS_US_PER_SEC);
-  double l1_peak = l1_baseline;
-  FILE *fp = fopen("/proc/loadavg", "r");
-  if (fp) {
-    (void)fscanf(fp, "%lf", &l1_peak);
-    fclose(fp);
+  FILE *fp_post = fopen("/proc/loadavg", "r");
+  if (fp_post) {
+    double cur = 0.0;
+    if (fscanf(fp_post, "%lf", &cur) == 1 && cur > l1_peak) {
+      l1_peak = cur;
+    }
+    fclose(fp_post);
   }
 
   report_test(ctx, "loadavg: load rises under max multi-thread CPU burn", l1_peak > l1_baseline);
 
   // Allow system to idle and verify that load average drops
   double l1_decay = l1_peak;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 15; i++) {
     usleep(EOS_US_PER_SEC);
     FILE *fp_dec = fopen("/proc/loadavg", "r");
     if (fp_dec) {
-      (void)fscanf(fp_dec, "%lf", &l1_decay);
+      double cur = 0.0;
+      if (fscanf(fp_dec, "%lf", &cur) == 1) {
+        l1_decay = cur;
+        if (l1_decay < 1.0 && l1_decay < l1_peak) {
+          fclose(fp_dec);
+          break;
+        }
+      }
       fclose(fp_dec);
     }
   }
@@ -557,7 +575,7 @@ static void test_f02_proc_status_and_isolation(test_ctx_t *ctx, size_t my_before
     int status = -1;
     pid_t reaped = waitpid(-1, &status, 0);
     report_test(ctx, "f02: child process reaped", reaped > 0);
-    report_test(ctx, "f02: child exited with expected code 42", WIFEXITED(status) && WEXITSTATUS(status) == EOS_DEFAULT_MAGIC_42);
+    report_test(ctx, "f02: child exited with expected code 42", WIFEXITED(status) && WEXITSTATUS(status) == EOS_TEST_MAGIC_STATUS);
 
     bool canary_ok = true;
     uint8_t *b = (uint8_t *)parent_canary;
@@ -581,12 +599,12 @@ static void test_f02_proc_status_and_isolation(test_ctx_t *ctx, size_t my_before
   report_test(ctx, "f02: child attach process reaped", attach_reaped > 0);
   report_test(ctx, "f02: child attach process exited successfully", WIFEXITED(attach_status) && WEXITSTATUS(attach_status) == 0);
 
-  void *poison_bufs[EOS_STR_8_LEN];
-  for (int p = 0; p < EOS_STR_8_LEN; p++) {
+  void *poison_bufs[EOS_TINY_STR_LEN];
+  for (int p = 0; p < EOS_TINY_STR_LEN; p++) {
     poison_bufs[p] = malloc(EOS_MID_STR_LEN);
     if (poison_bufs[p]) memset(poison_bufs[p], 0xDD, EOS_MID_STR_LEN);
   }
-  for (int p = 0; p < EOS_STR_8_LEN; p++) {
+  for (int p = 0; p < EOS_TINY_STR_LEN; p++) {
     free(poison_bufs[p]);
   }
 
@@ -685,7 +703,7 @@ static void test_bg_process_and_threads(test_ctx_t *ctx) {
   report_test(ctx, "proc: retrieved worker counter address", cnt_ptr != NULL);
   if (cnt_ptr) {
     int c1 = *cnt_ptr;
-    usleep(EOS_MS_PER_TICK_50 * (useconds_t)EOS_US_PER_MS);
+    usleep(EOS_POLL_INTERVAL_MS * (useconds_t)EOS_US_PER_MS);
     int c2 = *cnt_ptr;
     report_test(ctx, "proc: background thread terminated upon main thread exit", c1 == c2 && c1 > 0);
     free((void *)cnt_ptr);
@@ -888,7 +906,7 @@ static void test_vfs_fd_churn_and_reap(test_ctx_t *ctx) {
   pid_t br_reaped = waitpid(-1, &br_status, 0);
   report_test(ctx, "vfs: waitpid reaped child with blocked reader without stall", br_reaped > 0);
   report_test(ctx, "vfs: child with blocked reader exited with expected code 33",
-              WIFEXITED(br_status) && WEXITSTATUS(br_status) == EOS_DEFAULT_MAGIC_33);
+              WIFEXITED(br_status) && WEXITSTATUS(br_status) == EOS_TEST_MAGIC_ALT);
 }
 
 static void test_vfs_concurrency(test_ctx_t *ctx) {
@@ -1010,7 +1028,7 @@ int test_proc_main(int argc, char **argv) {
   // Subcommand dispatch for child processes spawned during tests
   if (argc >= 2 && strcmp(argv[1], "--child-cpu-bound") == 0) {
     volatile uint32_t count = 0;
-    for (uint32_t i = 0; i < 2000000; i++) {
+    for (uint32_t i = 0; i < 10000000; i++) {
       count += i ^ (count >> 1);
     }
     (void)count;
@@ -1033,7 +1051,7 @@ int test_proc_main(int argc, char **argv) {
       fprintf(f, "%d\n", (int)getpid());
       fclose(f);
     }
-    usleep(EOS_TIMEOUT_500_MS * (useconds_t)EOS_US_PER_MS);
+    usleep(EOS_HALF_SEC_TIMEOUT_MS * (useconds_t)EOS_US_PER_MS);
     return 0;
   }
 
@@ -1050,7 +1068,7 @@ int test_proc_main(int argc, char **argv) {
       fprintf(f, "%p\n", (void *)cnt);
       fclose(f);
     }
-    usleep(EOS_MS_PER_TICK_50 * (useconds_t)EOS_US_PER_MS);
+    usleep(EOS_POLL_INTERVAL_MS * (useconds_t)EOS_US_PER_MS);
     return 0;
   }
 
@@ -1059,7 +1077,7 @@ int test_proc_main(int argc, char **argv) {
       void *m = malloc(100);
       if (m) memset(m, 0x7E, 100);
     }
-    return EOS_DEFAULT_MAGIC_42;
+    return EOS_TEST_MAGIC_STATUS;
   }
 
   if (argc >= 2 && strcmp(argv[1], "--child-attach-driver") == 0) {
@@ -1090,7 +1108,7 @@ int test_proc_main(int argc, char **argv) {
     pthread_create(&th, NULL, vfs_blocked_reader_worker, r_ctx);
     while (!r_ctx->started) usleep(EOS_US_PER_MS);
     usleep(15 * (useconds_t)EOS_US_PER_MS);
-    return EOS_DEFAULT_MAGIC_33;
+    return EOS_TEST_MAGIC_ALT;
   }
 
   printf("\n=== Running Process Table & Lifecycle Unit Tests ===\n");

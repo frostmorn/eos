@@ -1,5 +1,6 @@
 #include "test_disp_format.h"
 #include "ecore/bin.h"
+#include "ecore/display.h"
 #include "ecore/ioctl.h"
 
 #include <errno.h>
@@ -84,7 +85,7 @@ static int run_format_self_test(int fd, const char *path) {
 }
 
 int test_disp_format_main(int argc, char **argv) {
-  const char *path = (getenv("EOS_FB") && getenv("EOS_FB")[0]) ? getenv("EOS_FB") : "/dev/fb0";
+  const char *path = eos_display_default_fb_path();
   if (argc > 1 && argv[1][0] != '-') {
     path = argv[1];
   }

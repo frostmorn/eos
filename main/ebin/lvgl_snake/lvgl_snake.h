@@ -2,6 +2,6 @@
 
 #include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
+#include "snake_logic.h"
 
-#define SNAKE_MAX_LEN 512
-#define SNAKE_MAX_FOOD_TRIES 200
+int lvgl_snake_main(int argc, char **argv);

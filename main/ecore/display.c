@@ -175,3 +175,30 @@ uint32_t eos_display_get_active_format(const char *fb_path) {
 pid_t eos_display_get_owner_pid(void) {
   return s_disp.owner_pid;
 }
+
+const char *eos_display_default_fb_path(void) {
+  const char *env = getenv("EOS_FB");
+  if (env && env[0] != '\0') {
+    return env;
+  }
+  if (access("/dev/vfb3", F_OK) == 0) return "/dev/vfb3";
+  if (access("/dev/fb0", F_OK) == 0) return "/dev/fb0";
+  if (access("/dev/vfb0", F_OK) == 0) return "/dev/vfb0";
+  return "/dev/fb0";
+}
+
+const char *eos_display_role_fb_path(const char *role) {
+  const char *env = getenv("EOS_FB");
+  if (env && env[0] != '\0') {
+    return env;
+  }
+  if (role) {
+    if (strcmp(role, "statusbar") == 0) {
+      return (access("/dev/vfb1", F_OK) == 0) ? "/dev/vfb1" : "/dev/fb0";
+    }
+    if (strcmp(role, "toolbar") == 0) {
+      return (access("/dev/vfb2", F_OK) == 0) ? "/dev/vfb2" : "/dev/fb0";
+    }
+  }
+  return eos_display_default_fb_path();
+}

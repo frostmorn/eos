@@ -78,7 +78,7 @@ bool driver_input_gt911_init(eos_dev_t *dev) {
 
   // Probe touch controller on the I2C bus
   if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_I2C_IOCTL_PROBE, addr,
-                    EOS_MS_PER_TICK_50) == 0) {
+                    EOS_POLL_INTERVAL_MS) == 0) {
     EOS_LOGI("gt911: detected device at I2C address 0x%02X", (unsigned)addr);
   } else {
     EOS_LOGW("gt911: probe at I2C address 0x%02X returned NACK (proceeding with init)",

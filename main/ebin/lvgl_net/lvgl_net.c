@@ -1,100 +1,17 @@
 #include "ecore/bin.h"
-#include "ecore/ioctl.h"
 #include "ecore/lvgl.h"
-#include "ecore/netif.h"
 #include "emisc/netmisc.h"
 #include "ebin/lvgl_net/lvgl_net.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/ioctl.h>
-#include <sys/time.h>
-#include <unistd.h>
-
-typedef enum {
-  TAB_STA = 0,
-  TAB_AP,
-  TAB_BRIDGE,
-  TAB_IFACES,
-  TAB_SNIFFER,
-} net_tab_t;
-
-typedef enum {
-  ITEM_ACTION_NONE = 0,
-  ITEM_ACTION_TOGGLE_RADIO,
-  ITEM_ACTION_SCAN,
-  ITEM_ACTION_DISCONNECT,
-  ITEM_ACTION_CONNECT_AP,
-  ITEM_ACTION_CONNECT_MANUAL,
-  ITEM_ACTION_TOGGLE_DHCPC,
-  ITEM_ACTION_EDIT_STATIC_IP,
-  ITEM_ACTION_TOGGLE_AP,
-  ITEM_ACTION_TOGGLE_DHCPS,
-  ITEM_ACTION_EDIT_AP_SSID,
-  ITEM_ACTION_EDIT_AP_PASS,
-  ITEM_ACTION_CYCLE_AP_CHAN,
-  ITEM_ACTION_TOGGLE_AP_SECURITY,
-  ITEM_ACTION_TOGGLE_NAPT,
-  ITEM_ACTION_TOGGLE_IFACE,
-  ITEM_ACTION_TOGGLE_PROMISC,
-} net_item_action_t;
-
-typedef enum {
-  DIALOG_NONE = 0,
-  DIALOG_CONNECT_AP_PW,
-  DIALOG_MANUAL_SSID,
-  DIALOG_MANUAL_PW,
-  DIALOG_AP_SSID,
-  DIALOG_AP_PASS,
-  DIALOG_STA_STATIC_IP,
-} net_dialog_type_t;
 
 typedef struct {
-  char ssid[NET_SSID_MAX_LEN];
-  int8_t rssi;
-  uint8_t channel;
-  uint8_t authmode;
-} net_ap_item_t;
+  net_logic_t logic;
 
-typedef struct {
-  net_tab_t cur_tab;
-  int sel_idx;
-  int item_count;
-  bool quit;
-
-  // Cached hardware state
-  bool radio_on;
-  bool ap_on;
-  bool napt_on;
-  bool promisc_on;
-  bool sta_connected;
-  bool sta_dhcp_on;
-  bool ap_dhcp_on;
-
-  // SoftAP Configuration
-  eos_ap_config_t ap_cfg;
-
-  // Scan & Connection
-  net_ap_item_t aps[NET_MAX_SCAN_APS];
-  int ap_count;
-  char connect_ssid[NET_SSID_MAX_LEN];
-  char status_msg[EOS_BUFFER_128_LEN];
-  uint8_t status_type; // 0=info, 1=warning, 2=error, 3=success
-
-  // Modal Dialog state
-  bool dialog_active;
-  net_dialog_type_t dialog_type;
-  int dialog_ap_idx;
-  char dialog_buf[EOS_LINE_64_LEN];
+  // Modal Dialog UI state
   lv_obj_t *dialog_overlay;
-
-  // Toast notification state
-  char toast_msg[EOS_BUFFER_128_LEN];
-  uint64_t toast_expire_ms;
 
   // UI Widgets
   lv_obj_t *hdr;
@@ -117,295 +34,28 @@ typedef struct {
   lv_obj_t *items[NET_MAX_ITEMS];
   net_item_action_t item_actions[NET_MAX_ITEMS];
   int item_args[NET_MAX_ITEMS];
-
-  uint64_t last_refresh_ms;
 } net_app_t;
-
-static uint64_t net_get_ms(void) {
-  struct timeval tv;
-  gettimeofday(&tv, NULL);
-  return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
-}
-
-static int open_iface_dev(const char *dev) {
-  if (!dev || !dev[0]) return -1;
-  char path[EOS_LINE_64_LEN];
-  if (dev[0] == '/') {
-    snprintf(path, sizeof(path), "%s", dev);
-  } else {
-    snprintf(path, sizeof(path), "/dev/%s", dev);
-  }
-  return open(path, O_RDWR);
-}
 
 // ---------------------------------------------------------------------------
 // Toast Notification
 // ---------------------------------------------------------------------------
 
-static void set_status(net_app_t *app, uint8_t type, const char *fmt, ...) {
-  if (!app) return;
-  va_list ap;
-  va_start(ap, fmt);
-  vsnprintf(app->status_msg, sizeof(app->status_msg), fmt, ap);
-  va_end(ap);
-  app->status_type = type;
-
-  snprintf(app->toast_msg, sizeof(app->toast_msg), "%s", app->status_msg);
-  app->toast_expire_ms = net_get_ms() + 3500ULL;
-
-  if (app->toast_bar && app->toast_lbl) {
-    lv_label_set_text(app->toast_lbl, app->toast_msg);
-    uint32_t col = (type == 1) ? COL_AMBER :
-                   (type == 2) ? COL_RED :
-                   (type == 3) ? COL_GREEN :
-                   COL_ACCENT_SKY;
-    lv_obj_set_style_bg_color(app->toast_bar, lv_color_hex(col), 0);
-    lv_obj_clear_flag(app->toast_bar, LV_OBJ_FLAG_HIDDEN);
-  }
+static void update_toast_ui(net_app_t *app) {
+  if (!app || !app->toast_bar || !app->toast_lbl) return;
+  lv_label_set_text(app->toast_lbl, app->logic.toast_msg);
+  uint32_t col = (app->logic.status_type == NET_STATUS_WARN) ? COL_AMBER :
+                 (app->logic.status_type == NET_STATUS_ERR) ? COL_RED :
+                 (app->logic.status_type == NET_STATUS_SUCCESS) ? COL_GREEN :
+                 COL_ACCENT_SKY;
+  lv_obj_set_style_bg_color(app->toast_bar, lv_color_hex(col), 0);
+  lv_obj_clear_flag(app->toast_bar, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void update_toast(net_app_t *app) {
   if (!app || !app->toast_bar) return;
-  if (app->toast_expire_ms > 0 && net_get_ms() > app->toast_expire_ms) {
+  if (net_logic_update_toast(&app->logic)) {
     lv_obj_add_flag(app->toast_bar, LV_OBJ_FLAG_HIDDEN);
-    app->toast_expire_ms = 0;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Direct Driver IOCTL Helpers
-// ---------------------------------------------------------------------------
-
-static bool ioctl_get_radio_power(void) {
-  int fd = open_iface_dev("wifi0");
-  if (fd < 0) return false;
-  int power = 0;
-  int ret = ioctl(fd, EOS_RADIO_IOCTL_GET_POWER, &power);
-  close(fd);
-  return (ret == 0 && power != 0);
-}
-
-static bool ioctl_set_radio_power(bool on) {
-  int fd = open_iface_dev("wifi0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_RADIO_IOCTL_POWER, on ? 1 : 0);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_get_netif_info(const char *dev, eos_netif_info_t *out_info) {
-  if (!out_info) return false;
-  memset(out_info, 0, sizeof(*out_info));
-  int fd = open_iface_dev(dev);
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_NETIF_IOCTL_GET_INFO, out_info);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_get_sta_ap_info(eos_sta_ap_info_t *out_ap) {
-  if (!out_ap) return false;
-  memset(out_ap, 0, sizeof(*out_ap));
-  int fd = open_iface_dev("sta0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_STA_IOCTL_GET_AP_INFO, out_ap);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_sta_connect(const char *ssid, const char *pass) {
-  int fd = open_iface_dev("sta0");
-  if (fd < 0) return false;
-  eos_sta_connect_t conn;
-  memset(&conn, 0, sizeof(conn));
-  strncpy(conn.ssid, ssid, sizeof(conn.ssid) - 1);
-  if (pass && pass[0]) {
-    strncpy(conn.password, pass, sizeof(conn.password) - 1);
-  }
-  conn.timeout_ms = 8000;
-  int ret = ioctl(fd, EOS_STA_IOCTL_CONNECT, &conn);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_sta_disconnect(void) {
-  int fd = open_iface_dev("sta0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_STA_IOCTL_DISCONNECT);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_scan_aps(net_ap_item_t *out_aps, int max_aps, int *out_count) {
-  if (!out_aps || max_aps <= 0 || !out_count) return false;
-  *out_count = 0;
-
-  int fd = open_iface_dev("wifi0");
-  if (fd < 0) return false;
-
-  eos_wifi_scan_config_t scfg = {
-      .mode = EOS_WIFI_SCAN_ACTIVE,
-      .channel = 0,
-      .show_hidden = false,
-      .dwell_time_ms = NET_SCAN_DWELL_MS,
-  };
-
-  if (ioctl(fd, EOS_RADIO_IOCTL_SCAN_START, &scfg) != 0) {
-    close(fd);
-    return false;
-  }
-
-  uint16_t ap_count = 0;
-  ioctl(fd, EOS_RADIO_IOCTL_SCAN_GET_COUNT, &ap_count);
-
-  if (ap_count > (uint16_t)max_aps) ap_count = (uint16_t)max_aps;
-
-  if (ap_count > 0) {
-    eos_wifi_scan_ap_t *recs = calloc(ap_count, sizeof(eos_wifi_scan_ap_t));
-    if (recs) {
-      eos_wifi_scan_results_t res = {
-          .aps = recs,
-          .max_count = ap_count,
-          .count = 0,
-      };
-      if (ioctl(fd, EOS_RADIO_IOCTL_SCAN_GET_RESULTS, &res) == 0) {
-        *out_count = (int)res.count;
-        for (size_t i = 0; i < res.count; i++) {
-          const char *name = recs[i].is_hidden ? "<Hidden>" : recs[i].ssid;
-          strncpy(out_aps[i].ssid, name[0] ? name : "<Hidden>", sizeof(out_aps[i].ssid) - 1);
-          out_aps[i].rssi = recs[i].rssi;
-          out_aps[i].channel = recs[i].channel;
-          out_aps[i].authmode = recs[i].authmode;
-        }
-      }
-      free(recs);
-    }
-  }
-
-  close(fd);
-  return true;
-}
-
-static bool ioctl_get_ap_config(eos_ap_config_t *out_cfg) {
-  if (!out_cfg) return false;
-  memset(out_cfg, 0, sizeof(*out_cfg));
-  int fd = open_iface_dev("ap0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_AP_IOCTL_GET_CONFIG, out_cfg);
-  close(fd);
-  if (ret != 0 || out_cfg->ssid[0] == '\0') {
-    strlcpy(out_cfg->ssid, "EOS-Hotspot", sizeof(out_cfg->ssid));
-    strlcpy(out_cfg->password, "eos12345678", sizeof(out_cfg->password));
-    out_cfg->channel = 1;
-    out_cfg->authmode = 3; // WPA2_PSK
-    out_cfg->max_connection = 4;
-  }
-  return true;
-}
-
-static bool ioctl_set_ap_config(const eos_ap_config_t *cfg) {
-  if (!cfg) return false;
-  int fd = open_iface_dev("ap0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_AP_IOCTL_SET_CONFIG, cfg);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_set_ap_power(bool on, const eos_ap_config_t *cfg) {
-  int fd = open_iface_dev("ap0");
-  if (fd < 0) return false;
-
-  int ret = 0;
-  if (on) {
-    if (cfg) {
-      ioctl(fd, EOS_AP_IOCTL_SET_CONFIG, cfg);
-    }
-    ret = ioctl(fd, EOS_NETIF_IOCTL_SET_UP);
-  } else {
-    ret = ioctl(fd, EOS_NETIF_IOCTL_SET_DOWN);
-  }
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_toggle_dhcpc(void) {
-  eos_netif_info_t info;
-  if (!ioctl_get_netif_info("sta0", &info)) return false;
-  bool is_dhcp = (info.flags & EOS_NETIF_FLAG_DHCP_CLIENT) != 0;
-  int fd = open_iface_dev("sta0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, is_dhcp ? EOS_NETIF_IOCTL_STOP_DHCPC : EOS_NETIF_IOCTL_START_DHCPC);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_toggle_dhcps(void) {
-  eos_netif_info_t info;
-  if (!ioctl_get_netif_info("ap0", &info)) return false;
-  bool is_dhcp = (info.flags & EOS_NETIF_FLAG_DHCP_SERVER) != 0;
-  int fd = open_iface_dev("ap0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, is_dhcp ? EOS_NETIF_IOCTL_STOP_DHCPS : EOS_NETIF_IOCTL_START_DHCPS);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_set_sta_static_ip(const char *ip, const char *mask, const char *gw) {
-  int fd = open_iface_dev("sta0");
-  if (fd < 0) return false;
-  eos_netif_ip_info_t ip_info;
-  memset(&ip_info, 0, sizeof(ip_info));
-  strlcpy(ip_info.ip, (ip && ip[0]) ? ip : "192.168.1.150", sizeof(ip_info.ip));
-  strlcpy(ip_info.netmask, (mask && mask[0]) ? mask : "255.255.255.0", sizeof(ip_info.netmask));
-  strlcpy(ip_info.gw, (gw && gw[0]) ? gw : "192.168.1.1", sizeof(ip_info.gw));
-  int ret = ioctl(fd, EOS_NETIF_IOCTL_SET_IP, &ip_info);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_get_bridge_info(eos_netif_bridge_info_t *out_binfo) {
-  if (!out_binfo) return false;
-  memset(out_binfo, 0, sizeof(*out_binfo));
-  int fd = open_iface_dev("br0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_GET_INFO, out_binfo);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_set_bridge_napt(bool on) {
-  int fd = open_iface_dev("br0");
-  if (fd < 0) return false;
-  int ret = ioctl(fd, EOS_NETIF_IOCTL_BRIDGE_SET_NAPT, on);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_set_promisc(bool on) {
-  int fd = open_iface_dev("wifi0");
-  if (fd < 0) return false;
-  eos_wifi_promisc_cfg_t pcfg = {
-      .enable = on,
-      .filter_mgmt = true,
-      .filter_ctrl = true,
-      .filter_data = true,
-      .filter_misc = true,
-  };
-  int ret = ioctl(fd, EOS_RADIO_IOCTL_SET_PROMISC, &pcfg);
-  close(fd);
-  return (ret == 0);
-}
-
-static bool ioctl_toggle_iface(const char *dev) {
-  eos_netif_info_t info;
-  if (!ioctl_get_netif_info(dev, &info)) return false;
-  bool is_up = (info.flags & EOS_NETIF_FLAG_UP) != 0;
-  int fd = open_iface_dev(dev);
-  if (fd < 0) return false;
-  int ret = ioctl(fd, is_up ? EOS_NETIF_IOCTL_SET_DOWN : EOS_NETIF_IOCTL_SET_UP);
-  close(fd);
-  return (ret == 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -424,7 +74,7 @@ static void net_dialog_close(net_app_t *app);
 // ---------------------------------------------------------------------------
 
 static void style_switch(lv_obj_t *sw) {
-  lv_obj_set_size(sw, 36, 18);
+  lv_obj_set_size(sw, NET_SWITCH_WIDTH, NET_SWITCH_HEIGHT);
   lv_obj_set_style_bg_color(sw, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
   lv_obj_set_style_bg_color(sw, lv_color_hex(COL_GREEN), LV_STATE_CHECKED);
   lv_obj_set_style_pad_all(sw, 0, 0);
@@ -433,12 +83,12 @@ static void style_switch(lv_obj_t *sw) {
 
 static void item_click_event_cb(lv_event_t *e) {
   net_app_t *app = (net_app_t *)lv_event_get_user_data(e);
-  if (!app || app->dialog_active) return;
+  if (!app || app->logic.dialog_active) return;
   lv_obj_t *target = lv_event_get_current_target(e);
 
-  for (int i = 0; i < app->item_count; i++) {
+  for (int i = 0; i < app->logic.item_count; i++) {
     if (app->items[i] == target) {
-      app->sel_idx = i;
+      app->logic.sel_idx = i;
       net_update_selection_highlight(app);
       handle_item_action(app, i);
       break;
@@ -448,11 +98,11 @@ static void item_click_event_cb(lv_event_t *e) {
 
 static lv_obj_t *add_switch_row(net_app_t *app, lv_obj_t *parent, const char *label_text,
                                 lv_obj_t **out_sw, bool state, net_item_action_t action) {
-  if (app->item_count >= NET_MAX_ITEMS) return NULL;
-  int idx = app->item_count++;
+  if (app->logic.item_count >= NET_MAX_ITEMS) return NULL;
+  int idx = app->logic.item_count++;
 
   lv_obj_t *row = lv_obj_create(parent);
-  lv_obj_set_size(row, lv_pct(100), 26);
+  lv_obj_set_size(row, lv_pct(100), NET_ROW_HEIGHT);
   lv_obj_set_style_bg_color(row, lv_color_hex(COL_BG_CARD), 0);
   lv_obj_set_style_bg_opa(row, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(row, lv_color_hex(COL_BORDER), 0);
@@ -491,11 +141,11 @@ static lv_obj_t *add_switch_row(net_app_t *app, lv_obj_t *parent, const char *la
 static lv_obj_t *add_button_row(net_app_t *app, lv_obj_t *parent, const char *text,
                                 const char *badge, uint32_t bg_color,
                                 net_item_action_t action, int arg) {
-  if (app->item_count >= NET_MAX_ITEMS) return NULL;
-  int idx = app->item_count++;
+  if (app->logic.item_count >= NET_MAX_ITEMS) return NULL;
+  int idx = app->logic.item_count++;
 
   lv_obj_t *btn = lv_obj_create(parent);
-  lv_obj_set_size(btn, lv_pct(100), 24);
+  lv_obj_set_size(btn, lv_pct(100), NET_BTN_HEIGHT);
   lv_obj_set_style_bg_color(btn, lv_color_hex(bg_color), 0);
   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(btn, lv_color_hex(COL_BORDER), 0);
@@ -531,8 +181,8 @@ static lv_obj_t *add_button_row(net_app_t *app, lv_obj_t *parent, const char *te
 static lv_obj_t *add_card(net_app_t *app, lv_obj_t *parent, const char *title,
                           const char *desc, uint32_t title_color,
                           net_item_action_t action, int arg) {
-  if (app->item_count >= NET_MAX_ITEMS) return NULL;
-  int idx = app->item_count++;
+  if (app->logic.item_count >= NET_MAX_ITEMS) return NULL;
+  int idx = app->logic.item_count++;
 
   lv_obj_t *card = lv_obj_create(parent);
   lv_obj_set_size(card, lv_pct(100), LV_SIZE_CONTENT);
@@ -575,10 +225,10 @@ static lv_obj_t *add_card(net_app_t *app, lv_obj_t *parent, const char *title,
 
 static void net_update_selection_highlight(net_app_t *app) {
   if (!app) return;
-  for (int i = 0; i < app->item_count; i++) {
+  for (int i = 0; i < app->logic.item_count; i++) {
     lv_obj_t *item = app->items[i];
     if (!item) continue;
-    if (i == app->sel_idx) {
+    if (i == app->logic.sel_idx) {
       lv_obj_set_style_border_color(item, lv_color_hex(COL_ACCENT_LTBLUE), 0);
       lv_obj_set_style_border_width(item, 2, 0);
       lv_obj_scroll_to_view(item, LV_ANIM_OFF);
@@ -594,65 +244,49 @@ static void net_update_selection_highlight(net_app_t *app) {
 // ---------------------------------------------------------------------------
 
 static void do_toggle_radio(net_app_t *app) {
-  bool new_state = !app->radio_on;
-  if (ioctl_set_radio_power(new_state)) {
-    app->radio_on = new_state;
-    set_status(app, new_state ? 3 : 1, "Wi-Fi radio turned %s", new_state ? "ON" : "OFF");
-  } else {
-    set_status(app, 2, "Failed to toggle Wi-Fi radio");
-  }
+  net_logic_toggle_radio(&app->logic);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
 static void do_scan(net_app_t *app) {
-  set_status(app, 0, "Scanning Wi-Fi networks...");
+  net_logic_set_status(&app->logic, NET_STATUS_INFO, "Scanning Wi-Fi networks...");
+  update_toast_ui(app);
   net_render_active_tab(app);
-  eos_lvgl_step(20);
+  eos_lvgl_step(NET_SCAN_STEP_MS);
 
-  int count = 0;
-  if (ioctl_scan_aps(app->aps, NET_MAX_SCAN_APS, &count)) {
-    app->ap_count = count;
-    app->radio_on = true;
-    set_status(app, 3, "Scan complete: %d network(s) found", count);
-  } else {
-    set_status(app, 2, "Wi-Fi scan failed (ensure radio is ON)");
-  }
+  net_logic_scan(&app->logic);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
 static void do_connect_ap(net_app_t *app, const char *ssid, const char *pass) {
   if (!ssid || !ssid[0]) return;
-  strncpy(app->connect_ssid, ssid, sizeof(app->connect_ssid) - 1);
-
-  set_status(app, 0, "Connecting to \"%.24s\"...", ssid);
+  net_logic_set_status(&app->logic, NET_STATUS_INFO, "Connecting to \"%.24s\"...", ssid);
+  update_toast_ui(app);
   net_render_active_tab(app);
-  eos_lvgl_step(20);
+  eos_lvgl_step(NET_SCAN_STEP_MS);
 
-  if (ioctl_sta_connect(ssid, pass)) {
-    app->sta_connected = true;
-    set_status(app, 3, "Connected to \"%.24s\"", ssid);
-  } else {
-    set_status(app, 2, "Failed to connect to \"%.24s\"", ssid);
-  }
+  net_logic_connect_ap(&app->logic, ssid, pass);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
 static void net_confirm_disconnect_cb(bool confirmed, void *user_data) {
   net_app_t *app = (net_app_t *)user_data;
   if (!app) return;
-  app->dialog_active = false;
+  app->logic.dialog_active = false;
   app->dialog_overlay = NULL;
   if (confirmed) {
-    ioctl_sta_disconnect();
-    app->sta_connected = false;
-    set_status(app, 1, "Disconnected from network");
+    net_logic_disconnect(&app->logic);
+    update_toast_ui(app);
     net_render_active_tab(app);
   }
 }
 
 static void do_disconnect(net_app_t *app) {
-  if (!app || app->dialog_active) return;
-  app->dialog_active = true;
+  if (!app || app->logic.dialog_active) return;
+  app->logic.dialog_active = true;
   eos_lvgl_confirm_dialog_cfg_t cfg = {
       .title = "Disconnect Wi-Fi",
       .message = "Disconnect from the active Wi-Fi network?",
@@ -666,37 +300,20 @@ static void do_disconnect(net_app_t *app) {
 }
 
 static void do_toggle_ap(net_app_t *app) {
-  bool new_state = !app->ap_on;
-  if (ioctl_set_ap_power(new_state, &app->ap_cfg)) {
-    app->ap_on = new_state;
-    set_status(app, new_state ? 3 : 1, "SoftAP %s (\"%s\", Ch%u)",
-               new_state ? "started" : "stopped",
-               app->ap_cfg.ssid, (unsigned)app->ap_cfg.channel);
-  } else {
-    set_status(app, 2, "Failed to toggle SoftAP");
-  }
+  net_logic_toggle_ap(&app->logic);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
 static void do_toggle_napt(net_app_t *app) {
-  bool new_state = !app->napt_on;
-  if (ioctl_set_bridge_napt(new_state)) {
-    app->napt_on = new_state;
-    set_status(app, new_state ? 3 : 1, "Bridge NAPT routing %s", new_state ? "enabled" : "disabled");
-  } else {
-    set_status(app, 2, "Failed to configure Bridge NAPT");
-  }
+  net_logic_toggle_napt(&app->logic);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
 static void do_toggle_promisc(net_app_t *app) {
-  bool new_state = !app->promisc_on;
-  if (ioctl_set_promisc(new_state)) {
-    app->promisc_on = new_state;
-    set_status(app, new_state ? 3 : 1, "802.11 monitor mode %s", new_state ? "enabled" : "disabled");
-  } else {
-    set_status(app, 2, "Failed to toggle monitor mode");
-  }
+  net_logic_toggle_promisc(&app->logic);
+  update_toast_ui(app);
   net_render_active_tab(app);
 }
 
@@ -707,56 +324,32 @@ static bool handle_softap_action(net_app_t *app, net_item_action_t act) {
       return true;
 
     case ITEM_ACTION_TOGGLE_DHCPS:
-      if (ioctl_toggle_dhcps()) {
-        set_status(app, 3, "SoftAP DHCP server toggled");
-      } else {
-        set_status(app, 2, "Failed to toggle DHCP server");
-      }
+      net_logic_toggle_dhcps(&app->logic);
+      update_toast_ui(app);
       net_render_active_tab(app);
       return true;
 
     case ITEM_ACTION_EDIT_AP_SSID:
       net_open_dialog(app, DIALOG_AP_SSID, "SoftAP SSID",
-                      "Enter Hotspot SSID:", app->ap_cfg.ssid, false);
+                      "Enter Hotspot SSID:", app->logic.ap_cfg.ssid, false);
       return true;
 
     case ITEM_ACTION_EDIT_AP_PASS:
       net_open_dialog(app, DIALOG_AP_PASS, "SoftAP Password",
-                      "Enter Password (>=8 chars, or empty for Open):", app->ap_cfg.password, true);
+                      "Enter Password (>=8 chars, or empty for Open):", app->logic.ap_cfg.password, true);
       return true;
 
-    case ITEM_ACTION_CYCLE_AP_CHAN: {
-      uint8_t ch = app->ap_cfg.channel;
-      if (ch == 1) ch = 6;
-      else if (ch == 6) ch = 11;
-      else if (ch == 11) ch = 2;
-      else if (ch >= 13) ch = 1;
-      else ch++;
-      app->ap_cfg.channel = ch;
-      ioctl_set_ap_config(&app->ap_cfg);
-      set_status(app, 3, "SoftAP channel set to Ch %u (%u MHz)",
-                 (unsigned)ch, (unsigned)(2407 + ch * 5));
+    case ITEM_ACTION_CYCLE_AP_CHAN:
+      net_logic_cycle_ap_chan(&app->logic);
+      update_toast_ui(app);
       net_render_active_tab(app);
       return true;
-    }
 
-    case ITEM_ACTION_TOGGLE_AP_SECURITY: {
-      if (app->ap_cfg.authmode == 0) {
-        app->ap_cfg.authmode = 3;
-        if (strlen(app->ap_cfg.password) < 8) {
-          strlcpy(app->ap_cfg.password, "eos12345678", sizeof(app->ap_cfg.password));
-        }
-        ioctl_set_ap_config(&app->ap_cfg);
-        set_status(app, 3, "SoftAP security set to WPA2-PSK (password: %s)", app->ap_cfg.password);
-      } else {
-        app->ap_cfg.authmode = 0;
-        app->ap_cfg.password[0] = '\0';
-        ioctl_set_ap_config(&app->ap_cfg);
-        set_status(app, 3, "SoftAP security set to Open (no encryption)");
-      }
+    case ITEM_ACTION_TOGGLE_AP_SECURITY:
+      net_logic_toggle_ap_security(&app->logic);
+      update_toast_ui(app);
       net_render_active_tab(app);
       return true;
-    }
 
     default:
       return false;
@@ -764,7 +357,7 @@ static bool handle_softap_action(net_app_t *app, net_item_action_t act) {
 }
 
 static void handle_item_action(net_app_t *app, int idx) {
-  if (idx < 0 || idx >= app->item_count) return;
+  if (idx < 0 || idx >= app->logic.item_count) return;
 
   net_item_action_t act = app->item_actions[idx];
   int arg = app->item_args[idx];
@@ -787,14 +380,14 @@ static void handle_item_action(net_app_t *app, int idx) {
       break;
 
     case ITEM_ACTION_CONNECT_AP:
-      if (arg >= 0 && arg < app->ap_count) {
-        if (app->aps[arg].authmode > 0) {
-          app->dialog_ap_idx = arg;
-          char pbuf[EOS_STR_96_LEN];
-          snprintf(pbuf, sizeof(pbuf), "Enter password for \"%.24s\":", app->aps[arg].ssid);
+      if (arg >= 0 && arg < app->logic.ap_count) {
+        if (app->logic.aps[arg].authmode > 0) {
+          app->logic.dialog_ap_idx = arg;
+          char pbuf[EOS_HEADER_STR_LEN];
+          snprintf(pbuf, sizeof(pbuf), "Enter password for \"%.24s\":", app->logic.aps[arg].ssid);
           net_open_dialog(app, DIALOG_CONNECT_AP_PW, "Connect to Wi-Fi", pbuf, "", true);
         } else {
-          do_connect_ap(app, app->aps[arg].ssid, "");
+          do_connect_ap(app, app->logic.aps[arg].ssid, "");
         }
       }
       break;
@@ -805,11 +398,8 @@ static void handle_item_action(net_app_t *app, int idx) {
       break;
 
     case ITEM_ACTION_TOGGLE_DHCPC:
-      if (ioctl_toggle_dhcpc()) {
-        set_status(app, 3, "Station DHCP client toggled");
-      } else {
-        set_status(app, 2, "Failed to toggle DHCP client");
-      }
+      net_logic_toggle_dhcpc(&app->logic);
+      update_toast_ui(app);
       net_render_active_tab(app);
       break;
 
@@ -822,14 +412,12 @@ static void handle_item_action(net_app_t *app, int idx) {
       do_toggle_napt(app);
       break;
 
-    case ITEM_ACTION_TOGGLE_IFACE: {
-      const char *devs[] = {"wifi0", "sta0", "ap0", "br0"};
-      if (arg >= 0 && arg < 4) {
-        ioctl_toggle_iface(devs[arg]);
+    case ITEM_ACTION_TOGGLE_IFACE:
+      if (arg >= 0 && arg < NET_MAX_IFACES) {
+        net_logic_toggle_iface(arg);
         net_render_active_tab(app);
       }
       break;
-    }
 
     case ITEM_ACTION_TOGGLE_PROMISC:
       do_toggle_promisc(app);
@@ -851,8 +439,8 @@ static void net_dialog_close(net_app_t *app) {
     app->dialog_overlay = NULL;
   }
   if (app) {
-    app->dialog_active = false;
-    app->dialog_type = DIALOG_NONE;
+    app->logic.dialog_active = false;
+    app->logic.dialog_type = DIALOG_NONE;
   }
 }
 
@@ -860,8 +448,8 @@ static void net_dialog_cancel_cb(const char *unused, void *user_data) {
   (void)unused;
   net_app_t *app = (net_app_t *)user_data;
   if (app) {
-    app->dialog_active = false;
-    app->dialog_type = DIALOG_NONE;
+    app->logic.dialog_active = false;
+    app->logic.dialog_type = DIALOG_NONE;
     app->dialog_overlay = NULL;
   }
 }
@@ -869,72 +457,53 @@ static void net_dialog_cancel_cb(const char *unused, void *user_data) {
 static void net_dialog_submit_cb(const char *text, void *user_data) {
   net_app_t *app = (net_app_t *)user_data;
   if (!app) return;
-  net_dialog_type_t dtype = app->dialog_type;
-  int idx = app->dialog_ap_idx;
-  app->dialog_active = false;
-  app->dialog_type = DIALOG_NONE;
+  net_dialog_type_t dtype = app->logic.dialog_type;
+  int idx = app->logic.dialog_ap_idx;
+  app->logic.dialog_active = false;
+  app->logic.dialog_type = DIALOG_NONE;
   app->dialog_overlay = NULL;
 
   switch (dtype) {
     case DIALOG_CONNECT_AP_PW:
-      if (idx >= 0 && idx < app->ap_count) {
-        do_connect_ap(app, app->aps[idx].ssid, text ? text : "");
+      if (idx >= 0 && idx < app->logic.ap_count) {
+        do_connect_ap(app, app->logic.aps[idx].ssid, text ? text : "");
       }
       break;
 
     case DIALOG_MANUAL_SSID:
       if (text && text[0]) {
-        strlcpy(app->dialog_buf, text, sizeof(app->dialog_buf));
+        strlcpy(app->logic.dialog_buf, text, sizeof(app->logic.dialog_buf));
         net_open_dialog(app, DIALOG_MANUAL_PW, "Wi-Fi Password",
                         "Enter password (empty for Open network):", "", true);
       }
       break;
 
     case DIALOG_MANUAL_PW:
-      if (app->dialog_buf[0]) {
-        do_connect_ap(app, app->dialog_buf, text ? text : "");
-        app->dialog_buf[0] = '\0';
+      if (app->logic.dialog_buf[0]) {
+        do_connect_ap(app, app->logic.dialog_buf, text ? text : "");
+        app->logic.dialog_buf[0] = '\0';
       }
       break;
 
     case DIALOG_AP_SSID:
       if (text && text[0]) {
-        strlcpy(app->ap_cfg.ssid, text, sizeof(app->ap_cfg.ssid));
-        ioctl_set_ap_config(&app->ap_cfg);
-        set_status(app, 3, "SoftAP SSID updated to \"%s\"", app->ap_cfg.ssid);
+        net_logic_set_ap_ssid(&app->logic, text);
+        update_toast_ui(app);
         net_render_active_tab(app);
       }
       break;
 
     case DIALOG_AP_PASS:
-      if (!text || text[0] == '\0') {
-        app->ap_cfg.authmode = 0; // OPEN
-        app->ap_cfg.password[0] = '\0';
-        ioctl_set_ap_config(&app->ap_cfg);
-        set_status(app, 3, "SoftAP encryption set to Open (no password)");
-      } else if (strlen(text) < 8) {
-        set_status(app, 1, "Password must be >= 8 chars or empty for Open");
-      } else {
-        app->ap_cfg.authmode = 3; // WPA2_PSK
-        strlcpy(app->ap_cfg.password, text, sizeof(app->ap_cfg.password));
-        ioctl_set_ap_config(&app->ap_cfg);
-        set_status(app, 3, "SoftAP password updated (WPA2-PSK)");
-      }
+      net_logic_set_ap_pass(&app->logic, text);
+      update_toast_ui(app);
       net_render_active_tab(app);
       break;
 
     case DIALOG_STA_STATIC_IP:
       if (text && text[0]) {
-        char ip[EOS_XSMALL_STR_LEN] = {0}, mask[EOS_XSMALL_STR_LEN] = "255.255.255.0", gw[EOS_XSMALL_STR_LEN] = "192.168.1.1";
-        sscanf(text, "%15s %15s %15s", ip, mask, gw);
-        if (ip[0]) {
-          if (ioctl_set_sta_static_ip(ip, mask, gw)) {
-            set_status(app, 3, "Static IP configured: %s", ip);
-          } else {
-            set_status(app, 2, "Failed to set static IP");
-          }
-          net_render_active_tab(app);
-        }
+        net_logic_set_sta_static_ip(&app->logic, text);
+        update_toast_ui(app);
+        net_render_active_tab(app);
       }
       break;
 
@@ -945,9 +514,9 @@ static void net_dialog_submit_cb(const char *text, void *user_data) {
 
 static void net_open_dialog(net_app_t *app, net_dialog_type_t type, const char *title,
                            const char *prompt, const char *initial, bool is_pw) {
-  if (!app || app->dialog_active) return;
-  app->dialog_active = true;
-  app->dialog_type = type;
+  if (!app || app->logic.dialog_active) return;
+  app->logic.dialog_active = true;
+  app->logic.dialog_type = type;
 
   eos_lvgl_input_dialog_cfg_t cfg = {
       .title = title,
@@ -977,19 +546,19 @@ static const char *tab_titles[NET_NUM_TABS] = {
 static void net_render_tab_sta(net_app_t *app, bool has_sta,
                                const eos_netif_info_t *sta_info) {
   add_switch_row(app, app->content_cont, "Wi-Fi Radio Power", &app->sw_radio,
-                 app->radio_on, ITEM_ACTION_TOGGLE_RADIO);
+                 app->logic.radio_on, ITEM_ACTION_TOGGLE_RADIO);
 
   add_switch_row(app, app->content_cont, "DHCP Client (sta0)", &app->sw_dhcpc,
-                 app->sta_dhcp_on, ITEM_ACTION_TOGGLE_DHCPC);
+                 app->logic.sta_dhcp_on, ITEM_ACTION_TOGGLE_DHCPC);
 
   eos_sta_ap_info_t sta_ap;
-  ioctl_get_sta_ap_info(&sta_ap);
+  net_logic_ioctl_get_sta_ap_info(&sta_ap);
 
-  char title[EOS_LINE_64_LEN];
+  char title[EOS_LINE_STR_LEN];
   char desc[EOS_MID_STR_LEN];
   uint32_t tcol = COL_TEXT_SECOND;
 
-  if (app->sta_connected && sta_ap.ssid[0]) {
+  if (app->logic.sta_connected && sta_ap.ssid[0]) {
     snprintf(title, sizeof(title), "Connected: %s", sta_ap.ssid);
     tcol = COL_GREEN;
     snprintf(desc, sizeof(desc),
@@ -1001,7 +570,7 @@ static void net_render_tab_sta(net_app_t *app, bool has_sta,
              sta_info->ip.ip[0] ? sta_info->ip.ip : "0.0.0.0",
              sta_info->ip.netmask[0] ? sta_info->ip.netmask : "0.0.0.0",
              sta_info->ip.gw[0] ? sta_info->ip.gw : "0.0.0.0",
-             app->sta_dhcp_on ? "DHCP Auto-Assigned" : "Static IP");
+             app->logic.sta_dhcp_on ? "DHCP Auto-Assigned" : "Static IP");
   } else if (has_sta && (sta_info->flags & EOS_NETIF_FLAG_UP)) {
     snprintf(title, sizeof(title), "Station Interface UP (Idle)");
     tcol = COL_AMBER;
@@ -1010,7 +579,7 @@ static void net_render_tab_sta(net_app_t *app, bool has_sta,
              "DHCP Client: %s",
              sta_info->mac[0], sta_info->mac[1], sta_info->mac[2],
              sta_info->mac[3], sta_info->mac[4], sta_info->mac[5],
-             app->sta_dhcp_on ? "Enabled" : "Disabled (Static)");
+             app->logic.sta_dhcp_on ? "Enabled" : "Disabled (Static)");
   } else {
     snprintf(title, sizeof(title), "Station Interface DOWN");
     tcol = COL_TEXT_SECOND;
@@ -1024,7 +593,7 @@ static void net_render_tab_sta(net_app_t *app, bool has_sta,
   add_button_row(app, app->content_cont, "[ Connect to Hidden / Manual SSID ]", "", COL_BG_CARD,
                  ITEM_ACTION_CONNECT_MANUAL, 0);
 
-  if (!app->sta_dhcp_on) {
+  if (!app->logic.sta_dhcp_on) {
     char ip_badge[EOS_SMALL_STR_LEN];
     snprintf(ip_badge, sizeof(ip_badge), "%s [Edit]",
              sta_info->ip.ip[0] ? sta_info->ip.ip : "192.168.1.150");
@@ -1032,22 +601,22 @@ static void net_render_tab_sta(net_app_t *app, bool has_sta,
                    ITEM_ACTION_EDIT_STATIC_IP, 0);
   }
 
-  if (app->sta_connected) {
+  if (app->logic.sta_connected) {
     add_button_row(app, app->content_cont, "[ Disconnect ]", "", COL_RED_DARK,
                    ITEM_ACTION_DISCONNECT, 0);
   }
 
-  if (app->ap_count > 0) {
+  if (app->logic.ap_count > 0) {
     lv_obj_t *lhdr = lv_label_create(app->content_cont);
     lv_label_set_text(lhdr, "Available Networks:");
     lv_obj_set_style_text_color(lhdr, lv_color_hex(COL_ACCENT_SKY), 0);
 
-    for (int i = 0; i < app->ap_count; i++) {
+    for (int i = 0; i < app->logic.ap_count; i++) {
       char badge[EOS_SMALL_STR_LEN];
-      const char *sec = eos_net_wifi_auth_name(app->aps[i].authmode);
+      const char *sec = eos_net_wifi_auth_name(app->logic.aps[i].authmode);
       snprintf(badge, sizeof(badge), "%d dBm Ch%u %s",
-               (int)app->aps[i].rssi, (unsigned)app->aps[i].channel, sec);
-      add_button_row(app, app->content_cont, app->aps[i].ssid, badge, COL_BG_CARD,
+               (int)app->logic.aps[i].rssi, (unsigned)app->logic.aps[i].channel, sec);
+      add_button_row(app, app->content_cont, app->logic.aps[i].ssid, badge, COL_BG_CARD,
                      ITEM_ACTION_CONNECT_AP, i);
     }
   }
@@ -1056,16 +625,17 @@ static void net_render_tab_sta(net_app_t *app, bool has_sta,
 static void net_render_tab_ap(net_app_t *app, const eos_netif_info_t *ap_info) {
   eos_sta_ap_info_t sta_ap;
   memset(&sta_ap, 0, sizeof(sta_ap));
-  ioctl_get_sta_ap_info(&sta_ap);
+  net_logic_ioctl_get_sta_ap_info(&sta_ap);
 
-  if (app->sta_connected && sta_ap.channel > 0) {
+  if (app->logic.sta_connected && sta_ap.channel > 0) {
     char notice_desc[EOS_MID_STR_LEN];
     snprintf(notice_desc, sizeof(notice_desc),
              "Single PHY radio shared in concurrent AP+STA mode.\n"
              "SoftAP channel is locked to Station channel: Ch %u (%u MHz).\n"
              "(Configured SoftAP channel: Ch %u)",
-             (unsigned)sta_ap.channel, (unsigned)(2407 + sta_ap.channel * 5),
-             (unsigned)app->ap_cfg.channel);
+             (unsigned)sta_ap.channel,
+             (unsigned)(NET_WIFI_BASE_FREQ_MHZ + sta_ap.channel * NET_WIFI_CHAN_SPACING_MHZ),
+             (unsigned)app->logic.ap_cfg.channel);
     add_card(app, app->content_cont, "! AP-STA Shared Channel Active", notice_desc,
              COL_AMBER, ITEM_ACTION_NONE, 0);
   } else {
@@ -1077,72 +647,68 @@ static void net_render_tab_ap(net_app_t *app, const eos_netif_info_t *ap_info) {
   }
 
   add_switch_row(app, app->content_cont, "SoftAP Power", &app->sw_ap,
-                 app->ap_on, ITEM_ACTION_TOGGLE_AP);
+                 app->logic.ap_on, ITEM_ACTION_TOGGLE_AP);
 
   add_switch_row(app, app->content_cont, "DHCP Server (ap0)", &app->sw_dhcps,
-                 app->ap_dhcp_on, ITEM_ACTION_TOGGLE_DHCPS);
+                 app->logic.ap_dhcp_on, ITEM_ACTION_TOGGLE_DHCPS);
 
-  char ssid_badge[EOS_STR_48_LEN];
-  snprintf(ssid_badge, sizeof(ssid_badge), "\"%s\" [Edit]", app->ap_cfg.ssid);
+  char ssid_badge[EOS_BADGE_STR_LEN];
+  snprintf(ssid_badge, sizeof(ssid_badge), "\"%s\" [Edit]", app->logic.ap_cfg.ssid);
   add_button_row(app, app->content_cont, "SoftAP SSID:", ssid_badge, COL_BG_CARD,
                  ITEM_ACTION_EDIT_AP_SSID, 0);
 
   char sec_title[EOS_SMALL_STR_LEN];
-  char sec_badge[EOS_STR_48_LEN];
-  const char *auth_str = (app->ap_cfg.authmode == 0) ? "Open" : "WPA2-PSK";
+  char sec_badge[EOS_BADGE_STR_LEN];
+  const char *auth_str = (app->logic.ap_cfg.authmode == 0) ? "Open" : "WPA2-PSK";
   snprintf(sec_title, sizeof(sec_title), "Security: %s", auth_str);
   snprintf(sec_badge, sizeof(sec_badge), "%s [Toggle]",
-           (app->ap_cfg.authmode == 0) ? "No Pass" : "Encrypted");
+           (app->logic.ap_cfg.authmode == 0) ? "No Pass" : "Encrypted");
   add_button_row(app, app->content_cont, sec_title, sec_badge, COL_BG_CARD,
                  ITEM_ACTION_TOGGLE_AP_SECURITY, 0);
 
-  if (app->ap_cfg.authmode != 0) {
+  if (app->logic.ap_cfg.authmode != 0) {
     char pw_masked[EOS_SMALL_STR_LEN];
-    size_t pw_len = strlen(app->ap_cfg.password);
+    size_t pw_len = strlen(app->logic.ap_cfg.password);
     if (pw_len > 0) {
       memset(pw_masked, '*', sizeof(pw_masked));
       if (pw_len > 10) pw_len = 10;
-      pw_masked[pw_len] = '0';
+      pw_masked[pw_len] = '\0';
     } else {
       strlcpy(pw_masked, "(none)", sizeof(pw_masked));
     }
-    char pw_badge[EOS_STR_48_LEN];
+    char pw_badge[EOS_BADGE_STR_LEN];
     snprintf(pw_badge, sizeof(pw_badge), "%s [Change]", pw_masked);
     add_button_row(app, app->content_cont, "Password:", pw_badge, COL_BG_CARD,
                    ITEM_ACTION_EDIT_AP_PASS, 0);
   }
 
-  char chan_title[EOS_STR_48_LEN];
-  char chan_badge[EOS_STR_48_LEN];
-  uint8_t eff_chan = (app->sta_connected && sta_ap.channel > 0) ? sta_ap.channel : app->ap_cfg.channel;
+  char chan_title[EOS_BADGE_STR_LEN];
+  char chan_badge[EOS_BADGE_STR_LEN];
+  uint8_t eff_chan = (app->logic.sta_connected && sta_ap.channel > 0) ? sta_ap.channel : app->logic.ap_cfg.channel;
   snprintf(chan_title, sizeof(chan_title), "Channel: Ch %u (%u MHz)",
-           (unsigned)eff_chan, (unsigned)(2407 + eff_chan * 5));
+           (unsigned)eff_chan,
+           (unsigned)(NET_WIFI_BASE_FREQ_MHZ + eff_chan * NET_WIFI_CHAN_SPACING_MHZ));
   snprintf(chan_badge, sizeof(chan_badge), "[Cycle 1-13]");
   add_button_row(app, app->content_cont, chan_title, chan_badge, COL_BG_CARD,
                  ITEM_ACTION_CYCLE_AP_CHAN, 0);
 
   char ap_desc[EOS_MID_STR_LEN];
-  if (app->ap_on) {
+  if (app->logic.ap_on) {
     snprintf(ap_desc, sizeof(ap_desc),
              "SSID: %s  Ch: %u\n"
              "IP: %s  Mask: %s\n"
              "MAC: %02x:%02x:%02x:%02x:%02x:%02x\n"
              "DHCP Server: %s",
-             app->ap_cfg.ssid, (unsigned)eff_chan,
+             app->logic.ap_cfg.ssid, (unsigned)eff_chan,
              ap_info->ip.ip[0] ? ap_info->ip.ip : "192.168.4.1",
              ap_info->ip.netmask[0] ? ap_info->ip.netmask : "255.255.255.0",
              ap_info->mac[0], ap_info->mac[1], ap_info->mac[2],
              ap_info->mac[3], ap_info->mac[4], ap_info->mac[5],
-             app->ap_dhcp_on ? "Enabled" : "Disabled");
+             app->logic.ap_dhcp_on ? "Enabled" : "Disabled");
     add_card(app, app->content_cont, "SoftAP Active (UP)", ap_desc, COL_GREEN, ITEM_ACTION_NONE, 0);
 
-    int ap_fd = open_iface_dev("ap0");
     eos_ap_sta_list_t stas;
-    memset(&stas, 0, sizeof(stas));
-    if (ap_fd >= 0) {
-      ioctl(ap_fd, EOS_AP_IOCTL_GET_STAS, &stas);
-      close(ap_fd);
-    }
+    net_logic_get_ap_stas(&stas);
     char c_desc[EOS_BUFFER_128_LEN];
     snprintf(c_desc, sizeof(c_desc), "Connected stations: %u / 4", (unsigned)stas.count);
     add_card(app, app->content_cont, "Hotspot Clients", c_desc, COL_ACCENT_SKY, ITEM_ACTION_NONE, 0);
@@ -1155,7 +721,7 @@ static void net_render_tab_ap(net_app_t *app, const eos_netif_info_t *ap_info) {
              "Configured SSID: \"%s\"\n"
              "Channel: %u  Security: %s\n"
              "Default IP: 192.168.4.1",
-             app->ap_cfg.ssid, (unsigned)app->ap_cfg.channel, auth_str);
+             app->logic.ap_cfg.ssid, (unsigned)app->logic.ap_cfg.channel, auth_str);
     add_card(app, app->content_cont, "SoftAP Inactive", ap_desc, COL_TEXT_SECOND, ITEM_ACTION_NONE, 0);
 
     add_button_row(app, app->content_cont, "[ Start Hotspot ]", "", COL_ACCENT_BLUE,
@@ -1166,7 +732,7 @@ static void net_render_tab_ap(net_app_t *app, const eos_netif_info_t *ap_info) {
 static void net_render_tab_bridge(net_app_t *app, bool has_br,
                                   const eos_netif_bridge_info_t *br_info) {
   add_switch_row(app, app->content_cont, "Bridge NAT (NAPT)", &app->sw_napt,
-                 app->napt_on, ITEM_ACTION_TOGGLE_NAPT);
+                 app->logic.napt_on, ITEM_ACTION_TOGGLE_NAPT);
 
   char bdesc[EOS_MID_STR_LEN];
   if (has_br) {
@@ -1194,7 +760,7 @@ static void net_render_tab_bridge(net_app_t *app, bool has_br,
 
 static void net_render_tab_ifaces(net_app_t *app) {
   eos_netif_info_t w_info;
-  bool has_w = ioctl_get_netif_info("wifi0", &w_info);
+  bool has_w = net_logic_ioctl_get_netif_info("wifi0", &w_info);
 
   char hdesc[EOS_BUFFER_128_LEN];
   snprintf(hdesc, sizeof(hdesc),
@@ -1206,17 +772,17 @@ static void net_render_tab_ifaces(net_app_t *app) {
   add_card(app, app->content_cont, "WLAN PHY Controller (wifi0)", hdesc, COL_ACCENT_SKY,
            ITEM_ACTION_TOGGLE_RADIO, 0);
 
-  const char *devs[] = {"wifi0", "sta0", "ap0", "br0"};
-  for (int d = 0; d < 4; d++) {
+  const char *devs[NET_MAX_IFACES] = {"wifi0", "sta0", "ap0", "br0"};
+  for (int d = 0; d < NET_MAX_IFACES; d++) {
     eos_netif_info_t inf;
-    if (!ioctl_get_netif_info(devs[d], &inf)) continue;
+    if (!net_logic_ioctl_get_netif_info(devs[d], &inf)) continue;
 
     bool is_up = (inf.flags & EOS_NETIF_FLAG_UP) != 0;
     bool is_link = (inf.flags & EOS_NETIF_FLAG_LINK_UP) != 0;
     bool has_dhcpc = (inf.flags & EOS_NETIF_FLAG_DHCP_CLIENT) != 0;
     bool has_dhcps = (inf.flags & EOS_NETIF_FLAG_DHCP_SERVER) != 0;
 
-    char card_title[EOS_LINE_64_LEN];
+    char card_title[EOS_LINE_STR_LEN];
     snprintf(card_title, sizeof(card_title), "%s  [%s%s]", devs[d],
              is_up ? "UP" : "DOWN",
              is_link ? ", LINK" : "");
@@ -1241,19 +807,19 @@ static void net_render_tab_ifaces(net_app_t *app) {
 
 static void net_render_tab_sniffer(net_app_t *app) {
   add_switch_row(app, app->content_cont, "802.11 Monitor Mode", &app->sw_promisc,
-                 app->promisc_on, ITEM_ACTION_TOGGLE_PROMISC);
+                 app->logic.promisc_on, ITEM_ACTION_TOGGLE_PROMISC);
 
   char sdesc[EOS_MID_STR_LEN];
   snprintf(sdesc, sizeof(sdesc),
            "Promiscuous mode captures raw 802.11 MAC\n"
            "frames from /dev/wifi0 via read().\n"
            "Status: %s",
-           app->promisc_on ? "MONITORING ACTIVE" : "Inactive");
+           app->logic.promisc_on ? "MONITORING ACTIVE" : "Inactive");
   add_card(app, app->content_cont, "Raw Packet Capture", sdesc,
-           app->promisc_on ? COL_GREEN : COL_TEXT_SECOND,
+           app->logic.promisc_on ? COL_GREEN : COL_TEXT_SECOND,
            ITEM_ACTION_TOGGLE_PROMISC, 0);
 
-  if (app->promisc_on) {
+  if (app->logic.promisc_on) {
     add_card(app, app->content_cont, "! Conflict Warning",
              "Monitor mode interrupts normal Wi-Fi association.",
              COL_AMBER, ITEM_ACTION_NONE, 0);
@@ -1269,7 +835,7 @@ static void net_render_active_tab(net_app_t *app) {
   memset(app->items, 0, sizeof(app->items));
   memset(app->item_actions, 0, sizeof(app->item_actions));
   memset(app->item_args, 0, sizeof(app->item_args));
-  app->item_count = 0;
+  app->logic.item_count = 0;
   app->sw_radio = NULL;
   app->sw_ap = NULL;
   app->sw_dhcpc = NULL;
@@ -1277,30 +843,25 @@ static void net_render_active_tab(net_app_t *app) {
   app->sw_napt = NULL;
   app->sw_promisc = NULL;
 
-  app->radio_on = ioctl_get_radio_power();
+  net_logic_refresh_state(&app->logic);
 
   eos_netif_info_t sta_info;
-  bool has_sta = ioctl_get_netif_info("sta0", &sta_info);
-  app->sta_connected = has_sta && ((sta_info.flags & EOS_NETIF_FLAG_LINK_UP) != 0);
-  app->sta_dhcp_on = has_sta && ((sta_info.flags & EOS_NETIF_FLAG_DHCP_CLIENT) != 0);
+  bool has_sta = net_logic_ioctl_get_netif_info("sta0", &sta_info);
 
   eos_netif_info_t ap_info;
-  bool has_ap = ioctl_get_netif_info("ap0", &ap_info);
-  app->ap_on = has_ap && ((ap_info.flags & EOS_NETIF_FLAG_UP) != 0);
-  app->ap_dhcp_on = has_ap && ((ap_info.flags & EOS_NETIF_FLAG_DHCP_SERVER) != 0);
+  net_logic_ioctl_get_netif_info("ap0", &ap_info);
 
   eos_netif_bridge_info_t br_info;
-  bool has_br = ioctl_get_bridge_info(&br_info);
-  app->napt_on = has_br && br_info.napt_enabled;
+  bool has_br = net_logic_ioctl_get_bridge_info(&br_info);
 
-  char tbar_str[EOS_LINE_64_LEN];
+  char tbar_str[EOS_LINE_STR_LEN];
   snprintf(tbar_str, sizeof(tbar_str), "<  %s (%d/%d)  >",
-           tab_titles[app->cur_tab], app->cur_tab + 1, NET_NUM_TABS);
+           tab_titles[app->logic.cur_tab], app->logic.cur_tab + 1, NET_NUM_TABS);
   lv_label_set_text(app->tab_label, tbar_str);
 
-  eos_toolbar_set(tab_titles[app->cur_tab], "[▲▼]Select  [◄►]Tab  [A]Action  [B]Exit");
+  eos_toolbar_set(tab_titles[app->logic.cur_tab], "[▲▼]Select  [◄►]Tab  [A]Action  [B]Exit");
 
-  switch (app->cur_tab) {
+  switch (app->logic.cur_tab) {
     case TAB_STA:
       net_render_tab_sta(app, has_sta, &sta_info);
       break;
@@ -1320,8 +881,8 @@ static void net_render_active_tab(net_app_t *app) {
       break;
   }
 
-  if (app->sel_idx >= app->item_count) {
-    app->sel_idx = app->item_count > 0 ? app->item_count - 1 : 0;
+  if (app->logic.sel_idx >= app->logic.item_count) {
+    app->logic.sel_idx = app->logic.item_count > 0 ? app->logic.item_count - 1 : 0;
   }
   if (saved_scroll_y > 0) {
     lv_obj_scroll_to_y(app->content_cont, saved_scroll_y, LV_ANIM_OFF);
@@ -1331,17 +892,17 @@ static void net_render_active_tab(net_app_t *app) {
 
 static void net_gesture_cb(lv_event_t *e) {
   net_app_t *app = (net_app_t *)lv_event_get_user_data(e);
-  if (!app || app->dialog_active) return;
+  if (!app || app->logic.dialog_active) return;
   lv_indev_t *indev = lv_indev_active();
   if (!indev) return;
   lv_dir_t dir = lv_indev_get_gesture_dir(indev);
   if (dir == LV_DIR_LEFT) {
-    app->cur_tab = (app->cur_tab + 1) % NET_NUM_TABS;
-    app->sel_idx = 0;
+    app->logic.cur_tab = (app->logic.cur_tab + 1) % NET_NUM_TABS;
+    app->logic.sel_idx = 0;
     net_render_active_tab(app);
   } else if (dir == LV_DIR_RIGHT) {
-    app->cur_tab = (app->cur_tab - 1 + NET_NUM_TABS) % NET_NUM_TABS;
-    app->sel_idx = 0;
+    app->logic.cur_tab = (app->logic.cur_tab - 1 + NET_NUM_TABS) % NET_NUM_TABS;
+    app->logic.sel_idx = 0;
     net_render_active_tab(app);
   }
 }
@@ -1351,7 +912,7 @@ static void net_gesture_cb(lv_event_t *e) {
 // ---------------------------------------------------------------------------
 
 static void net_handle_key(net_app_t *app, uint16_t key) {
-  if (app->dialog_active) {
+  if (app->logic.dialog_active) {
     if (key == KEY_ESC) {
       net_dialog_close(app);
     }
@@ -1360,48 +921,48 @@ static void net_handle_key(net_app_t *app, uint16_t key) {
 
   switch (key) {
     case KEY_UP:
-      if (app->item_count > 0) {
-        app->sel_idx = (app->sel_idx - 1 + app->item_count) % app->item_count;
+      if (app->logic.item_count > 0) {
+        app->logic.sel_idx = (app->logic.sel_idx - 1 + app->logic.item_count) % app->logic.item_count;
         net_update_selection_highlight(app);
       } else if (app->content_cont) {
-        lv_obj_scroll_by(app->content_cont, 0, 30, LV_ANIM_OFF);
+        lv_obj_scroll_by(app->content_cont, 0, NET_SCROLL_STEP, LV_ANIM_OFF);
       }
       break;
 
     case KEY_DOWN:
-      if (app->item_count > 0) {
-        app->sel_idx = (app->sel_idx + 1) % app->item_count;
+      if (app->logic.item_count > 0) {
+        app->logic.sel_idx = (app->logic.sel_idx + 1) % app->logic.item_count;
         net_update_selection_highlight(app);
       } else if (app->content_cont) {
-        lv_obj_scroll_by(app->content_cont, 0, -30, LV_ANIM_OFF);
+        lv_obj_scroll_by(app->content_cont, 0, -NET_SCROLL_STEP, LV_ANIM_OFF);
       }
       break;
 
     case KEY_LEFT:
     case KEY_C:
-      app->cur_tab = (app->cur_tab - 1 + NET_NUM_TABS) % NET_NUM_TABS;
-      app->sel_idx = 0;
+      app->logic.cur_tab = (app->logic.cur_tab - 1 + NET_NUM_TABS) % NET_NUM_TABS;
+      app->logic.sel_idx = 0;
       net_render_active_tab(app);
       break;
 
     case KEY_RIGHT:
     case KEY_D:
-      app->cur_tab = (app->cur_tab + 1) % NET_NUM_TABS;
-      app->sel_idx = 0;
+      app->logic.cur_tab = (app->logic.cur_tab + 1) % NET_NUM_TABS;
+      app->logic.sel_idx = 0;
       net_render_active_tab(app);
       break;
 
     case KEY_ENTER:
     case KEY_A:
-      if (app->item_count > 0) {
-        handle_item_action(app, app->sel_idx);
+      if (app->logic.item_count > 0) {
+        handle_item_action(app, app->logic.sel_idx);
       }
       break;
 
     case KEY_ESC:
     case KEY_B:
     case KEY_BACKSPACE:
-      app->quit = true;
+      app->logic.quit = true;
       break;
 
     default:
@@ -1412,15 +973,15 @@ static void net_handle_key(net_app_t *app, uint16_t key) {
 static void net_back_btn_cb(lv_event_t *e) {
   net_app_t *app = (net_app_t *)lv_event_get_user_data(e);
   if (app) {
-    app->quit = true;
+    app->logic.quit = true;
   }
 }
 
 static void tab_bar_click_event_cb(lv_event_t *e) {
   net_app_t *app = (net_app_t *)lv_event_get_user_data(e);
-  if (!app || app->dialog_active) return;
-  app->cur_tab = (app->cur_tab + 1) % NET_NUM_TABS;
-  app->sel_idx = 0;
+  if (!app || app->logic.dialog_active) return;
+  app->logic.cur_tab = (app->logic.cur_tab + 1) % NET_NUM_TABS;
+  app->logic.sel_idx = 0;
   net_render_active_tab(app);
 }
 
@@ -1436,7 +997,7 @@ static void net_setup_ui(net_app_t *app, lv_obj_t *scr, uint32_t w, uint32_t h) 
 
   // 1. Top Header Bar
   app->hdr = lv_obj_create(scr);
-  lv_obj_set_size(app->hdr, (int32_t)w, 20);
+  lv_obj_set_size(app->hdr, (int32_t)w, NET_HDR_HEIGHT);
   lv_obj_align(app->hdr, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_color(app->hdr, lv_color_hex(COL_HDR_BG), 0);
   lv_obj_set_style_bg_opa(app->hdr, LV_OPA_COVER, 0);
@@ -1458,8 +1019,8 @@ static void net_setup_ui(net_app_t *app, lv_obj_t *scr, uint32_t w, uint32_t h) 
   }
 
   // 2. Tab Selector Bar
-  int32_t tab_y = 20;
-  int32_t tab_h = 20;
+  int32_t tab_y = NET_HDR_HEIGHT;
+  int32_t tab_h = NET_TAB_HEIGHT;
   app->tab_bar = lv_obj_create(scr);
   lv_obj_set_size(app->tab_bar, (int32_t)w, tab_h);
   lv_obj_align(app->tab_bar, LV_ALIGN_TOP_MID, 0, tab_y);
@@ -1479,7 +1040,7 @@ static void net_setup_ui(net_app_t *app, lv_obj_t *scr, uint32_t w, uint32_t h) 
 
   // 3. Toast Notification Bar
   app->toast_bar = lv_obj_create(scr);
-  lv_obj_set_size(app->toast_bar, (int32_t)w - 4, 18);
+  lv_obj_set_size(app->toast_bar, (int32_t)w - 4, NET_TOAST_HEIGHT);
   lv_obj_align(app->toast_bar, LV_ALIGN_TOP_MID, 0, tab_y + tab_h + 1);
   lv_obj_set_style_bg_color(app->toast_bar, lv_color_hex(COL_AMBER), 0);
   lv_obj_set_style_bg_opa(app->toast_bar, LV_OPA_COVER, 0);
@@ -1518,21 +1079,21 @@ static void net_setup_ui(net_app_t *app, lv_obj_t *scr, uint32_t w, uint32_t h) 
 }
 
 static void net_event_loop(net_app_t *app) {
-  while (!app->quit) {
+  while (!app->logic.quit) {
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
       net_handle_key(app, key);
-      if (app->quit) break;
+      if (app->logic.quit) break;
     }
 
-    uint64_t now = net_get_ms();
-    if (now - app->last_refresh_ms >= 3000ULL) {
-      app->last_refresh_ms = now;
-      bool r = ioctl_get_radio_power();
-      if (r != app->radio_on) {
-        app->radio_on = r;
+    uint64_t now = net_logic_get_ms();
+    if (now - app->logic.last_refresh_ms >= NET_REFRESH_INTERVAL_MS) {
+      app->logic.last_refresh_ms = now;
+      bool r = net_logic_ioctl_get_radio_power();
+      if (r != app->logic.radio_on) {
+        app->logic.radio_on = r;
         if (app->sw_radio) {
-          if (app->radio_on) {
+          if (app->logic.radio_on) {
             lv_obj_add_state(app->sw_radio, LV_STATE_CHECKED);
           } else {
             lv_obj_remove_state(app->sw_radio, LV_STATE_CHECKED);
@@ -1542,7 +1103,7 @@ static void net_event_loop(net_app_t *app) {
     }
 
     update_toast(app);
-    eos_lvgl_step(10);
+    eos_lvgl_step(NET_STEP_DELAY_MS);
   }
 }
 
@@ -1560,10 +1121,8 @@ int lvgl_net_main(int argc, char **argv) {
     eos_lvgl_deinit();
     return -1;
   }
-  app->cur_tab = TAB_STA;
-  app->sel_idx = 0;
 
-  ioctl_get_ap_config(&app->ap_cfg);
+  net_logic_init(&app->logic);
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
@@ -1573,8 +1132,8 @@ int lvgl_net_main(int argc, char **argv) {
   net_render_active_tab(app);
   net_event_loop(app);
 
-  if (app->promisc_on) {
-    ioctl_set_promisc(false);
+  if (app->logic.promisc_on) {
+    net_logic_ioctl_set_promisc(false);
   }
 
   eos_toolbar_clear();

@@ -354,7 +354,7 @@ static void test_netmisc_ip(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: 0.0.0.0 -> 0x00000000", eos_net_ipv4_to_u32("0.0.0.0") == 0);
   report_test(ctx, "netmisc: NULL / empty -> 0", eos_net_ipv4_to_u32(NULL) == 0 && eos_net_ipv4_to_u32("") == 0);
 
-  char ip_str[EOS_STR_20_LEN];
+  char ip_str[EOS_ADDR_STR_LEN];
   eos_net_u32_to_ipv4(0xC0A80101U, ip_str, sizeof(ip_str));
   report_test(ctx, "netmisc: 0xC0A80101 -> \"192.168.1.1\"", strcmp(ip_str, "192.168.1.1") == 0);
 
@@ -372,11 +372,11 @@ static void test_netmisc_ip(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: mask \"255.0.0.0\" -> 8", eos_net_mask_to_prefix("255.0.0.0") == 8);
   report_test(ctx, "netmisc: mask \"16\" numeric string -> 16", eos_net_mask_to_prefix("16") == 16);
 
-  char mask_buf[EOS_STR_20_LEN];
+  char mask_buf[EOS_ADDR_STR_LEN];
   eos_net_prefix_to_mask(24, mask_buf, sizeof(mask_buf));
   report_test(ctx, "netmisc: prefix 24 -> \"255.255.255.0\"", strcmp(mask_buf, "255.255.255.0") == 0);
 
-  char bcast[EOS_STR_20_LEN];
+  char bcast[EOS_ADDR_STR_LEN];
   eos_net_calc_broadcast("192.168.1.100", "255.255.255.0", bcast, sizeof(bcast));
   report_test(ctx, "netmisc: calc_broadcast 192.168.1.100/24 -> 192.168.1.255",
               strcmp(bcast, "192.168.1.255") == 0);
@@ -385,12 +385,12 @@ static void test_netmisc_ip(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: calc_broadcast 10.5.2.1/16 -> 10.5.255.255",
               strcmp(bcast, "10.5.255.255") == 0);
 
-  char gw[EOS_STR_20_LEN];
+  char gw[EOS_ADDR_STR_LEN];
   eos_net_calc_default_gw("192.168.50.88", gw, sizeof(gw));
   report_test(ctx, "netmisc: calc_default_gw 192.168.50.88 -> 192.168.50.1",
               strcmp(gw, "192.168.50.1") == 0);
 
-  char cidr_ip[EOS_STR_20_LEN], cidr_mask[EOS_STR_20_LEN];
+  char cidr_ip[EOS_ADDR_STR_LEN], cidr_mask[EOS_ADDR_STR_LEN];
   int cidr_prefix = 0;
   bool cidr_ok = eos_net_parse_cidr("192.168.4.1/24", cidr_ip, sizeof(cidr_ip),
                                     cidr_mask, sizeof(cidr_mask), &cidr_prefix);
@@ -411,7 +411,7 @@ static void test_netmisc_mac_hex(test_ctx_t *ctx) {
   report_test(ctx, "netmisc: parse_mac with hyphens",
               mac_hyph_ok && mac_hyphens[0] == 0xde && mac_hyphens[3] == 0xef && mac_hyphens[5] == 0x01);
 
-  char mac_fmt[EOS_STR_20_LEN];
+  char mac_fmt[EOS_ADDR_STR_LEN];
   eos_net_format_mac(mac, mac_fmt, sizeof(mac_fmt));
   report_test(ctx, "netmisc: format_mac", strcmp(mac_fmt, "12:34:56:78:9a:bc") == 0);
 
@@ -512,10 +512,10 @@ static void test_types(test_ctx_t *ctx) {
 static void test_fancymacro(test_ctx_t *ctx) {
   printf("--- fancymacro Macro Tests ---\n");
 
-  int sample_arr[EOS_STR_8_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
+  int sample_arr[EOS_TINY_STR_LEN] = {1, 2, 3, 4, 5, 6, 7, 8};
   report_test(ctx, "fancymacro: EOS_ARR_COUNT counts 8 elements", EOS_ARR_COUNT(sample_arr) == 8);
 
-  const char *str_42 = EOS_STR(EOS_DEFAULT_MAGIC_42);
+  const char *str_42 = EOS_STR(EOS_TEST_MAGIC_STATUS);
   report_test(ctx, "fancymacro: EOS_STR stringification", strcmp(str_42, "42") == 0);
 }
 
@@ -560,8 +560,8 @@ static void test_rect(test_ctx_t *ctx) {
     {0, 0, 50, 100},
     {50, 0, 50, 50}
   };
-  eos_rect_t multi_out[EOS_STR_8_LEN];
-  size_t multi_cnt = eos_rect_multi_subtract(&sub, occs, 2, multi_out, EOS_STR_8_LEN);
+  eos_rect_t multi_out[EOS_TINY_STR_LEN];
+  size_t multi_cnt = eos_rect_multi_subtract(&sub, occs, 2, multi_out, EOS_TINY_STR_LEN);
   report_test(ctx, "rect: multi_subtract leaves remaining corner", multi_cnt == 1);
   report_test(ctx, "rect: multi_subtract remaining corner matches (50,50,50,50)",
               multi_cnt == 1 && multi_out[0].x == 50 && multi_out[0].y == 50 &&

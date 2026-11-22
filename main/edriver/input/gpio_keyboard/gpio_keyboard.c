@@ -7,6 +7,7 @@
 #include <freertos/task.h>
 #include <freertos/semphr.h>
 #include <errno.h>
+#include <stdatomic.h>
 
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
@@ -19,6 +20,7 @@ typedef struct {
   int gpio_num;
   uint16_t key_code;
   bool last_pressed;
+  int64_t last_change_us;
 } gpio_keyboard_key_t;
 
 typedef struct {
@@ -26,7 +28,8 @@ typedef struct {
   int key_count;
   SemaphoreHandle_t lock;
   SemaphoreHandle_t sem_event;
-  bool shutting_down;
+  atomic_bool shutting_down;
+  atomic_int readers;
   eos_input_event_t queue[GPIO_KEYBOARD_QUEUE_SIZE];
   uint8_t q_head;
   uint8_t q_tail;
@@ -83,7 +86,8 @@ bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
   memset(state, 0, sizeof(gpio_keyboard_state_t));
   state->lock = xSemaphoreCreateMutex();
   state->sem_event = xSemaphoreCreateCounting(GPIO_KEYBOARD_QUEUE_SIZE, 0);
-  dev->state = state;
+  atomic_init(&state->shutting_down, false);
+  atomic_init(&state->readers, 0);
 
   if (dev->pins) {
     for (eos_pin_t *p = dev->pins; p->key != NULL; p++) {
@@ -100,7 +104,6 @@ bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
           vSemaphoreDelete(state->lock);
         }
         free(state);
-        dev->state = NULL;
         return false;
       }
 
@@ -116,22 +119,32 @@ bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
       state->keys[state->key_count].gpio_num = gpio_num;
       state->keys[state->key_count].key_code = map_key_name(p->key);
       state->keys[state->key_count].last_pressed = (gpio_get_level(gpio_num) == 0);
+      state->keys[state->key_count].last_change_us = esp_timer_get_time();
       state->key_count++;
     }
   }
 
+  dev->state = state;
   return true;
 }
 
 void driver_input_gpio_keyboard_shutdown(eos_dev_t *dev) {
   if (!dev || !dev->state) return;
   gpio_keyboard_state_t *state = dev->state;
-  state->shutting_down = true;
+  atomic_store(&state->shutting_down, true);
+
+  if (state->sem_event) {
+    xSemaphoreGive(state->sem_event);
+  }
+
+  for (int w = 0; w < 10 && atomic_load(&state->readers) > 0; w++) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+
   for (int i = 0; i < state->key_count; i++) {
     eos_cap_release(EOS_CAPS_GPIO, state->keys[i].gpio_num, dev);
   }
   if (state->sem_event) {
-    xSemaphoreGive(state->sem_event);
     vSemaphoreDelete(state->sem_event);
     state->sem_event = NULL;
   }
@@ -154,38 +167,53 @@ ssize_t driver_input_gpio_keyboard_read(eos_dev_t *dev, int fd, void *dst, size_
     return -1;
   }
 
-  gpio_keyboard_state_t *state = dev->state;
-  if (!state) {
+  gpio_keyboard_state_t *state = dev ? dev->state : NULL;
+  if (!state || atomic_load(&state->shutting_down)) {
     errno = EBADF;
     return -1;
   }
 
-  while (!state->shutting_down) {
+  atomic_fetch_add(&state->readers, 1);
+
+  while (!atomic_load(&state->shutting_down)) {
     if (gpio_keyboard_dequeue_event(state, dst)) {
+      atomic_fetch_sub(&state->readers, 1);
       return sizeof(eos_input_event_t);
     }
 
-    for (int i = 0; i < state->key_count; i++) {
+    int64_t now = esp_timer_get_time();
+    for (int i = 0; i < state->key_count && !atomic_load(&state->shutting_down); i++) {
       int level = gpio_get_level(state->keys[i].gpio_num);
       bool pressed = (level == 0); // Active low
       if (pressed && !state->keys[i].last_pressed) {
-        state->keys[i].last_pressed = true;
-        eos_input_event_t *ev = dst;
-        ev->type = EOS_INPUT_EVENT_KEYBOARD;
-        ev->code = state->keys[i].key_code;
-        return sizeof(eos_input_event_t);
-      } else if (!pressed) {
-        state->keys[i].last_pressed = false;
+        if ((now - state->keys[i].last_change_us) >= GPIO_KEYBOARD_DEBOUNCE_US) {
+          state->keys[i].last_pressed = true;
+          state->keys[i].last_change_us = now;
+          eos_input_event_t *ev = dst;
+          ev->type = EOS_INPUT_EVENT_KEYBOARD;
+          ev->code = state->keys[i].key_code;
+          atomic_fetch_sub(&state->readers, 1);
+          return sizeof(eos_input_event_t);
+        }
+      } else if (!pressed && state->keys[i].last_pressed) {
+        if ((now - state->keys[i].last_change_us) >= GPIO_KEYBOARD_DEBOUNCE_US) {
+          state->keys[i].last_pressed = false;
+          state->keys[i].last_change_us = now;
+        }
       }
     }
 
-    if (state->sem_event) {
-      xSemaphoreTake(state->sem_event, pdMS_TO_TICKS(10));
+    if (atomic_load(&state->shutting_down)) break;
+
+    SemaphoreHandle_t sem = state->sem_event;
+    if (sem) {
+      xSemaphoreTake(sem, pdMS_TO_TICKS(10));
     } else {
       vTaskDelay(pdMS_TO_TICKS(10));
     }
   }
 
+  atomic_fetch_sub(&state->readers, 1);
   errno = EIO;
   return -1;
 }
@@ -260,16 +288,23 @@ int driver_input_gpio_keyboard_ioctl(eos_dev_t *dev, int fd, int cmd, va_list ar
       if (gpio_keyboard_dequeue_event(state, ev)) {
         return 1;
       }
+      int64_t now = esp_timer_get_time();
       for (int i = 0; i < state->key_count; i++) {
         int level = gpio_get_level(state->keys[i].gpio_num);
         bool pressed = (level == 0); // Active low
         if (pressed && !state->keys[i].last_pressed) {
-          state->keys[i].last_pressed = true;
-          ev->type = EOS_INPUT_EVENT_KEYBOARD;
-          ev->code = state->keys[i].key_code;
-          return 1;
-        } else if (!pressed) {
-          state->keys[i].last_pressed = false;
+          if ((now - state->keys[i].last_change_us) >= GPIO_KEYBOARD_DEBOUNCE_US) {
+            state->keys[i].last_pressed = true;
+            state->keys[i].last_change_us = now;
+            ev->type = EOS_INPUT_EVENT_KEYBOARD;
+            ev->code = state->keys[i].key_code;
+            return 1;
+          }
+        } else if (!pressed && state->keys[i].last_pressed) {
+          if ((now - state->keys[i].last_change_us) >= GPIO_KEYBOARD_DEBOUNCE_US) {
+            state->keys[i].last_pressed = false;
+            state->keys[i].last_change_us = now;
+          }
         }
       }
       return 0;

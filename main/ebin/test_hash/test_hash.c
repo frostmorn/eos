@@ -295,10 +295,10 @@ static void test_tools(test_ctx_t *ctx) {
   if (!setup) return;
 
   for (size_t t = 0; t < sizeof(tools) / sizeof(tools[0]); t++) {
-    char label[EOS_LINE_64_LEN];
+    char label[EOS_LINE_STR_LEN];
     uint8_t digest[EOS_HASH_MAX_DIGEST];
     char hex[EOS_HASH_MAX_HEX];
-    char list[EOS_HASH_MAX_HEX + EOS_LINE_64_LEN];
+    char list[EOS_HASH_MAX_HEX + EOS_LINE_STR_LEN];
     eos_hash_buf(tools[t].alg, content, sizeof(content) - 1, digest);
     eos_hash_to_hex(digest, eos_hash_digest_size(tools[t].alg), hex);
 

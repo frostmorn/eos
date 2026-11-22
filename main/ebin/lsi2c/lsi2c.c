@@ -311,7 +311,7 @@ static int handle_reconfigure_pins(int argc, char **argv, int i, bool probe) {
 
 int lsi2c_main(int argc, char **argv) {
   bool probe = true;
-  char *explicit_buses[EOS_STR_8_LEN];
+  char *explicit_buses[EOS_TINY_STR_LEN];
   size_t explicit_count = 0;
 
   for (int i = 1; i < argc; i++) {
@@ -348,7 +348,7 @@ int lsi2c_main(int argc, char **argv) {
   }
 
   // Discover all I2C buses from /dev
-  char bus_list[EOS_STR_8_LEN][EOS_MID_STR_LEN];
+  char bus_list[EOS_TINY_STR_LEN][EOS_MID_STR_LEN];
   size_t bus_count = 0;
 
   DIR *dev_dir = opendir("/dev");

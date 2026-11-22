@@ -265,7 +265,7 @@ static void bench_registry_overhead(void) {
     const int iterations = (count >= MEMBENCH_THRESHOLD_COUNT) ? 5 : 20;
     int64_t total_alloc_time = 0;
     int64_t total_free_time = 0;
-    size_t blk_size = (count >= MEMBENCH_THRESHOLD_COUNT) ? EOS_SMALL_STR_LEN : EOS_LINE_64_LEN;
+    size_t blk_size = (count >= MEMBENCH_THRESHOLD_COUNT) ? EOS_SMALL_STR_LEN : EOS_LINE_STR_LEN;
 
     for (int it = 0; it < iterations; it++) {
       int64_t t0 = esp_timer_get_time();

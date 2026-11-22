@@ -296,6 +296,8 @@ int eos_fat_umount(const char *target, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_fat = {
     .name = "fat",
+    .default_source = "/dev/sd0p1",
+    .default_target = "/mnt/sd",
     .flags = EOS_FS_FLAG_NEEDS_BDEV,
     .mount = eos_fat_mount,
     .umount = eos_fat_umount,
@@ -303,6 +305,8 @@ EOS_FS_ATTR eos_fs_type_t eos_fs_fat = {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_vfat = {
     .name = "vfat",
+    .default_source = "/dev/sd0p1",
+    .default_target = "/mnt/sd",
     .flags = EOS_FS_FLAG_NEEDS_BDEV,
     .mount = eos_fat_mount,
     .umount = eos_fat_umount,

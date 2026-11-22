@@ -1,14 +1,9 @@
-#include "efs/binfs/binfs.h"
 #include "ecore/capsmgr.h"
 #include "ecore/dev.h"
-#include "efs/devfs/devfs.h"
 #include "ecore/elf.h"
 #include "ecore/fs.h"
 #include "ecore/log.h"
-#include "efs/pipefs/pipefs.h"
 #include "ecore/proc.h"
-#include "efs/procfs/procfs.h"
-#include "efs/tmpfs/tmpfs.h"
 #include "ecore/vfs.h"
 #include <pthread.h>
 #include <stdio.h>
@@ -23,15 +18,10 @@ void *eos_main(void *data) {
   (void)data;
   eos_proc_init();
   eos_vfs_init();
-  eos_fs_init();
-  eos_tmpfs_init();
   eos_log_init();
-  eos_procfs_init();
-  eos_pipefs_init();
   eos_capsmgr_init();
   eos_devtree_init();
-  eos_devfs_init();
-  eos_binfs_init();
+  eos_fs_init();
   eos_elf_init_symbols();
 
   while (1) {

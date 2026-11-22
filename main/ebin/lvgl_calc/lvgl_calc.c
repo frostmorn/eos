@@ -16,11 +16,7 @@ static const char *s_calc_keys[CALC_ROWS][CALC_COLS] = {
 };
 
 typedef struct {
-  int64_t acc;
-  int64_t cur;
-  char op;
-  bool entering;
-  bool error;
+  calc_engine_t engine;
   int sel_r;
   int sel_c;
   bool quit;
@@ -31,109 +27,17 @@ typedef struct {
   lv_obj_t *btns[CALC_ROWS][CALC_COLS];
 } calc_state_t;
 
-static void calc_apply_pending(calc_state_t *st) {
-  if (!st->op) {
-    st->acc = st->cur;
-    return;
-  }
-  switch (st->op) {
-  case '+':
-    st->acc += st->cur;
-    break;
-  case '-':
-    st->acc -= st->cur;
-    break;
-  case '*':
-    st->acc *= st->cur;
-    break;
-  case '/':
-    if (st->cur == 0) {
-      st->error = true;
-      st->acc = 0;
-    } else {
-      st->acc /= st->cur;
-    }
-    break;
-  default:
-    break;
-  }
-}
-
-static void calc_press_token(calc_state_t *st, const char *tok) {
-  if (!tok)
-    return;
-
-  char c = tok[0];
-  if (c >= '0' && c <= '9') {
-    if (st->error) {
-      st->error = false;
-      st->acc = 0;
-      st->cur = 0;
-      st->op = 0;
-    }
-    if (!st->entering) {
-      st->cur = 0;
-      st->entering = true;
-    }
-    if (st->cur < 999999999LL && st->cur > -999999999LL) {
-      st->cur = st->cur * 10 + (c - '0');
-    }
-    return;
-  }
-
-  if (c == 'C') {
-    st->acc = 0;
-    st->cur = 0;
-    st->op = 0;
-    st->entering = false;
-    st->error = false;
-    return;
-  }
-
-  if (c == '=') {
-    if (st->op) {
-      calc_apply_pending(st);
-      st->cur = st->acc;
-      st->op = 0;
-      st->entering = false;
-    }
-    return;
-  }
-
-  // Operator (+, -, *, /)
-  if (st->entering) {
-    calc_apply_pending(st);
-    st->cur = st->acc;
-    st->entering = false;
-  } else if (!st->op) {
-    st->acc = st->cur;
-  }
-  st->op = c;
-}
-
 static void calc_update_ui(calc_state_t *st) {
-  int64_t val = st->entering ? st->cur : st->acc;
+  char dbuf[EOS_BADGE_STR_LEN];
+  calc_logic_format_dec(&st->engine, dbuf, sizeof(dbuf));
+  lv_label_set_text(st->disp_dec, dbuf);
 
-  if (st->error) {
-    lv_label_set_text(st->disp_dec, "ERR: DIV BY 0");
-    lv_label_set_text(st->disp_hex, "HEX: 0x0");
-  } else {
-    char dbuf[EOS_STR_48_LEN];
-    snprintf(dbuf, sizeof(dbuf), "%lld", (long long)val);
-    lv_label_set_text(st->disp_dec, dbuf);
+  char hbuf[EOS_BADGE_STR_LEN];
+  calc_logic_format_hex(&st->engine, hbuf, sizeof(hbuf));
+  lv_label_set_text(st->disp_hex, hbuf);
 
-    char hbuf[EOS_STR_48_LEN];
-    snprintf(hbuf, sizeof(hbuf), "HEX: 0x%llX",
-             (unsigned long long)(uint64_t)val);
-    lv_label_set_text(st->disp_hex, hbuf);
-  }
-
-  char ebuf[EOS_STR_48_LEN];
-  if (st->op) {
-    snprintf(ebuf, sizeof(ebuf), "%lld %c", (long long)st->acc, st->op);
-  } else {
-    snprintf(ebuf, sizeof(ebuf), "Ready");
-  }
+  char ebuf[EOS_BADGE_STR_LEN];
+  calc_logic_format_expr(&st->engine, ebuf, sizeof(ebuf));
   lv_label_set_text(st->disp_expr, ebuf);
 
   for (int r = 0; r < CALC_ROWS; r++) {
@@ -167,7 +71,7 @@ static void calc_btn_click_cb(lv_event_t *e) {
       if (st->btns[r][c] == btn) {
         st->sel_r = r;
         st->sel_c = c;
-        calc_press_token(st, s_calc_keys[r][c]);
+        calc_logic_press_token(&st->engine, s_calc_keys[r][c]);
         calc_update_ui(st);
         return;
       }
@@ -188,7 +92,7 @@ static void calc_setup_ui(calc_state_t *st, uint32_t w, uint32_t h, bool compact
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  int32_t disp_h = compact ? EOS_DEFAULT_MAGIC_42 : 68;
+  int32_t disp_h = compact ? EOS_TEST_MAGIC_STATUS : 68;
   lv_obj_t *disp = lv_obj_create(scr);
   lv_obj_set_size(disp, (int32_t)w - 12, disp_h);
   lv_obj_align(disp, LV_ALIGN_TOP_MID, 0, compact ? 3 : 6);
@@ -265,15 +169,13 @@ static void calc_handle_key(calc_state_t *st, uint16_t key) {
   case KEY_A:
   case KEY_ENTER:
   case KEY_SPACE:
-    calc_press_token(st, s_calc_keys[st->sel_r][st->sel_c]);
+    calc_logic_press_token(&st->engine, s_calc_keys[st->sel_r][st->sel_c]);
     break;
   case KEY_C:
-    calc_press_token(st, "C");
+    calc_logic_press_token(&st->engine, "C");
     break;
   case KEY_D:
-    if (st->entering) {
-      st->cur /= 10;
-    }
+    calc_logic_backspace(&st->engine);
     break;
   case KEY_BACKSPACE:
   case KEY_B:

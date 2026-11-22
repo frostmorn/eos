@@ -97,7 +97,9 @@ eos_dev_t *eos_dev_alloc() {
   for (size_t i = 1; i < kv_size(s_devices); i++) {
     eos_dev_t *dev = kv_A(s_devices, i);
     if (dev && !dev->in_use) {
+      uint32_t gen = dev->generation + 1;
       memset(dev, 0, sizeof(eos_dev_t));
+      dev->generation = gen ? gen : 1;
       dev->in_use = true;
       dev->fd = -1; // indicates not in use
       eos_proc_heap_tracking_restore(prev_h);
@@ -115,6 +117,7 @@ eos_dev_t *eos_dev_alloc() {
     errno = ENOMEM;
     return NULL;
   }
+  dev->generation = 1;
   dev->in_use = true;
   dev->fd = -1;
   kv_push(eos_dev_t *, s_devices, dev);
@@ -334,7 +337,7 @@ static int eos_dev_detach_internal(eos_dev_t *dev) {
 
   // Unmount any filesystem mounted from this device node
   if (dev->name[0] != '\0') {
-    char dev_node[EOS_LINE_64_LEN];
+    char dev_node[EOS_LINE_STR_LEN];
     snprintf(dev_node, sizeof(dev_node), "/dev/%s", dev->name);
     (void)eos_umount(dev_node, 0);
   }
@@ -370,7 +373,9 @@ static int eos_dev_detach_internal(eos_dev_t *dev) {
   }
 
   // Cleanup
+  uint32_t next_gen = dev->generation + 1;
   bzero(dev, sizeof(eos_dev_t));
+  dev->generation = next_gen ? next_gen : 1;
 
   return 0;
 }

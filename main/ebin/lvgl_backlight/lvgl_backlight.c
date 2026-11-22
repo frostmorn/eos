@@ -16,11 +16,8 @@
 #include "lvgl_backlight.h"
 
 typedef struct {
-  int cur_brightness;
-  bool smooth_fade;
+  backlight_device_t dev;
   bool quit;
-  int dev_fd;
-  bool is_pwm;
 
   lv_obj_t *lbl_title;
   lv_obj_t *slider;
@@ -30,74 +27,13 @@ typedef struct {
   lv_obj_t *btn_exit;
 } backlight_state_t;
 
-static const int s_presets[EOS_BACKLIGHT_PRESET_COUNT] = {10, 25, 50, 75, 100};
-
-static void backlight_open_device(backlight_state_t *st) {
-  st->dev_fd = -1;
-  st->is_pwm = false;
-  st->cur_brightness = EOS_BACKLIGHT_MAX_DUTY;
-
-  const char *pwm_env = getenv("EOS_PWM");
-  const char *pwm_path = pwm_env ? pwm_env : "/dev/pwm0";
-
-  int fd = open(pwm_path, O_RDWR);
-  if (fd >= 0) {
-    st->dev_fd = fd;
-    st->is_pwm = true;
-    char buf[EOS_STR_10_LEN] = {0};
-    ssize_t n = read(fd, buf, sizeof(buf) - 1);
-    if (n > 0) {
-      buf[n] = '\0';
-      int val = atoi(buf);
-      if (val >= 0 && val <= EOS_BACKLIGHT_MAX_DUTY) {
-        st->cur_brightness = val;
-      }
-    }
-    return;
-  }
-
-  const char *disp_env = getenv("EOS_DISPLAY");
-  const char *disp_path = disp_env ? disp_env : "/dev/fb0";
-  fd = open(disp_path, O_RDWR);
-  if (fd >= 0) {
-    st->dev_fd = fd;
-    st->is_pwm = false;
-    uint8_t b = 100;
-    if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_BRIGHTNESS, &b) == 0) {
-      st->cur_brightness = (int)b;
-    }
-  }
-}
-
-static void backlight_apply_hardware(backlight_state_t *st, int val) {
-  if (val < 0) val = 0;
-  if (val > EOS_BACKLIGHT_MAX_DUTY) val = EOS_BACKLIGHT_MAX_DUTY;
-  st->cur_brightness = val;
-
-  if (st->dev_fd < 0) return;
-
-  if (st->is_pwm) {
-    if (st->smooth_fade) {
-      eos_pwm_fade_t fade = {
-          .target_duty = (uint16_t)(((uint32_t)val * 65535U) / 100U),
-          .duration_ms = EOS_BACKLIGHT_FADE_MS,
-      };
-      ioctl(st->dev_fd, EOS_PWM_IOCTL_FADE, &fade);
-    } else {
-      ioctl(st->dev_fd, EOS_PWM_IOCTL_SET_DUTY, (uint32_t)val);
-    }
-  } else {
-    ioctl(st->dev_fd, EOS_DISPLAY_IOCTL_SET_BRIGHTNESS, (uint32_t)val);
-  }
-}
-
 static void backlight_update_ui(backlight_state_t *st) {
   if (st->slider) {
-    lv_slider_set_value(st->slider, st->cur_brightness, LV_ANIM_OFF);
+    lv_slider_set_value(st->slider, st->dev.cur_brightness, LV_ANIM_OFF);
   }
   if (st->lbl_val) {
     char buf[EOS_SMALL_STR_LEN];
-    snprintf(buf, sizeof(buf), "Brightness: %d%%", st->cur_brightness);
+    backlight_logic_format_label(st->dev.cur_brightness, buf, sizeof(buf));
     lv_label_set_text(st->lbl_val, buf);
   }
 }
@@ -106,7 +42,7 @@ static void slider_event_cb(lv_event_t *e) {
   backlight_state_t *st = (backlight_state_t *)lv_event_get_user_data(e);
   if (!st || !st->slider) return;
   int val = lv_slider_get_value(st->slider);
-  backlight_apply_hardware(st, val);
+  backlight_logic_apply(&st->dev, val);
   backlight_update_ui(st);
 }
 
@@ -114,9 +50,11 @@ static void preset_event_cb(lv_event_t *e) {
   backlight_state_t *st = (backlight_state_t *)lv_event_get_user_data(e);
   if (!st) return;
   lv_obj_t *btn = lv_event_get_target(e);
-  for (int i = 0; i < EOS_BACKLIGHT_PRESET_COUNT; i++) {
+  size_t pcount = 0;
+  const int *presets = backlight_logic_get_presets(&pcount);
+  for (size_t i = 0; i < pcount && i < EOS_BACKLIGHT_PRESET_COUNT; i++) {
     if (st->btn_presets[i] == btn) {
-      backlight_apply_hardware(st, s_presets[i]);
+      backlight_logic_apply(&st->dev, presets[i]);
       backlight_update_ui(st);
       break;
     }
@@ -126,7 +64,7 @@ static void preset_event_cb(lv_event_t *e) {
 static void fade_sw_event_cb(lv_event_t *e) {
   backlight_state_t *st = (backlight_state_t *)lv_event_get_user_data(e);
   if (!st || !st->sw_fade) return;
-  st->smooth_fade = lv_obj_has_state(st->sw_fade, LV_STATE_CHECKED);
+  st->dev.smooth_fade = lv_obj_has_state(st->sw_fade, LV_STATE_CHECKED);
 }
 
 static void exit_btn_cb(lv_event_t *e) {
@@ -156,15 +94,17 @@ static void backlight_setup_ui(backlight_state_t *st, uint32_t w, uint32_t h) {
   if (btn_w < 28) btn_w = 28;
   int start_x = -(int)((EOS_BACKLIGHT_PRESET_COUNT * (btn_w + 4)) / 2) + (btn_w / 2);
 
-  for (int i = 0; i < EOS_BACKLIGHT_PRESET_COUNT; i++) {
+  size_t pcount = 0;
+  const int *presets = backlight_logic_get_presets(&pcount);
+  for (size_t i = 0; i < pcount && i < EOS_BACKLIGHT_PRESET_COUNT; i++) {
     st->btn_presets[i] = lv_btn_create(scr);
     lv_obj_set_size(st->btn_presets[i], btn_w, 28);
-    lv_obj_align(st->btn_presets[i], LV_ALIGN_TOP_MID, start_x + i * (btn_w + 4), 104);
+    lv_obj_align(st->btn_presets[i], LV_ALIGN_TOP_MID, start_x + (int)i * (btn_w + 4), 104);
     lv_obj_add_event_cb(st->btn_presets[i], preset_event_cb, LV_EVENT_CLICKED, st);
 
     lv_obj_t *lbl = lv_label_create(st->btn_presets[i]);
-    char pbuf[EOS_STR_8_LEN];
-    snprintf(pbuf, sizeof(pbuf), "%d%%", s_presets[i]);
+    char pbuf[EOS_TINY_STR_LEN];
+    snprintf(pbuf, sizeof(pbuf), "%d%%", presets[i]);
     lv_label_set_text(lbl, pbuf);
     lv_obj_center(lbl);
   }
@@ -175,7 +115,7 @@ static void backlight_setup_ui(backlight_state_t *st, uint32_t w, uint32_t h) {
 
   st->sw_fade = lv_switch_create(scr);
   lv_obj_align(st->sw_fade, LV_ALIGN_TOP_MID, 40, 144);
-  if (st->smooth_fade) {
+  if (st->dev.smooth_fade) {
     lv_obj_add_state(st->sw_fade, LV_STATE_CHECKED);
   }
   lv_obj_add_event_cb(st->sw_fade, fade_sw_event_cb, LV_EVENT_VALUE_CHANGED, st);
@@ -194,13 +134,13 @@ static void backlight_handle_key(backlight_state_t *st, uint16_t key) {
   switch (key) {
   case KEY_LEFT:
   case KEY_DOWN:
-    backlight_apply_hardware(st, st->cur_brightness - EOS_BACKLIGHT_DEFAULT_STEP);
+    backlight_logic_step(&st->dev, -EOS_BACKLIGHT_DEFAULT_STEP);
     backlight_update_ui(st);
     break;
 
   case KEY_RIGHT:
   case KEY_UP:
-    backlight_apply_hardware(st, st->cur_brightness + EOS_BACKLIGHT_DEFAULT_STEP);
+    backlight_logic_step(&st->dev, EOS_BACKLIGHT_DEFAULT_STEP);
     backlight_update_ui(st);
     break;
 
@@ -226,9 +166,9 @@ int lvgl_backlight_main(int argc, char **argv) {
 
   backlight_state_t st;
   memset(&st, 0, sizeof(st));
-  st.smooth_fade = true;
 
-  backlight_open_device(&st);
+  backlight_logic_init(&st.dev);
+  st.dev.smooth_fade = true;
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
@@ -251,10 +191,7 @@ int lvgl_backlight_main(int argc, char **argv) {
     eos_lvgl_step(10);
   }
 
-  if (st.dev_fd >= 0) {
-    close(st.dev_fd);
-    st.dev_fd = -1;
-  }
+  backlight_logic_close(&st.dev);
 
   eos_lvgl_deinit();
   return 0;

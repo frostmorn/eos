@@ -117,6 +117,7 @@ void eos_proc_exit(pid_t pid, int exit_code);
 
 // Process queries & inspection
 eos_proc_t *eos_proc_find(pid_t pid);
+bool eos_proc_is_alive(pid_t pid);
 bool eos_proc_get_copy(pid_t pid, eos_proc_t *out_proc);
 size_t eos_proc_get_all_pids(pid_t *out_pids, size_t max_pids);
 pid_t eos_proc_get_pgid(pid_t pid);

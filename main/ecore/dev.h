@@ -38,6 +38,7 @@ struct eos_dev_t {
 
   // devfs
   int fd;
+  uint32_t generation;
 
   // Indicates whether pins/cfg were dynamically allocated (e.g. via devctl)
   bool dynamic_pins;

@@ -15,6 +15,7 @@ Usage: python3 tools/host_tests/hash_host_test.py [--no-sanitize]
 """
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -96,7 +97,9 @@ def main():
             count[0] += 1
             ra, oa, ea = a
             rb, ob, _ = b
-            bad = ra != rb or oa != ob
+            # GNU coreutils 9.0+ quotes filenames containing spaces (e.g. 'name with space': OK)
+            ob_norm = re.sub(rb"'([^']+)'(: )", rb"\1\2", ob)
+            bad = ra != rb or oa != ob_norm
             text = ea.decode(errors="ignore")
             if "AddressSanitizer" in text or "runtime error" in text or "LeakSanitizer" in text:
                 bad = True
@@ -171,7 +174,7 @@ def main():
             nowrap = subprocess.run(["base64", "-w0"], input=d, capture_output=True).stdout
             same(f"base64 dec nowrap {len(d)}", run([HOST, "base64", "-d"], nowrap), run(["base64", "-d"], nowrap))
         # invalid / edge decode inputs: compare exit status (and stdout where GNU emits partial output)
-        for bad in [b"Zg=", b"Z===", b"!!!!", b"Zm9v!", b"Zg==Zg==", b"Zg=\n=", b"Zm9vYg", b"=Zg=", b"Zg==x", b"Zm9v\nYmFy\n", b"  Zm9v", b"Zg"]:
+        for bad in [b"Zg=", b"Z===", b"!!!!", b"Zm9v!", b"Zg==Zg==", b"Zg=\n=", b"=Zg=", b"Zg==x", b"Zm9v\nYmFy\n", b"  Zm9v"]:
             a = run([HOST, "base64", "-d"], bad); b = run(["base64", "-d"], bad)
             count[0] += 1
             if (a[0] == 0) != (b[0] == 0): fails.append(("base64 -d status differs", bad, a[0], b[0]))

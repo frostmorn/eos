@@ -83,7 +83,7 @@ static int bridge_ioctl_get_info(eos_dev_t *dev, bridge_state_t *st, va_list arg
 
   info->ip = st->ip_info;
 
-  char port_list[EOS_LINE_64_LEN] = {0};
+  char port_list[EOS_LINE_STR_LEN] = {0};
   for (size_t i = 0; i < st->port_count; i++) {
     if (i > 0) strncat(port_list, ", ", sizeof(port_list) - strlen(port_list) - 1);
     strncat(port_list, st->ports[i], sizeof(port_list) - strlen(port_list) - 1);

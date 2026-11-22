@@ -74,7 +74,7 @@ static inline void tmpfs_unlock(tmpfs_state_t *state) {
   if (state) pthread_mutex_unlock(&state->lock);
 }
 
-static tmpfs_state_t *eos_tmpfs_state = NULL;
+
 
 ///////////////////////////////////////////////////////////////////
 // Inode Lifecycle
@@ -1194,12 +1194,6 @@ int eos_tmpfs_umount(const char *path, tmpfs_state_t *state) {
   return 0;
 }
 
-void eos_tmpfs_init(void) {
-  eos_tmpfs_state = eos_tmpfs_mount(EOS_TMPFS_ROOT);
-  mkdir("/tmp", 0777);
-  mkdir("/proc", 0777);
-}
-
 static int tmpfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
   (void)src; (void)flags; (void)opts;
   tmpfs_state_t *st = eos_tmpfs_mount(tgt);
@@ -1215,6 +1209,8 @@ static int tmpfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_tmpfs = {
     .name = "tmpfs",
+    .default_source = "none",
+    .default_target = "/",
     .flags = EOS_FS_FLAG_PSEUDO,
     .mount = tmpfs_fs_mount,
     .umount = tmpfs_fs_umount,

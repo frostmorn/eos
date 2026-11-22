@@ -21,7 +21,7 @@ static const char *s_default_ifaces[] = {
 
 static int open_iface(const char *name) {
   if (!name) return -1;
-  char path[EOS_LINE_64_LEN];
+  char path[EOS_LINE_STR_LEN];
   if (name[0] == '/') {
     snprintf(path, sizeof(path), "%s", name);
   } else {

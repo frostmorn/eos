@@ -697,7 +697,7 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
   case EOS_I2C_IOCTL_PROBE: {
     uint16_t addr = (uint16_t)va_arg(args, int);
     int timeout_ms = va_arg(args, int);
-    if (timeout_ms <= 0) timeout_ms = EOS_MS_PER_TICK_50;
+    if (timeout_ms <= 0) timeout_ms = EOS_POLL_INTERVAL_MS;
     if (addr > I2C_ADDR_MAX) {
       errno = EINVAL;
       return -1;

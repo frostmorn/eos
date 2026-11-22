@@ -2,10 +2,12 @@
 #ifdef EOS_DRV_DISPLAY_QEMU_RGB_ENABLED
 
 #include <esp_err.h>
+#include <esp_lcd_panel_interface.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
 #include <esp_lcd_qemu_rgb.h>
 #include <esp_memory_utils.h>
+#include <esp_rom_sys.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
@@ -13,6 +15,53 @@
 #include "ecore/driver.h"
 #include "ecore/ioctl.h"
 #include "emisc/psram_alloc.h"
+
+// ── State ─────────────────────────────────────────────────────
+
+typedef volatile struct {
+  uint32_t version;
+  uint32_t size;
+  struct {
+    uint16_t y;
+    uint16_t x;
+  } update_from;
+  struct {
+    uint16_t y;
+    uint16_t x;
+  } update_to;
+  void *update_content;
+  struct {
+    uint32_t ena : 1;
+    uint32_t reserved : 31;
+  } update_st;
+  uint32_t bpp;
+} qemu_rgb_hw_regs_t;
+
+static esp_err_t qemu_rgb_safe_draw_bitmap(esp_lcd_panel_t *panel, int x_start,
+                                           int y_start, int x_end, int y_end,
+                                           const void *color_data) {
+  if (x_start >= x_end || y_start >= y_end) {
+    return ESP_ERR_INVALID_ARG;
+  }
+
+  qemu_rgb_hw_regs_t *regs = (qemu_rgb_hw_regs_t *)0x21000000;
+  regs->update_from.x = (uint16_t)x_start;
+  regs->update_from.y = (uint16_t)y_start;
+  regs->update_to.x = (uint16_t)x_end;
+  regs->update_to.y = (uint16_t)y_end;
+  regs->update_content = (void *)color_data;
+  regs->update_st.ena = 1;
+
+  // In QEMU headless (-nographic) mode there is no GUI display
+  // refresh timer, so update_st.ena is never cleared by QEMU. Bounding this
+  // wait tightly prevents consuming CPU cycles when headless.
+  uint32_t spins = 20;
+  while (regs->update_st.ena == 1 && --spins > 0) {
+  }
+
+  (void)panel;
+  return ESP_OK;
+}
 
 // ── State ─────────────────────────────────────────────────────
 
@@ -95,6 +144,7 @@ bool driver_display_qemu_rgb_init(eos_dev_t *dev) {
   if (err == ESP_OK && fb) {
     state->vram = fb;
   }
+  state->panel->draw_bitmap = qemu_rgb_safe_draw_bitmap;
 
   state->width = width;
   state->height = height;

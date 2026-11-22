@@ -145,7 +145,7 @@ static void sbuf_printf(sbuf_t *s, const char *fmt, ...) {
   if (s->len + (size_t)needed + 1 > s->cap) {
     size_t new_cap = s->cap * 2;
     if (new_cap < s->len + (size_t)needed + 1)
-      new_cap = s->len + (size_t)needed + EOS_LINE_64_LEN;
+      new_cap = s->len + (size_t)needed + EOS_LINE_STR_LEN;
     char *new_buf = eos_psram_realloc_prefer(s->buf, new_cap);
     if (!new_buf) {
       new_buf = realloc(s->buf, new_cap);
@@ -231,7 +231,7 @@ static char *procfs_gen_devices(void) {
     eos_dev_t *dev = eos_dev_get(i);
     if (!dev || !dev->in_use) continue;
 
-    char drv_str[EOS_STR_48_LEN];
+    char drv_str[EOS_BADGE_STR_LEN];
     if (dev->driver) {
       snprintf(drv_str, sizeof(drv_str), "%s/%s", dev->driver->scope, dev->driver->name);
     } else {
@@ -483,7 +483,7 @@ static void update_loadavg(void) {
   }
 
   uint64_t elapsed_us = now - s_last_load_sample;
-  if (elapsed_us < EOS_US_PER_SEC) return; // Sample at most once every second
+  if (elapsed_us < (EOS_US_PER_SEC * 9 / 10)) return; // Allow ~0.9s sampling cadence to avoid tick jitter
   s_last_load_sample = now;
 
   // If interval is excessively long (> 1 hour), re-baseline to avoid multi-rollover ambiguity
@@ -1119,7 +1119,7 @@ static int procfs_opendir(void *ctx, const char *path, eos_vfs_dir_t **out_dir) 
   kv_init(dir->fds);
 
   if (parsed.type == PROCFS_NODE_ROOT) {
-    size_t active = eos_proc_count_active();
+    size_t active = eos_proc_count_active() + 1;
     if (active > 0) {
       pid_t *temp_pids = malloc(active * sizeof(pid_t));
       if (temp_pids) {
@@ -1249,9 +1249,10 @@ static long procfs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
   return (long)dir->index;
 }
 
-// ── Initialization ────────────────────────────────────────────
+// ── Initialization & Filesystem Operations ───────────────────
 
-void eos_procfs_init(void) {
+static int procfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
   static const eos_vfs_ops_t ops = {
       .open = procfs_open,
       .close = procfs_close,
@@ -1266,14 +1267,14 @@ void eos_procfs_init(void) {
       .telldir = procfs_telldir,
   };
 
-  mkdir(EOS_PROCFS_ROOT, EOS_DEFAULT_DIR_MODE);
-  eos_vfs_register_ops(EOS_PROCFS_ROOT, &ops, NULL);
-  EOS_LOGI("procfs mounted at %s", EOS_PROCFS_ROOT);
-}
-
-static int procfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
-  (void)src; (void)flags; (void)opts; (void)out_ctx;
-  eos_procfs_init();
+  const char *mount_target = (tgt && tgt[0] != '\0') ? tgt : EOS_PROCFS_ROOT;
+  mkdir(mount_target, EOS_DEFAULT_DIR_MODE);
+  esp_err_t err = eos_vfs_register_ops(mount_target, &ops, NULL);
+  if (err != ESP_OK) {
+    EOS_LOGE("Failed to register procfs at %s: %s", mount_target, esp_err_to_name(err));
+    return -1;
+  }
+  EOS_LOGI("procfs mounted at %s", mount_target);
   return 0;
 }
 
@@ -1284,6 +1285,8 @@ static int procfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_procfs = {
     .name = "procfs",
+    .default_source = "none",
+    .default_target = EOS_PROCFS_ROOT,
     .flags = EOS_FS_FLAG_PSEUDO,
     .mount = procfs_fs_mount,
     .umount = procfs_fs_umount,

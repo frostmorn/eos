@@ -255,7 +255,7 @@ static size_t phase2_check_pin_bridges(pin_file_t *test_pins, size_t valid_count
         bridges_found++;
       }
 
-      usleep(EOS_TIMEOUT_200_MS);
+      usleep(EOS_PROBE_TIMEOUT_MS);
     }
   }
 

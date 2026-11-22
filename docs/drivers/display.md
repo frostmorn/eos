@@ -20,14 +20,20 @@ Display drivers in EOS reside under `scope == "display"`, exposing standard Virt
 
 Display drivers accept standard POSIX file operations:
 
-* **`open("/dev/fb0", O_RDWR)`**: Prepares display hardware for rendering.
+* **`open(eos_display_default_fb_path(), O_RDWR)`**: Prepares display hardware for rendering.
 * **`write(fd, buffer, bytes)`**: Transmits an uncompressed pixel stream into the active display window. For RGB565 format, each pixel consumes exactly 2 bytes in little-endian order:
   $$\text{byte\_count} = \text{width} \times \text{height} \times 2$$
 * **`close(fd)`**: Releases process-level display file handle.
 
+### Path Resolution Helpers (`ecore/display.h`)
+In accordance with EOS architectural guidelines, applications in `ebin/` must never hardcode raw device paths (such as `"/dev/fb0"` or `"/dev/vfb0"`):
+* `const char *eos_display_default_fb_path(void)`: Resolves the default framebuffer node (preferring compositor window `/dev/vfb0` when active, falling back to `/dev/fb0`).
+* `const char *eos_display_role_fb_path(const char *role)`: Resolves the dedicated framebuffer for a specific compositor role (`"statusbar"`, `"toolbar"`, `"main"`).
+
 ### Example C Rendering Pipeline:
 ```c
-int fd = open("/dev/fb0", O_RDWR);
+const char *fb_path = eos_display_default_fb_path();
+int fd = open(fb_path, O_RDWR);
 
 // 1. Query display geometry
 int width = 0, height = 0;

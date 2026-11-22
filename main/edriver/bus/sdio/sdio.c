@@ -104,7 +104,7 @@ static esp_err_t sdio_reset_slave(eos_dev_t *dev) {
   gpio_set_level((gpio_num_t)st->rst_pin, 0);
   vTaskDelay(pdMS_TO_TICKS(20));
   gpio_set_level((gpio_num_t)st->rst_pin, 1);
-  vTaskDelay(pdMS_TO_TICKS(EOS_MS_PER_TICK_50));
+  vTaskDelay(pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS));
   return ESP_OK;
 }
 
@@ -226,7 +226,7 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
     gpio_set_level((gpio_num_t)st->rst_pin, 0);
     vTaskDelay(pdMS_TO_TICKS(20));
     gpio_set_level((gpio_num_t)st->rst_pin, 1);
-    vTaskDelay(pdMS_TO_TICKS(EOS_MS_PER_TICK_50));
+    vTaskDelay(pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS));
     EOS_LOGI("sdio: reset pulsed on GPIO %d (slot %d)", st->rst_pin, st->slot);
   }
 

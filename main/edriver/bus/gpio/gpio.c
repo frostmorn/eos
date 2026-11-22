@@ -106,7 +106,10 @@ bool driver_bus_gpio_init(eos_dev_t *dev) {
 //=====================================================================
 void driver_bus_gpio_shutdown(eos_dev_t *dev) {
   // GPIO Cleanup
-  free(dev->state);
+  if (dev && dev->state) {
+    free(dev->state);
+    dev->state = NULL;
+  }
 }
 //=====================================================================
 int driver_bus_gpio_open(eos_dev_t *dev, const char *path, int flags,

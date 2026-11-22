@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ecore/display.h"
 #include "ecore/ioctl.h"
 #include "ebin/bar_common.h"
 #include "ebin/lvfont_render.h"
@@ -60,16 +61,9 @@ int toolbar_main(int argc, char **argv) {
   int timeout_ms = -1;
   bar_parse_args(argc, argv, &auto_mode, &timeout_ms);
 
-  const char *fb_path = getenv("EOS_FB");
-  if (!fb_path || !*fb_path) {
-    fb_path = "/dev/vfb2";
-  }
+  const char *fb_path = eos_display_role_fb_path("toolbar");
 
   int fd = open(fb_path, O_RDWR);
-  if (fd < 0) {
-    fb_path = "/dev/fb0";
-    fd = open(fb_path, O_RDWR);
-  }
   if (fd < 0) {
     fprintf(stderr, "toolbar: cannot open %s: %s\n", fb_path, strerror(errno));
     return 1;

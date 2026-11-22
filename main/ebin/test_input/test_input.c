@@ -191,7 +191,7 @@ int test_input_main(int argc, char **argv) {
     test_input_auto_inject(fd, &auto_verified, &count);
   } else if (opts.inject_key != NULL) {
     printf("Injecting synthetic key '%s'...\n", opts.inject_key);
-    char inj_buf[EOS_LINE_64_LEN];
+    char inj_buf[EOS_LINE_STR_LEN];
     int inj_len = snprintf(inj_buf, sizeof(inj_buf), "%s\n", opts.inject_key);
     if (write(fd, inj_buf, inj_len) < 0) {
       printf("Warning: failed to inject key: %s\n", strerror(errno));

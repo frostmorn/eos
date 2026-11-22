@@ -78,6 +78,9 @@ static int mount_all_partitions(void) {
 
   (void)mkdir("/mnt", EOS_DEFAULT_DIR_MODE);
 
+  const eos_fs_type_t *fat_fs = eos_fs_find("fat");
+  const char *default_target = (fat_fs && fat_fs->default_target) ? fat_fs->default_target : "/mnt/sd";
+
   for (int i = 0; i < part_count; i++) {
     char dev_path[EOS_SMALL_STR_LEN];
     snprintf(dev_path, sizeof(dev_path), "/dev/%s", part_names[i]);
@@ -88,9 +91,9 @@ static int mount_all_partitions(void) {
 
     char target[EOS_SMALL_STR_LEN];
     if (strcmp(part_names[i], "part0") == 0) {
-      strlcpy(target, "/mnt/sd", sizeof(target));
+      strlcpy(target, default_target, sizeof(target));
     } else {
-      snprintf(target, sizeof(target), "/mnt/sd%d", i);
+      snprintf(target, sizeof(target), "%s%d", default_target, i);
     }
 
     (void)mkdir(target, EOS_DEFAULT_DIR_MODE);

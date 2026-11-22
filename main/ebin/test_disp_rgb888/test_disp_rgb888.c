@@ -1,5 +1,6 @@
 #include "test_disp_rgb888.h"
 #include "ecore/bin.h"
+#include "ecore/display.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
 #include "emisc/psram_alloc.h"
@@ -15,9 +16,7 @@
 int test_disp_rgb888_main(int argc, char **argv) {
   (void)argc;
   (void)argv;
-  const char *path = (getenv("EOS_FB") && getenv("EOS_FB")[0])
-                         ? getenv("EOS_FB")
-                         : (access("/dev/vfb3", F_OK) == 0 ? "/dev/vfb3" : "/dev/fb0");
+  const char *path = eos_display_default_fb_path();
   int fd = open(path, O_RDWR);
   if (fd < 0) {
     fprintf(stderr, "test_disp_rgb888: cannot open '%s': %s\n", path, strerror(errno));

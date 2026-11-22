@@ -14,3 +14,5 @@ int eos_display_apply_format_pid(pid_t pid, uint32_t req_fmt);
 void eos_display_release_format_pid(pid_t pid);
 uint32_t eos_display_get_active_format(const char *fb_path);
 pid_t eos_display_get_owner_pid(void);
+const char *eos_display_default_fb_path(void);
+const char *eos_display_role_fb_path(const char *role);

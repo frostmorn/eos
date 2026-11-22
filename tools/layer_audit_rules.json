@@ -495,7 +495,8 @@
         ".h"
       ],
       "exclude_files": [
-        "psram_alloc.h"
+        "psram_alloc.h",
+        "fancymacro.h"
       ],
       "patterns": [
         "#\\s*include\\s*[<\"](esp_[\\w/]*|freertos/[\\w/]*|driver/[\\w/]*|soc/[\\w/]*|hal/[\\w/]*)\\.h",
@@ -717,7 +718,24 @@
         "main/efs"
       ],
       "pattern": "\\bEOS_FS_ATTR\\s+eos_fs_type_t\\b",
-      "rationale": "AGENTS.md §3: Every filesystem directory under main/efs/<name>/ defines an eos_fs_type_t structure registered in the .eos_fs section (EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };). No loose .c or .h files are permitted directly under main/efs/."
+      "rationale": "AGENTS.md §3: Every filesystem directory under main/efs/<name>/ defines an eos_fs_type_t structure registered in the .eos_fs section (EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };). No loose .c or .h files are permitted directly under main/efs/. All VFS registration calls (eos_vfs_register_ops, esp_vfs_register, etc.) must reside strictly inside eos_fs_type_t mount callbacks."
+    },
+    {
+      "id": "no_loose_fs_init",
+      "name": "No loose imperative filesystem init functions",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/eos.c",
+        "main/efs"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\beos_(?!fs_init\\b|vfs_init\\b)\\w*fs_init\\b"
+      ],
+      "rationale": "AGENTS.md §3: Imperative per-filesystem init functions (eos_*fs_init) are prohibited. All filesystem lifecycle, auto-mounts, and VFS ops registration must reside within eos_fs_type_t mount callbacks and be initialized declaratively via eos_fs_init()."
     },
     {
       "id": "no_direct_register_access_outside_drivers",
@@ -784,6 +802,86 @@
         "\\b(?:malloc|calloc)\\s*\\(\\s*(?:\\w+\\s*\\*\\s*)?(?:width|height|fb_size|frame_size|pcap|480|800|280|240)"
       ],
       "rationale": "AGENTS.md §4: Bulk buffers (framebuffers, render targets, packet capture rings) must not consume limited internal SRAM, requiring heap_caps_malloc(..., MALLOC_CAP_SPIRAM) or psram allocation helpers."
+    },
+    {
+      "id": "gui_logic_no_lvgl_includes",
+      "name": "GUI logic files in ebin must not include LVGL or UI headers",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        "_logic.c",
+        "_logic.h"
+      ],
+      "patterns": [
+        "#\\s*include\\s*[<\"](?:lvgl|ecore/lvgl|lv_)\\w*\\.h[>\"]"
+      ],
+      "rationale": "DEVELOPMENT.md §1: Business logic files (*_logic.c/h) must be strictly decoupled from UI presentation to allow headless unit testing."
+    },
+    {
+      "id": "gui_logic_separation",
+      "name": "GUI applications under main/ebin/lvgl_* must decouple business logic into separate *_logic.c",
+      "type": "gui_logic_separation",
+      "paths": [
+        "main/ebin"
+      ],
+      "app_prefix": "lvgl_",
+      "rationale": "DEVELOPMENT.md §1 & AGENTS.md §2: All graphical applications (main/ebin/lvgl_*) must strictly decouple presentation from business logic into separate source files (*_logic.c / *_logic.h) to enable headless automated testing."
+    },
+    {
+      "id": "centralized_gui_dialogs",
+      "name": "Modal dialogs in ebin must use centralized eos_lvgl_dialog_* APIs",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\blv_msgbox_create\\b",
+        "\\blv_msgbox_add_title\\b",
+        "\\blv_msgbox_add_text\\b",
+        "\\blv_msgbox_add_close_button\\b"
+      ],
+      "rationale": "DEVELOPMENT.md §7: Custom or ad-hoc message boxes (lv_msgbox_create) are forbidden; apps must use centralized eos_lvgl_dialog_confirm(), eos_lvgl_dialog_alert(), or eos_lvgl_dialog_info()."
+    },
+    {
+      "id": "centralized_gui_keyboard",
+      "name": "Virtual keyboards in ebin must use centralized EOS keyboard APIs",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\blv_keyboard_create\\b",
+        "\\blv_keyboard_set_textarea\\b",
+        "\\blv_keyboard_set_popovers\\b"
+      ],
+      "rationale": "DEVELOPMENT.md §7: Direct instantiation of lv_keyboard_create in user applications is forbidden; apps must use centralized eos_lvgl_create_keyboard() or eos_lvgl_create_input_dialog()."
+    },
+    {
+      "id": "centralized_gui_menus",
+      "name": "Menus and lists in ebin must use centralized eos_open_menu / eos_menu_* APIs",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\blv_menu_create\\b",
+        "\\blv_list_create\\b"
+      ],
+      "rationale": "AGENTS.md §2 & §3: Graphical applications must use centralized eos_open_menu() / eos_menu_create() instead of direct LVGL menu/list widgets."
     }
   ]
 }

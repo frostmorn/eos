@@ -1,5 +1,4 @@
 #include "emisc/eos_hash.h"
-#include "emisc/fancymacro.h"
 #include <string.h>
 
 ///////////////////////////////////////////////////////////////////////
@@ -393,7 +392,7 @@ void eos_hash_final(eos_hash_ctx_t *ctx, uint8_t *out) {
   const uint64_t bits_lo = ctx->total << 3;
   const uint64_t bits_hi = ctx->total >> 61;
 
-  ctx->buf[ctx->buf_len++] = EOS_HEX_BYTE_MSB;
+  ctx->buf[ctx->buf_len++] = 0x80u;
   if (ctx->buf_len > bs - len_bytes) {
     memset(ctx->buf + ctx->buf_len, 0, bs - ctx->buf_len);
     hash_block(ctx, ctx->buf);

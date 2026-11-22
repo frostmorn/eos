@@ -94,6 +94,7 @@ jobs:
           python tools/layer_audit.py
           python tools/wrapcheck.py
           python tools/status_matrix.py --check
+          python tools/host_tests/hash_host_test.py
 
           echo "=== Cleaning build cache ==="
           idf.py fullclean

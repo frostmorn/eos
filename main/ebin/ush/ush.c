@@ -26,7 +26,7 @@ static int ush_readline(char *buf, size_t size) {
     // instead of spinning on read() or returning -1 (which would exit ush
     // and cause eos_main to respawn init.sh / launcher in a loop).
     if (is_console && !eos_console_is_connected()) {
-      usleep(EOS_MS_PER_TICK_50 * (useconds_t)EOS_US_PER_MS);
+      usleep(EOS_POLL_INTERVAL_MS * (useconds_t)EOS_US_PER_MS);
       continue;
     }
 

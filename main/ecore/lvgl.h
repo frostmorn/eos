@@ -17,6 +17,7 @@ extern "C" {
 #define EOS_LVGL_DEFAULT_KBD_PATH   "/dev/keyboard0"
 #define EOS_LVGL_DEFAULT_TOUCH_PATH "/dev/touch0"
 #define EOS_LVGL_DMA_STRIP_BYTES    16384U
+#define EOS_LVGL_PSRAM_POOL_SIZE    (512U * 1024U)
 #define EOS_LVGL_KEY_QUEUE_SIZE     32U
 #define EOS_LVGL_TOUCH_QUEUE_SIZE   16U
 
@@ -300,6 +301,78 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg);
 
 // Closes any shared modal dialog
 void eos_lvgl_dialog_close(lv_obj_t *dialog);
+
+// ===================== Unified Menus (eos_menu & eos_popup_menu) =====================
+
+#define EOS_MENU_POPUP_DEFAULT_W   220
+#define EOS_MENU_ITEM_HEIGHT_LARGE 32
+#define EOS_MENU_ITEM_HEIGHT_SMALL 28
+#define EOS_MENU_HEADER_HEIGHT     30
+#define EOS_MENU_BACKDROP_OPACITY  180
+#define EOS_MENU_COMPACT_WIDTH_THRESHOLD   320
+#define EOS_MENU_COMPACT_HEIGHT_THRESHOLD  240
+#define EOS_LVGL_IS_COMPACT(w, h) \
+  (((w) <= EOS_MENU_COMPACT_WIDTH_THRESHOLD) || ((h) <= EOS_MENU_COMPACT_HEIGHT_THRESHOLD))
+
+struct eos_menu_s;
+typedef struct eos_menu_s eos_menu_t;
+struct eos_menu_item_s;
+typedef struct eos_menu_item_s eos_menu_item_t;
+
+typedef void (*eos_menu_item_cb_t)(eos_menu_t *menu, const eos_menu_item_t *item, void *user_data);
+typedef void (*eos_menu_select_cb_t)(eos_menu_t *menu, int item_id, void *user_data);
+typedef void (*eos_menu_focus_cb_t)(eos_menu_t *menu, int item_id, void *user_data);
+typedef void (*eos_menu_cancel_cb_t)(eos_menu_t *menu, void *user_data);
+
+struct eos_menu_item_s {
+  int id;
+  const char *icon;              // UTF-8 Emoji (e.g. "📁", "📄") or LVGL Symbol
+  const char *label;             // Primary text (supports ANSI escapes and recolor)
+  const char *detail;            // Secondary text (e.g. file size "4.2 KB")
+  eos_menu_item_cb_t action_cb;  // Dedicated item callback (if set, takes priority over on_select)
+  void *user_data;
+  bool is_destructive;           // Highlighted for delete/warning
+  bool is_disabled;
+};
+
+typedef struct {
+  const char *title;             // Menu title (suppressed in headerless mode)
+  const char *icon;              // Title icon (Emoji or Symbol)
+  const eos_menu_item_t *items;  // Item array
+  size_t item_count;
+  eos_menu_select_cb_t on_select;// Fallback selection/activation callback
+  eos_menu_focus_cb_t on_focus;  // Focus change callback (cursor/arrow highlight)
+  eos_menu_cancel_cb_t on_cancel;// Dismiss / cancel callback
+  void *user_data;
+  bool headerless;               // Explicitly hide header (default true on small screens)
+  bool force_fullscreen;         // Force full-screen eos_menu even on large screens
+  int32_t width;                 // Custom width (0 for default responsive width)
+  int32_t height;                // Custom height (0 for default responsive height)
+  lv_obj_t *parent;              // Parent container (NULL for active screen)
+} eos_menu_cfg_t;
+
+// Factory: auto-selects eos_menu (small screens) or eos_popup_menu (large screens)
+lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg);
+
+// Explicit constructors
+lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg);
+lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg);
+
+// Safe async menu dismissal
+void eos_menu_close(lv_obj_t *menu);
+
+// Menu Focus & Navigation (cursor highlight is strictly 'focus', keeping 'select' distinct for batch ops)
+int eos_menu_get_focused_index(lv_obj_t *menu);
+void eos_menu_focus_index(lv_obj_t *menu, int index);
+static inline int eos_menu_get_selected_index(lv_obj_t *menu) { return eos_menu_get_focused_index(menu); }
+static inline void eos_menu_select_index(lv_obj_t *menu, int index) { eos_menu_focus_index(menu, index); }
+bool eos_menu_handle_key(lv_obj_t *menu, uint16_t key);
+
+// Global font with emoji fallback support
+const lv_font_t *eos_lvgl_get_font(void);
+
+// Helper for converting ANSI escape sequences into LVGL recolor syntax (#RRGGBB text#)
+void eos_ansi_to_lvgl_recolor(const char *src, char *dst, size_t dst_len);
 
 #ifdef __cplusplus
 }

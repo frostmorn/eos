@@ -25,7 +25,7 @@ int uptime_main(int argc, char **argv) {
     fclose(f);
   }
 
-  char load_str[EOS_LINE_64_LEN] = "0.00, 0.00, 0.00";
+  char load_str[EOS_LINE_STR_LEN] = "0.00, 0.00, 0.00";
   f = fopen("/proc/loadavg", "r");
   if (f) {
     double l1 = 0, l5 = 0, l15 = 0;

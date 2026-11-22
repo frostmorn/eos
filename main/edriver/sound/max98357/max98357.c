@@ -477,7 +477,7 @@ static esp_err_t max98357_write_silence(max98357_state_t *st, size_t size, size_
     size_t chunk = (remaining > sizeof(silence)) ? sizeof(silence) : remaining;
     size_t written = 0;
     int64_t t_w0 = esp_timer_get_time();
-    err = i2s_channel_write(st->tx_chan, silence, chunk, &written, pdMS_TO_TICKS(EOS_TIMEOUT_500_MS));
+    err = i2s_channel_write(st->tx_chan, silence, chunk, &written, pdMS_TO_TICKS(EOS_HALF_SEC_TIMEOUT_MS));
     int64_t t_w1 = esp_timer_get_time();
     *out_wait_us += (t_w1 - t_w0);
     if (err != ESP_OK) break;
@@ -549,7 +549,7 @@ static void max98357_update_write_stats(max98357_state_t *st, size_t total_writt
   }
 
   if (st->stats.total_writes == 1 || st->stats.total_writes == 10 ||
-      (st->stats.total_writes % EOS_MS_PER_TICK_50 == 0)) {
+      (st->stats.total_writes % EOS_POLL_INTERVAL_MS == 0)) {
     EOS_LOGI("max98357: wr#%" PRIu32 ": size=%zu, lock=%" PRId64 "us, proc=%" PRId64 "us, wait=%" PRId64 "us (chunk=%" PRId64 "us), wall=%" PRId64 "ms, audio=%" PRId64 "ms, shift/lead=%+" PRId32 "ms",
              st->stats.total_writes, size, lock_us, proc_us, i2s_wait_us,
              chunk_audio_us, st->stats.stream_wall_us / (int64_t)EOS_US_PER_MS,

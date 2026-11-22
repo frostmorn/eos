@@ -80,7 +80,7 @@ int test_sdl_input_main(int argc, char **argv) {
         printf("[%d] SDL Event type=%lu\n", count, (unsigned long)e.type);
       }
     } else {
-      SDL_Delay(EOS_MS_PER_TICK_50);
+      SDL_Delay(EOS_POLL_INTERVAL_MS);
     }
   }
 

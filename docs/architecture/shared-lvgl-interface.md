@@ -191,6 +191,60 @@ lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb, vo
 ```
 If `custom_cb` is `NULL`, clicking the button automatically enqueues `KEY_ESC`, ensuring universal exit behavior across all apps.
 
+### 6.6 Adaptive Menu Subsystem (`eos_open_menu`)
+EOS provides a centralized, screen-adaptive menu component that automatically formats selection menus based on the active viewport resolution:
+
+* **Compact Screens (< 400px width/height, e.g. Lilka v2.3):** Renders a headerless, full-width menu (`eos_menu`) to maximize available list space.
+* **Large Screens (≥ 400px, e.g. JC4880P4):** Renders a floating modal dialog with title header, close button, and shadow overlay (`eos_popup_menu`).
+
+```c
+typedef struct eos_menu_cfg {
+  const char *title;              // Menu title (suppressed in headerless mode)
+  const char *icon;               // Title icon (Emoji or Symbol)
+  const eos_menu_item_t *items;   // Item array
+  size_t item_count;
+  eos_menu_select_cb_t on_select; // Fallback selection / activation callback
+  eos_menu_select_cb_t on_focus;  // Cursor focus change callback
+  eos_menu_cancel_cb_t on_cancel; // Dismiss / cancel callback
+  void *user_data;
+  bool headerless;                // Explicitly hide header (default true on small screens)
+  bool force_fullscreen;          // Force full-screen eos_menu even on large screens
+  int32_t width;                  // Custom width (0 for default responsive width)
+  int32_t height;                 // Custom height (0 for default responsive height)
+  lv_obj_t *parent;               // Parent container (NULL for active screen)
+} eos_menu_cfg_t;
+
+// Factory: automatically adapts to screen dimensions
+lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg);
+
+// Menu Focus, Selection & Keypad Arrow Navigation:
+int eos_menu_get_focused_index(lv_obj_t *menu);
+int eos_menu_get_selected_index(lv_obj_t *menu); // Backwards-compatible alias for get_focused
+void eos_menu_focus_index(lv_obj_t *menu, int index);
+void eos_menu_select_index(lv_obj_t *menu, int index); // Focuses item and scrolls into view
+bool eos_menu_handle_key(lv_obj_t *menu, uint16_t key);
+void eos_menu_close(lv_obj_t *menu);
+```
+
+#### Focus vs Selection Semantics
+EOS GUI menus enforce a clear semantic separation between **Focus** and **Selection**:
+1. **Focus (Cursor Highlight)**:
+   - Navigating with D-Pad or Arrow keys (`KEY_UP`, `KEY_DOWN`, `LV_KEY_UP`, `LV_KEY_DOWN`) changes the *focused* candidate item.
+   - Moving focus updates visual styling (highlight background and focus border) and triggers `cfg->on_focus`, allowing the application to update contextual toolbar text or detail sidebars dynamically without committing to any action.
+   - Guaranteed single-focus: navigation strictly maintains exactly one focused element at all times.
+2. **Selection (Activation / Multi-Select Commitment)**:
+   - Triggered when the user deliberately presses an action key (`KEY_ENTER`, `KEY_A`, `LV_KEY_ENTER`) or taps a touch item.
+   - Dispatches `cfg->on_select` or the individual item's `.on_select` callback.
+   - Keeping selection conceptually distinct from focus provides a clean foundation for future batch operations (e.g. marking multiple files for batch deletion or copying).
+
+#### Menu Key Navigation Discipline
+To maintain consistent navigation across all GUI applications:
+1. In the application event loop, when a menu is active, pass input keys through `eos_menu_handle_key(menu, key)`.
+2. `eos_menu_handle_key` handles `KEY_UP`, `KEY_DOWN`, `KEY_ENTER`, `KEY_A`, `KEY_ESC`, `KEY_B`, and `KEY_BACKSPACE` automatically:
+   - Up/Down updates focus and highlights the active item (`eos_menu_focus_index()`), scrolling the container if needed and invoking `on_focus`.
+   - Enter/A triggers the selected item callback or `cfg->on_select`.
+   - Esc/B triggers `cfg->on_cancel` or dismisses the menu cleanly.
+
 ---
 
 ## 7. Statusbar & Toolbar IPC API

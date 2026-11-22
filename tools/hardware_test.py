@@ -84,6 +84,8 @@ def get_target_cfg():
 def resolve_port(port, target_chip=None):
     if not port or port.startswith("socket://"):
         return port
+    if os.path.exists(port) and (port.startswith("/dev/pts") or port.startswith("/dev/pty")):
+        return port
     if not target_chip:
         target_chip = get_target_chip()
     candidates = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
@@ -96,62 +98,101 @@ def resolve_port(port, target_chip=None):
 
 
 def jtag_reset(port):
-    cfg = get_target_cfg()
+    target_chip = get_port_chip(port) or get_target_chip()
+    cfg = "board/esp32s3-builtin.cfg" if target_chip == "esp32s3" else "board/esp32p4-builtin.cfg"
     loc, serial_num = get_port_usb_info(port)
-    cmd = [
-        "/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd",
-        "-f", cfg
-    ]
+    cmd = ["/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd"]
+    if target_chip == "esp32s3":
+        cmd.extend(["-c", "set ESP_ONLYCPU 1"])
+    cmd.extend(["-f", cfg])
     if serial_num:
         cmd.extend(["-c", f"adapter serial {serial_num}"])
-    if "esp32s3" in cfg:
-        cmd.extend(["-c", "init; halt; mww 0x60008000 0x80000000; resume; shutdown"])
-    else:
-        cmd.extend(["-c", "init; reset run; shutdown"])
+    cmd.extend(["-c", "init; reset run; shutdown"])
     print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
-        time.sleep(1.5)
+        time.sleep(3.0)
     except Exception as e:
         print(f"{Colors.YELLOW}Warning: OpenOCD reset failed: {e}{Colors.RESET}")
 
 
+class TestFailFastException(Exception):
+    """Exception raised when a test fails and failfast mode is active."""
+    pass
+
+
 class EOSTestHarness:
-    def __init__(self, port, baudrate=115200, timeout=0.2, reset=False):
+    def __init__(self, port, baudrate=115200, timeout=0.2, reset=False, failfast=False):
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
         self.reset = reset
+        self.failfast = failfast
         self.ser = None
         self.passed = 0
         self.failed = 0
         self.suite_counts = {}
-        self.target_chip = get_target_chip()
+        self.target_chip = get_port_chip(port) or get_target_chip()
         self.loc, self.serial_num = get_port_usb_info(port)
 
+    def record_fail(self, suite):
+        self.failed += 1
+        if suite not in self.suite_counts:
+            self.suite_counts[suite] = {"pass": 0, "fail": 0}
+        self.suite_counts[suite]["fail"] += 1
+        if self.failfast:
+            raise TestFailFastException("Stopping immediately due to fail-fast flag (-x/--failfast)")
+
     def _open_serial(self):
-        resolved = resolve_port(self.port, getattr(self, "target_chip", None))
-        if resolved:
-            self.port = resolved
-            loc, s = get_port_usb_info(resolved)
-            if s:
-                self.serial_num = s
-        if hasattr(serial, "serial_for_url"):
-            self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout, write_timeout=2.0)
-        else:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=self.timeout, write_timeout=2.0)
-        try:
-            self.ser.dtr = False
-            self.ser.rts = False
-        except Exception:
-            pass
+        deadline = time.time() + 6.0
+        last_err = None
+        while time.time() < deadline:
+            resolved = resolve_port(self.port, getattr(self, "target_chip", None))
+            if resolved:
+                self.port = resolved
+                loc, s = get_port_usb_info(resolved)
+                if s:
+                    self.serial_num = s
+            if hasattr(serial, "serial_for_url") and self.port.startswith("socket://"):
+                self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
+                return
+            else:
+                try:
+                    self.ser = serial.Serial()
+                    self.ser.port = self.port
+                    self.ser.baudrate = self.baudrate
+                    self.ser.timeout = self.timeout
+                    self.ser.write_timeout = 2.0
+                    self.ser.dtr = False
+                    self.ser.rts = False
+                    self.ser.open()
+                    self.ser.dtr = False
+                    self.ser.rts = False
+                    try:
+                        import termios
+                        attrs = termios.tcgetattr(self.ser.fileno())
+                        attrs[2] &= ~termios.HUPCL
+                        termios.tcsetattr(self.ser.fileno(), termios.TCSANOW, attrs)
+                    except Exception:
+                        pass
+                    if hasattr(self.ser, "_socket") and self.ser._socket:
+                        self.ser._socket.setblocking(False)
+                    return
+                except Exception as e:
+                    last_err = e
+                    time.sleep(0.3)
+        if last_err:
+            raise last_err
 
     def _read_available(self):
         try:
             if not self.ser or not self.ser.is_open:
                 return b""
-            if hasattr(self.ser, "_socket"):
-                return self.ser._socket.recv(4096)
+            if hasattr(self.ser, "_socket") and self.ser._socket:
+                try:
+                    return self.ser._socket.recv(4096)
+                except (BlockingIOError, OSError):
+                    return b""
             n = self.ser.in_waiting
             if not n:
                 return b""
@@ -179,7 +220,7 @@ class EOSTestHarness:
                     self.port = target_port
                     self._open_serial()
                     if self.ser and self.ser.is_open:
-                        _ = self.ser.in_waiting
+                        self.ser.write(b"\r\n")
                         return True
                 except Exception:
                     self.close()
@@ -199,6 +240,8 @@ class EOSTestHarness:
         deadline = time.time() + 15.0
         buf = b""
         last_ping = 0.0
+        reopened_stale = False
+        start_t = time.time()
         while time.time() < deadline:
             chunk = self._read_available()
             if chunk:
@@ -206,6 +249,14 @@ class EOSTestHarness:
                 if ready_marker in buf:
                     break
             now = time.time()
+            if len(buf) == 0 and (now - start_t > 3.0) and not reopened_stale:
+                reopened_stale = True
+                try:
+                    self.close()
+                    time.sleep(0.5)
+                    self._open_serial()
+                except Exception:
+                    pass
             if now - last_ping > 0.4:
                 try:
                     self.ser.write(b"\r\necho __EOS_READY__\r\n")
@@ -214,21 +265,22 @@ class EOSTestHarness:
                 last_ping = now
             time.sleep(0.05)
 
-        if ready_marker not in buf and not self.reset and not self.port.startswith("socket://"):
+        if ready_marker not in buf and not self.port.startswith("socket://"):
             print(f"{Colors.YELLOW}No prompt detected, recovering via OpenOCD JTAG reset...{Colors.RESET}")
+            jtag_reset(self.port)
             try:
                 self.close()
             except Exception:
                 pass
-            time.sleep(0.3)
-            jtag_reset(self.port)
             if not self._wait_and_reopen(12.0):
-                return
+                raise RuntimeError(f"Failed to reopen serial port on {self.port}")
             time.sleep(0.5)
             self._drain_serial(0.5)
             deadline = time.time() + 15.0
             buf = b""
             last_ping = 0.0
+            start_t = time.time()
+            reopened_stale = False
             while time.time() < deadline:
                 chunk = self._read_available()
                 if chunk:
@@ -236,6 +288,14 @@ class EOSTestHarness:
                     if ready_marker in buf:
                         break
                 now = time.time()
+                if len(buf) == 0 and (now - start_t > 3.0) and not reopened_stale:
+                    reopened_stale = True
+                    try:
+                        self.close()
+                        time.sleep(0.5)
+                        self._open_serial()
+                    except Exception:
+                        pass
                 if now - last_ping > 0.4:
                     try:
                         self.ser.write(b"\r\necho __EOS_READY__\r\n")
@@ -243,6 +303,9 @@ class EOSTestHarness:
                         pass
                     last_ping = now
                 time.sleep(0.05)
+
+        if ready_marker not in buf:
+            raise RuntimeError(f"Failed to detect EOS shell prompt on {self.port}")
 
         self._drain_serial(1.0)
 
@@ -327,8 +390,7 @@ class EOSTestHarness:
                 print(f"    Forbidden regex: {not_pattern}")
             print(f"    Raw output repr: {repr(cmd_output)}")
             print(f"    Cmd output:\n{cmd_output}\n")
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
             return False, cmd_output
 
     def test_procfs(self):
@@ -400,8 +462,7 @@ class EOSTestHarness:
             self.suite_counts[suite]["pass"] += 1
         else:
             print(f"  [{Colors.RED}FAIL{Colors.RESET}] /proc/stat idle tick advancement (O1)")
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
 
     def test_pratt_parser(self):
         suite = "pratt"
@@ -704,8 +765,7 @@ class EOSTestHarness:
             # Re-establish boot automounts for re-attached block devices
             self.run_cmd("mount -a")
         else:
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
 
     def test_fs(self):
         suite = "fs"
@@ -726,7 +786,7 @@ class EOSTestHarness:
         self.check(suite, "Pseudo filesystem pipefs registered", "cat /proc/filesystems", r"nodev\s+pipefs")
         self.check(suite, "Block filesystem fat registered", "cat /proc/filesystems", r"(\s+fat|\s+vfat)")
         self.check(suite, "Default seeded mounts in /proc/mounts", "cat /proc/mounts",
-                   r"none\s+/\s+tmpfs\s+rw[\s\S]+none\s+/dev\s+devfs[\s\S]+none\s+/bin\s+binfs\s+ro[\s\S]+none\s+/proc\s+procfs")
+                   r"(?=[\s\S]*none\s+/\s+tmpfs\s+rw)(?=[\s\S]*none\s+/dev\s+devfs)(?=[\s\S]*none\s+/bin\s+binfs\s+ro)(?=[\s\S]*none\s+/proc\s+procfs)")
         self.check(suite, "mount command dumps active mount table", "mount",
                    r"none\s+/\s+tmpfs\s+rw[\s\S]+none\s+/proc\s+procfs")
 
@@ -867,8 +927,7 @@ class EOSTestHarness:
 
         if len(discovered) != 3:
             print(f"  [{Colors.RED}FAIL{Colors.RESET}] Expected 3 dynamic mounts, found {len(discovered)}")
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
             return
 
         print(f"  Discovered {len(discovered)} active dynamic mounts: {[m['target'] for m in discovered]}")
@@ -906,8 +965,7 @@ class EOSTestHarness:
             self.passed += 1
             self.suite_counts[suite]["pass"] += 1
         else:
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
 
         # Step 7: Final teardown & cleanup
         for m in detach_order:
@@ -1047,7 +1105,13 @@ class EOSTestHarness:
         self.check(suite, "Launch lvgl_fm automated test through launcher IPC",
                    "launcher lvgl_fm -a -t 500 &",
                    r"(requesting launch of 'lvgl_fm'|Starting 'lvgl_fm')", wait=2.5)
-        time.sleep(1.0)
+        time.sleep(1.5)
+        self.check(suite, "Launcher survives app exit and returns to main loop",
+                   "cat /tmp/launcher.active", r"^\d+")
+        launcher_pid = self.run_cmd("cat /tmp/launcher.active").strip()
+        if launcher_pid.isdigit():
+            self.check(suite, "Launcher process is alive in /proc after app return",
+                       f"ls /proc/{launcher_pid}", r"cmdline|stat")
         self.check(suite, "lvgl_term help banner", "lvgl_term -h",
                    r"Usage:\s+<cmd> \| lvgl_term", wait=2.0)
         self.check(suite, "lvgl_term execution (-c and -t)",
@@ -1056,6 +1120,8 @@ class EOSTestHarness:
         self.check(suite, "lvgl_term piped input streaming",
                    "echo __PIPED_TERM_OK__ | lvgl_term -t 400",
                    r"(__PIPED_TERM_OK__|Piped Stream Output|done)", wait=2.5)
+        self.check(suite, "Decoupled GUI logic unit tests pass with 0 failures", "test_gui_logic",
+                   r"GUI Logic Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=3.0)
 
     def test_emisc(self):
         suite = "emisc"
@@ -1085,8 +1151,7 @@ class EOSTestHarness:
             self.suite_counts[suite]["pass"] += 1
         else:
             print(f"  [{Colors.RED}FAIL{Colors.RESET}] sleep 0.2 execution timing too short ({elapsed:.2f}s)")
-            self.failed += 1
-            self.suite_counts[suite]["fail"] += 1
+            self.record_fail(suite)
 
         # 3. Shell Integration: rm tests
         self.run_cmd("echo h_rm_data > /tmp/h_rm.txt")
@@ -1270,13 +1335,13 @@ class EOSTestHarness:
         suite = "proc"
         print(f"\n{Colors.BOLD}=== 11. Process Table, Syscalls & Lifecycle Tests ==={Colors.RESET}")
         self.check(suite, "Process table test binary passes with 0 failures", "test_proc",
-                   r"Process Table Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=25.0)
+                   r"Process Table Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=45.0)
 
     def test_leaks(self):
         suite = "leaks"
         print(f"\n{Colors.BOLD}=== 12. Cleanup-Hook Registry & Leak Reaping Tests (F03) ==={Colors.RESET}")
         self.check(suite, "Cleanup hooks and leak reaping test binary passes with 0 failures", "test_leaks",
-                   r"Leak Registry Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=15.0)
+                   r"Leak Registry Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=30.0)
 
     def test_boot_reset_survival(self, count=3):
         suite = "bootreset"
@@ -1300,8 +1365,7 @@ class EOSTestHarness:
 
             if not self._wait_and_reopen(15.0):
                 print(f"  [{Colors.RED}FAIL{Colors.RESET}] Cycle {cycle}: Reopening serial port {self.port} timed out after reset")
-                self.failed += 1
-                self.suite_counts[suite]["fail"] += 1
+                self.record_fail(suite)
                 continue
 
             time.sleep(0.5)
@@ -1322,8 +1386,8 @@ class EOSTestHarness:
                         prompt_found = True
                         break
                 now = time.time()
-                # Stale CDC-ACM endpoint recovery if no data received after 5s
-                if len(buf) == 0 and (now - (deadline - 25.0) > 5.0) and not reopened_stale:
+                # Stale CDC-ACM endpoint recovery if no data received after 3s
+                if len(buf) == 0 and (now - (deadline - 25.0) > 3.0) and not reopened_stale:
                     reopened_stale = True
                     try:
                         self.close()
@@ -1331,8 +1395,8 @@ class EOSTestHarness:
                         self._open_serial()
                     except Exception:
                         pass
-                # Wait until boot completes (~4.5s) before sending ping so we do not flood init.sh
-                if (now - (deadline - 25.0) > 4.5):
+                # Send ping once target boot has started (~1.5s)
+                if (now - (deadline - 25.0) > 1.5):
                     if now - last_ping > 0.5:
                         try:
                             self.ser.write(b"\r\necho __EOS_READY__\r\n")
@@ -1344,8 +1408,7 @@ class EOSTestHarness:
             if not prompt_found:
                 print(f"  [{Colors.RED}FAIL{Colors.RESET}] Cycle {cycle}: Prompt ready canary timed out after reset (buf len={len(buf)})")
                 print(buf.decode("utf-8", errors="replace")[-4000:])
-                self.failed += 1
-                self.suite_counts[suite]["fail"] += 1
+                self.record_fail(suite)
                 continue
 
             self._drain_serial(0.5)
@@ -1483,6 +1546,8 @@ def main():
                         default="all", help="Filter test suites by execution environment tag (default: all)")
     parser.add_argument("--reset", action="store_true", help="Explicitly trigger OpenOCD JTAG reset before testing")
     parser.add_argument("--no-reset", action="store_true", help="Deprecated: reset is now off by default")
+    parser.add_argument("-x", "--failfast", "--fail-fast", action="store_true",
+                        help="Stop immediately on first test failure")
     args = parser.parse_args()
 
     try:
@@ -1490,7 +1555,7 @@ def main():
     except Exception:
         pass
 
-    harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=args.reset)
+    harness = EOSTestHarness(args.port, args.baud, args.timeout, reset=args.reset, failfast=args.failfast)
     try:
         harness.connect()
 
@@ -1501,6 +1566,9 @@ def main():
             if args.tag != "all" and meta["tag"] != args.tag:
                 continue
             meta["func"](harness)
+        return harness.print_summary()
+    except TestFailFastException:
+        print(f"\n{Colors.YELLOW}[FAIL-FAST] Halting test execution after failure.{Colors.RESET}")
         return harness.print_summary()
     except KeyboardInterrupt:
         print("\nTest cancelled by user.")

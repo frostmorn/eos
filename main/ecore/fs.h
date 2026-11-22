@@ -30,6 +30,8 @@ struct eos_fs_type;
 
 typedef struct eos_fs_type {
   const char *name;              // Filesystem identifier ("tmpfs", "fat", "devfs", etc.)
+  const char *default_source;    // Default source ("none", "/dev/sd0p1", etc.)
+  const char *default_target;    // Default mount point ("/", "/dev", "/bin", "/proc", etc.)
   uint32_t flags;                // Capability flags (EOS_FS_FLAG_*)
   int (*mount)(const char *source, const char *target, uint32_t flags, const char *opts, void **out_ctx);
   int (*umount)(const char *target, void *ctx, uint32_t flags);
@@ -43,8 +45,8 @@ extern const eos_fs_type_t _eos_fs_end[];
 
 // Active mount entry record
 typedef struct {
-  char source[EOS_LINE_64_LEN];  // Device path ("/dev/sd0p1"), pseudo-source ("none"), etc.
-  char target[EOS_LINE_64_LEN];  // Target directory prefix ("/sdcard", "/proc", etc.)
+  char source[EOS_LINE_STR_LEN];  // Device path ("/dev/sd0p1"), pseudo-source ("none"), etc.
+  char target[EOS_LINE_STR_LEN];  // Target directory prefix ("/sdcard", "/proc", etc.)
   char fstype[EOS_XSMALL_STR_LEN];// Filesystem type ("vfat", "tmpfs", "devfs", etc.)
   uint32_t flags;                // EOS_MOUNT_FLAG_*
   char opts[EOS_SMALL_STR_LEN];  // Mount options string ("rw", "ro", etc.)

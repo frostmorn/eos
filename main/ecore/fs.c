@@ -70,15 +70,41 @@ void eos_fs_init(void) {
   eos_proc_heap_tracking_restore(prev_h);
 
   s_fs_initialized = true;
-
-  // Pre-seed core in-memory filesystem mounts using registered types
-  eos_fs_add_mount_record("none", "/", "tmpfs", EOS_MOUNT_FLAG_NONE, "rw", NULL, eos_fs_find("tmpfs"));
-  eos_fs_add_mount_record("none", "/dev", "devfs", EOS_MOUNT_FLAG_NONE, "rw", NULL, eos_fs_find("devfs"));
-  eos_fs_add_mount_record("none", "/bin", "binfs", EOS_MOUNT_FLAG_RDONLY, "ro", NULL, eos_fs_find("binfs"));
-  eos_fs_add_mount_record("none", "/proc", "procfs", EOS_MOUNT_FLAG_NONE, "rw", NULL, eos_fs_find("procfs"));
-  eos_fs_add_mount_record("none", "/proc/pipes", "pipefs", EOS_MOUNT_FLAG_NONE, "rw", NULL, eos_fs_find("pipefs"));
-
   pthread_mutex_unlock(&s_fs_lock);
+
+  // 1. Mount root filesystem first ("/")
+  const eos_fs_type_t *root_fs = NULL;
+  for (const eos_fs_type_t *fs = _eos_fs_start; fs < _eos_fs_end; ++fs) {
+    if (fs->default_target && strcmp(fs->default_target, "/") == 0) {
+      root_fs = fs;
+      break;
+    }
+  }
+  if (root_fs) {
+    uint32_t mflags = (root_fs->flags & EOS_FS_FLAG_READONLY) ? EOS_MOUNT_FLAG_RDONLY : 0;
+    const char *opts = (root_fs->flags & EOS_FS_FLAG_READONLY) ? "ro" : "rw";
+    eos_mount(root_fs->default_source ? root_fs->default_source : "none",
+              root_fs->default_target, root_fs->name, mflags, opts);
+    mkdir("/tmp", 0777);
+    mkdir("/proc", 0777);
+  }
+
+  // 2. Mount remaining pseudo/in-memory filesystems with default mount targets.
+  // Mount top-level mountpoints first (e.g. /dev, /bin, /proc), then nested ones (e.g. /proc/pipes).
+  for (int pass = 0; pass < 2; ++pass) {
+    for (const eos_fs_type_t *fs = _eos_fs_start; fs < _eos_fs_end; ++fs) {
+      if (fs == root_fs || !fs->default_target) continue;
+      if (fs->flags & EOS_FS_FLAG_NEEDS_BDEV) continue;
+
+      bool is_nested = (fs->default_target[0] == '/' && strchr(fs->default_target + 1, '/') != NULL);
+      if ((pass == 0 && is_nested) || (pass == 1 && !is_nested)) continue;
+
+      uint32_t mflags = (fs->flags & EOS_FS_FLAG_READONLY) ? EOS_MOUNT_FLAG_RDONLY : 0;
+      const char *opts = (fs->flags & EOS_FS_FLAG_READONLY) ? "ro" : "rw";
+      eos_mount(fs->default_source ? fs->default_source : "none",
+                fs->default_target, fs->name, mflags, opts);
+    }
+  }
 }
 
 // ── Registry Lookup ───────────────────────────────────────────────
@@ -94,7 +120,7 @@ const eos_fs_type_t *eos_fs_find(const char *name) {
 
 // ── Busy & Device Query ───────────────────────────────────────────
 bool eos_mount_is_busy(const char *target) {
-  char norm[EOS_LINE_64_LEN];
+  char norm[EOS_LINE_STR_LEN];
   eos_fs_normalize_path(target, norm, sizeof(norm));
   return eos_vfs_is_mount_busy(norm);
 }
@@ -147,7 +173,7 @@ int eos_mount(const char *source, const char *target, const char *fstype,
   }
   if (!s_fs_initialized) eos_fs_init();
 
-  char norm_target[EOS_LINE_64_LEN];
+  char norm_target[EOS_LINE_STR_LEN];
   eos_fs_normalize_path(target, norm_target, sizeof(norm_target));
 
   pthread_mutex_lock(&s_fs_lock);
@@ -191,7 +217,6 @@ int eos_mount(const char *source, const char *target, const char *fstype,
   if (fs->mount) {
     int rc = fs->mount(source, norm_target, flags, opts, &ctx);
     if (rc != 0) {
-      errno = EIO;
       return -1;
     }
   }
@@ -215,7 +240,7 @@ int eos_umount(const char *target_or_device, uint32_t flags) {
   }
   if (!s_fs_initialized) eos_fs_init();
 
-  char norm[EOS_LINE_64_LEN];
+  char norm[EOS_LINE_STR_LEN];
   eos_fs_normalize_path(target_or_device, norm, sizeof(norm));
 
   pthread_mutex_lock(&s_fs_lock);
@@ -260,7 +285,6 @@ int eos_umount(const char *target_or_device, uint32_t flags) {
   if (matched->fs && matched->fs->umount) {
     int rc = matched->fs->umount(matched->target, matched->ctx, flags);
     if (rc != 0) {
-      errno = EIO;
       return -1;
     }
   }

@@ -1,275 +1,241 @@
-#include "ebin/lvgl_fm/lvgl_fm.h"
-#include <dirent.h>
+#include "lvgl_fm.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
 
-static void fm_load_directory(fm_state_t *st, const char *path);
+static void fm_render_file_list(fm_state_t *st);
 static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h);
-static void fm_update_selection_highlight(fm_state_t *st);
 
-static uint64_t get_time_ms(void) {
+static uint64_t fm_get_time_ms(void) {
   struct timeval tv;
   gettimeofday(&tv, NULL);
   return ((uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC) +
          ((uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS);
 }
 
-static void fm_format_size(size_t bytes, char *buf, size_t buflen) {
-  if (bytes < (size_t)FM_BYTES_PER_KB) {
-    snprintf(buf, buflen, "%u B", (unsigned int)bytes);
-  } else if (bytes < (size_t)FM_BYTES_PER_MB) {
-    snprintf(buf, buflen, "%u KB", (unsigned int)(bytes / (size_t)FM_BYTES_PER_KB));
-  } else {
-    snprintf(buf, buflen, "%u MB", (unsigned int)(bytes / (size_t)FM_BYTES_PER_MB));
-  }
-}
-
-static void fm_join_path(char *dst, size_t dst_size, const char *dir, const char *name) {
-  if (!dst || dst_size == 0) return;
-  if (!dir || strcmp(dir, "/") == 0) {
-    snprintf(dst, dst_size, "/%s", name ? name : "");
-    return;
-  }
-  strlcpy(dst, dir, dst_size);
-  strlcat(dst, "/", dst_size);
-  strlcat(dst, name ? name : "", dst_size);
-}
-
-static void fm_action_btn_cb(lv_event_t *e) {
-  fm_state_t *st = (fm_state_t *)lv_event_get_user_data(e);
-  lv_obj_t *btn = lv_event_get_target(e);
-  const char *act = (const char *)lv_obj_get_user_data(btn);
-
-  if (!st || !act) return;
-
-  if (strcmp(act, "cancel") == 0) {
-    if (st->dialog) {
-      lv_obj_del_async(st->dialog);
-      st->dialog = NULL;
-    }
-    return;
-  }
-
-  if (strcmp(act, "open") == 0) {
-    if (st->selected_is_dir) {
-      char target_path[EOS_MID_STR_LEN];
-      strlcpy(target_path, st->selected_path, sizeof(target_path));
-      if (st->dialog) {
-        lv_obj_del_async(st->dialog);
-        st->dialog = NULL;
-      }
-      strlcpy(st->pending_nav_path, target_path, sizeof(st->pending_nav_path));
-    } else {
-      if (st->dialog) {
-        lv_obj_del_async(st->dialog);
-        st->dialog = NULL;
-      }
-      printf("[fm] opening: %s\n", st->selected_path);
-      (void)eos_toolbar_printf(NULL, "Opening %s", st->selected_name);
-    }
-    return;
-  }
-
-  if (strcmp(act, "delete") == 0) {
-    int rc = -1;
-    if (st->selected_is_dir) {
-      rc = rmdir(st->selected_path);
-    } else {
-      rc = unlink(st->selected_path);
-    }
-    if (st->dialog) {
-      lv_obj_del_async(st->dialog);
-      st->dialog = NULL;
-    }
-    if (rc == 0) {
-      (void)eos_toolbar_printf(NULL, "Deleted %s", st->selected_name);
-    } else {
-      (void)eos_toolbar_printf(NULL, "Failed to delete: %s", strerror(errno));
-    }
-    strlcpy(st->pending_nav_path, st->cwd, sizeof(st->pending_nav_path));
-    return;
-  }
-
-  if (strcmp(act, "view") == 0) {
-    char target_path[EOS_MID_STR_LEN];
-    strlcpy(target_path, st->selected_path, sizeof(target_path));
-    if (st->dialog) {
-      lv_obj_del_async(st->dialog);
-      st->dialog = NULL;
-    }
-
-    int fd = open(target_path, O_RDONLY);
-    char *view_buf = calloc(1, FM_VIEW_MAX_BYTES + 1);
-    ssize_t n = 0;
-    if (fd >= 0) {
-      if (view_buf) {
-        n = read(fd, view_buf, FM_VIEW_MAX_BYTES);
-        if (n >= 0) view_buf[n] = '\0';
-      }
-      close(fd);
-    }
-
-    lv_obj_t *box = lv_obj_create(st->scr);
-    lv_obj_set_size(box, lv_pct(FM_VIEW_MODAL_W_PCT), lv_pct(FM_VIEW_MODAL_H_PCT));
-    lv_obj_center(box);
-    lv_obj_set_style_bg_color(box, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-    lv_obj_set_style_border_color(box, lv_color_hex(EOS_THEME_INFO_BLUE), 0);
-    lv_obj_set_style_border_width(box, 1, 0);
-    lv_obj_set_style_radius(box, 6, 0);
-    lv_obj_set_style_pad_all(box, 8, 0);
-
-    lv_obj_t *v_title = lv_label_create(box);
-    lv_label_set_text_fmt(v_title, LV_SYMBOL_FILE "  %s", st->selected_name);
-    lv_obj_set_style_text_color(v_title, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
-    lv_obj_align(v_title, LV_ALIGN_TOP_LEFT, 0, 0);
-
-    lv_obj_t *txt = lv_textarea_create(box);
-    lv_obj_set_size(txt, lv_pct(100), lv_pct(70));
-    lv_obj_align(txt, LV_ALIGN_TOP_MID, 0, 24);
-    lv_textarea_set_text(txt, view_buf ? view_buf : "Error reading file");
-    lv_obj_set_style_bg_color(txt, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
-    lv_obj_set_style_text_color(txt, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
-    lv_obj_set_style_border_width(txt, 0, 0);
-
-    lv_obj_t *c_btn = lv_btn_create(box);
-    lv_obj_align(c_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-    lv_obj_set_size(c_btn, lv_pct(FM_VIEW_CLOSE_BTN_W_PCT), 28);
-    lv_obj_set_user_data(c_btn, (void *)"cancel");
-    lv_obj_add_event_cb(c_btn, fm_action_btn_cb, LV_EVENT_CLICKED, st);
-    lv_obj_t *c_lbl = lv_label_create(c_btn);
-    lv_label_set_text(c_lbl, LV_SYMBOL_CLOSE " Close");
-    lv_obj_center(c_lbl);
-
-    free(view_buf);
-    st->dialog = box;
-    return;
-  }
-}
-
-static void fm_show_file_actions(fm_state_t *st, const char *name, bool is_dir) {
-  if (st->dialog) {
-    lv_obj_del_async(st->dialog);
+static void fm_close_dialog(fm_state_t *st) {
+  if (st && st->dialog) {
+    eos_menu_close(st->dialog);
     st->dialog = NULL;
   }
+}
 
-  strlcpy(st->selected_name, name, sizeof(st->selected_name));
-  st->selected_is_dir = is_dir;
-  fm_join_path(st->selected_path, sizeof(st->selected_path), st->cwd, name);
+static void fm_reset_widget_ptrs(fm_state_t *st) {
+  if (!st) return;
+  st->scr = NULL;
+  st->hdr = NULL;
+  st->path_lbl = NULL;
+  st->quick_bar = NULL;
+  st->menu_obj = NULL;
+  st->dialog = NULL;
+}
 
-  lv_obj_t *box = lv_obj_create(st->scr);
-  lv_obj_set_size(box, FM_ACTIONS_MODAL_W, LV_SIZE_CONTENT);
-  lv_obj_center(box);
-  lv_obj_set_style_bg_color(box, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_color(box, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(box, 1, 0);
-  lv_obj_set_style_radius(box, 6, 0);
-  lv_obj_set_style_pad_all(box, 0, 0);
-  lv_obj_set_style_clip_corner(box, true, 0);
-  lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(box, 0, 0);
-  lv_obj_set_style_pad_column(box, 0, 0);
+static void fm_preview_close_cb(lv_event_t *e) {
+  fm_state_t *st = (fm_state_t *)lv_event_get_user_data(e);
+  fm_close_dialog(st);
+}
 
-  // Header banner with file/folder title
-  lv_obj_t *hdr = lv_obj_create(box);
-  lv_obj_set_size(hdr, lv_pct(100), FM_ACTIONS_BTN_H);
-  lv_obj_set_style_bg_color(hdr, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
-  lv_obj_set_style_border_color(hdr, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(hdr, 1, 0);
-  lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
-  lv_obj_set_style_radius(hdr, 0, 0);
-  lv_obj_set_style_pad_hor(hdr, 6, 0);
-  lv_obj_set_style_pad_ver(hdr, 0, 0);
-  lv_obj_set_flex_flow(hdr, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(hdr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+static void fm_show_file_preview(fm_state_t *st) {
+  fm_close_dialog(st);
 
-  lv_obj_t *title = lv_label_create(hdr);
-  const char *icon = is_dir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE;
-  lv_label_set_text_fmt(title, "%s  %s", icon, name);
-  lv_obj_set_style_text_color(title, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
-  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  lv_obj_set_width(title, lv_pct(100));
-  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
-
-  // 1. Open
-  lv_obj_t *btn_open = lv_btn_create(box);
-  lv_obj_set_size(btn_open, lv_pct(100), FM_ACTIONS_BTN_H);
-  lv_obj_set_style_radius(btn_open, 0, 0);
-  lv_obj_set_style_bg_color(btn_open, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_color(btn_open, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(btn_open, 1, 0);
-  lv_obj_set_style_border_side(btn_open, LV_BORDER_SIDE_BOTTOM, 0);
-  lv_obj_set_style_pad_all(btn_open, 0, 0);
-  lv_obj_set_user_data(btn_open, (void *)"open");
-  lv_obj_add_event_cb(btn_open, fm_action_btn_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_o = lv_label_create(btn_open);
-  lv_label_set_text(lbl_o, is_dir ? LV_SYMBOL_DIRECTORY "  Open" : LV_SYMBOL_PLAY "  Open");
-  lv_obj_center(lbl_o);
-
-  // 2. View / Preview (for files only)
-  if (!is_dir) {
-    lv_obj_t *btn_view = lv_btn_create(box);
-    lv_obj_set_size(btn_view, lv_pct(100), FM_ACTIONS_BTN_H);
-    lv_obj_set_style_radius(btn_view, 0, 0);
-    lv_obj_set_style_bg_color(btn_view, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-    lv_obj_set_style_border_color(btn_view, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-    lv_obj_set_style_border_width(btn_view, 1, 0);
-    lv_obj_set_style_border_side(btn_view, LV_BORDER_SIDE_BOTTOM, 0);
-    lv_obj_set_style_pad_all(btn_view, 0, 0);
-    lv_obj_set_user_data(btn_view, (void *)"view");
-    lv_obj_add_event_cb(btn_view, fm_action_btn_cb, LV_EVENT_CLICKED, st);
-    lv_obj_t *lbl_v = lv_label_create(btn_view);
-    lv_label_set_text(lbl_v, LV_SYMBOL_EYE_OPEN "  Preview");
-    lv_obj_center(lbl_v);
+  int fd = open(st->selected_path, O_RDONLY);
+  char *view_buf = calloc(1, FM_VIEW_MAX_BYTES + 1);
+  if (fd >= 0) {
+    if (view_buf) {
+      ssize_t n = read(fd, view_buf, FM_VIEW_MAX_BYTES);
+      if (n >= 0) view_buf[n] = '\0';
+    }
+    close(fd);
   }
 
-  // 3. Delete
-  lv_obj_t *btn_del = lv_btn_create(box);
-  lv_obj_set_size(btn_del, lv_pct(100), FM_ACTIONS_BTN_H);
-  lv_obj_set_style_radius(btn_del, 0, 0);
-  lv_obj_set_style_bg_color(btn_del, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_color(btn_del, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(btn_del, 1, 0);
-  lv_obj_set_style_border_side(btn_del, LV_BORDER_SIDE_BOTTOM, 0);
-  lv_obj_set_style_pad_all(btn_del, 0, 0);
-  lv_obj_set_user_data(btn_del, (void *)"delete");
-  lv_obj_add_event_cb(btn_del, fm_action_btn_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_d = lv_label_create(btn_del);
-  lv_label_set_text(lbl_d, LV_SYMBOL_TRASH "  Delete");
-  lv_obj_set_style_text_color(lbl_d, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
-  lv_obj_center(lbl_d);
+  lv_obj_t *box = lv_obj_create(st->scr);
+  lv_obj_set_size(box, lv_pct(FM_VIEW_MODAL_W_PCT), lv_pct(FM_VIEW_MODAL_H_PCT));
+  lv_obj_center(box);
+  lv_obj_set_style_bg_color(box, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
+  lv_obj_set_style_border_color(box, lv_color_hex(EOS_THEME_INFO_BLUE), 0);
+  lv_obj_set_style_border_width(box, 1, 0);
+  lv_obj_set_style_radius(box, 6, 0);
+  lv_obj_set_style_pad_all(box, 8, 0);
 
-  // 4. Cancel
-  lv_obj_t *btn_can = lv_btn_create(box);
-  lv_obj_set_size(btn_can, lv_pct(100), FM_ACTIONS_BTN_H);
-  lv_obj_set_style_radius(btn_can, 0, 0);
-  lv_obj_set_style_bg_color(btn_can, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_width(btn_can, 0, 0);
-  lv_obj_set_style_pad_all(btn_can, 0, 0);
-  lv_obj_set_user_data(btn_can, (void *)"cancel");
-  lv_obj_add_event_cb(btn_can, fm_action_btn_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *lbl_c = lv_label_create(btn_can);
-  lv_label_set_text(lbl_c, LV_SYMBOL_CLOSE "  Cancel");
-  lv_obj_center(lbl_c);
+  lv_obj_t *v_title = lv_label_create(box);
+  lv_label_set_text_fmt(v_title, "📄  %s", st->selected_name);
+  lv_obj_set_style_text_color(v_title, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
+  lv_obj_align(v_title, LV_ALIGN_TOP_LEFT, 0, 0);
 
+  lv_obj_t *txt = lv_textarea_create(box);
+  lv_obj_set_size(txt, lv_pct(100), lv_pct(70));
+  lv_obj_align(txt, LV_ALIGN_TOP_MID, 0, 24);
+  lv_textarea_set_text(txt, view_buf ? view_buf : "Error reading file");
+  lv_obj_set_style_bg_color(txt, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
+  lv_obj_set_style_text_color(txt, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
+  lv_obj_set_style_border_width(txt, 0, 0);
+
+  lv_obj_t *c_btn = lv_btn_create(box);
+  lv_obj_align(c_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
+  lv_obj_set_size(c_btn, lv_pct(FM_VIEW_CLOSE_BTN_W_PCT), 28);
+  lv_obj_add_event_cb(c_btn, fm_preview_close_cb, LV_EVENT_CLICKED, st);
+  lv_obj_t *c_lbl = lv_label_create(c_btn);
+  lv_label_set_text(c_lbl, LV_SYMBOL_CLOSE " Close");
+  lv_obj_center(c_lbl);
+
+  free(view_buf);
   st->dialog = box;
+}
+
+static void fm_delete_confirmed_cb(bool confirmed, void *user_data) {
+  fm_state_t *st = (fm_state_t *)user_data;
+  if (!st) return;
+  st->dialog = NULL;
+  if (!confirmed) return;
+
+  int rc = -1;
+  if (st->selected_is_dir) {
+    rc = rmdir(st->selected_path);
+  } else {
+    rc = unlink(st->selected_path);
+  }
+  if (rc == 0) {
+    (void)eos_toolbar_printf(NULL, "Deleted %s", st->selected_name);
+  } else {
+    (void)eos_toolbar_printf(NULL, "Failed to delete: %s", strerror(errno));
+  }
+  strlcpy(st->pending_nav_path, st->data.cwd, sizeof(st->pending_nav_path));
+}
+
+static void fm_trigger_delete_confirm(fm_state_t *st) {
+  if (!st) return;
+  char msg[EOS_MID_STR_LEN];
+  snprintf(msg, sizeof(msg), "Delete %s?", st->selected_name);
+  eos_lvgl_confirm_dialog_cfg_t cfg = {
+    .title = "Confirm Delete",
+    .message = msg,
+    .confirm_label = "Delete",
+    .cancel_label = "Cancel",
+    .dangerous = true,
+    .cb = fm_delete_confirmed_cb,
+    .user_data = st,
+  };
+  st->dialog = eos_lvgl_dialog_confirm(&cfg);
+}
+
+static void fm_action_menu_cb(eos_menu_t *menu, int item_id, void *user_data) {
+  (void)menu;
+  fm_state_t *st = (fm_state_t *)user_data;
+  if (!st) return;
+
+  switch (item_id) {
+  case 0: // Open
+    if (st->selected_is_dir) {
+      strlcpy(st->pending_nav_path, st->selected_path, sizeof(st->pending_nav_path));
+      eos_lvgl_clear_keys();
+    } else {
+      (void)eos_toolbar_printf(NULL, "Opening %s", st->selected_name);
+      if (st->selected_is_exec) {
+        char launch_cmd[EOS_MID_STR_LEN];
+        snprintf(launch_cmd, sizeof(launch_cmd), "%s", st->selected_path);
+        fm_close_dialog(st);
+        eos_lvgl_deinit();
+        fm_reset_widget_ptrs(st);
+        if (st->details) {
+          free(st->details);
+          st->details = NULL;
+        }
+        system(launch_cmd);
+        eos_lvgl_init_paths(NULL, NULL);
+        uint32_t w = eos_lvgl_get_width();
+        uint32_t h = eos_lvgl_get_height();
+        fm_setup_ui(st, w, h);
+        fm_render_file_list(st);
+      }
+    }
+    fm_close_dialog(st);
+    break;
+
+  case 1: // Preview
+    fm_show_file_preview(st);
+    break;
+
+  case 2: // Delete
+    fm_close_dialog(st);
+    fm_trigger_delete_confirm(st);
+    break;
+
+  case 3: // Cancel
+  default:
+    fm_close_dialog(st);
+    break;
+  }
+}
+
+static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
+  if (entry_idx >= kv_size(st->data.entries)) return;
+  fm_close_dialog(st);
+
+  const fm_entry_t *entry = &kv_A(st->data.entries, entry_idx);
+  strlcpy(st->selected_name, entry->name, sizeof(st->selected_name));
+  st->selected_is_dir = fm_logic_is_dir(entry);
+  st->selected_is_exec = fm_logic_is_exec(entry);
+  fm_logic_get_full_path(&st->data, entry_idx, st->selected_path, sizeof(st->selected_path));
+
+  static const eos_menu_item_t action_items[] = {
+    { .id = 0, .icon = LV_SYMBOL_PLAY,     .label = "Open",    .detail = NULL, .is_destructive = false, .is_disabled = false },
+    { .id = 1, .icon = LV_SYMBOL_EYE_OPEN, .label = "Preview", .detail = NULL, .is_destructive = false, .is_disabled = false },
+    { .id = 2, .icon = LV_SYMBOL_TRASH,    .label = "Delete",  .detail = NULL, .is_destructive = true,  .is_disabled = false },
+    { .id = 3, .icon = LV_SYMBOL_CLOSE,    .label = "Cancel",  .detail = NULL, .is_destructive = false, .is_disabled = false },
+  };
+
+  bool is_small = EOS_LVGL_IS_COMPACT(eos_lvgl_get_width(), eos_lvgl_get_height());
+  eos_menu_cfg_t cfg = {
+    .title = st->selected_name,
+    .icon = fm_logic_get_icon(entry),
+    .items = action_items,
+    .item_count = sizeof(action_items) / sizeof(action_items[0]),
+    .on_select = fm_action_menu_cb,
+    .user_data = st,
+    .width = is_small ? 0 : FM_ACTIONS_MODAL_W,
+    .parent = st->scr,
+  };
+
+  st->dialog = eos_open_menu(&cfg);
+}
+
+static void fm_entry_selected_cb(eos_menu_t *menu, int item_id, void *user_data) {
+  (void)menu;
+  fm_state_t *st = (fm_state_t *)user_data;
+  if (!st || item_id < 0 || (size_t)item_id >= kv_size(st->data.entries)) return;
+
+  const fm_entry_t *e = &kv_A(st->data.entries, (size_t)item_id);
+
+  if (strcmp(e->name, "..") == 0) {
+    char parent[EOS_MID_STR_LEN];
+    fm_logic_parent_path(st->data.cwd, parent, sizeof(parent));
+    strlcpy(st->pending_nav_path, parent, sizeof(st->pending_nav_path));
+    eos_lvgl_clear_keys();
+    return;
+  }
+
+  if (fm_logic_is_dir(e)) {
+    char next[EOS_MID_STR_LEN];
+    fm_logic_get_full_path(&st->data, (size_t)item_id, next, sizeof(next));
+    strlcpy(st->pending_nav_path, next, sizeof(st->pending_nav_path));
+    eos_lvgl_clear_keys();
+  } else {
+    fm_show_file_actions(st, (size_t)item_id);
+  }
 }
 
 static void fm_mkdir_confirm_cb(const char *name, void *user_data) {
   fm_state_t *st = (fm_state_t *)user_data;
   if (!st || !name || name[0] == '\0') return;
 
-  char full[EOS_MID_STR_LEN];
-  fm_join_path(full, sizeof(full), st->cwd, name);
-
-  if (mkdir(full, EOS_DEFAULT_DIR_MODE) == 0) {
+  if (fm_logic_create_folder(&st->data, name) == 0) {
     (void)eos_toolbar_printf(NULL, "Created %s", name);
-    strlcpy(st->pending_nav_path, st->cwd, sizeof(st->pending_nav_path));
+    strlcpy(st->pending_nav_path, st->data.cwd, sizeof(st->pending_nav_path));
   } else {
     (void)eos_toolbar_printf(NULL, "mkdir failed: %s", strerror(errno));
   }
@@ -295,24 +261,19 @@ static void fm_mkdir_btn_cb(lv_event_t *e) {
 static void fm_refresh_btn_cb(lv_event_t *e) {
   fm_state_t *st = (fm_state_t *)lv_event_get_user_data(e);
   if (!st) return;
-  strlcpy(st->pending_nav_path, st->cwd, sizeof(st->pending_nav_path));
+  strlcpy(st->pending_nav_path, st->data.cwd, sizeof(st->pending_nav_path));
 }
 
 static void fm_navigate_up(fm_state_t *st) {
   if (!st) return;
-
-  if (strcmp(st->cwd, "/") == 0) {
+  if (strcmp(st->data.cwd, "/") == 0) {
     st->quit = true;
     return;
   }
-
-  char *last_slash = strrchr(st->cwd, '/');
-  if (last_slash && last_slash != st->cwd) {
-    *last_slash = '\0';
-  } else {
-    strlcpy(st->cwd, "/", sizeof(st->cwd));
-  }
-  strlcpy(st->pending_nav_path, st->cwd, sizeof(st->pending_nav_path));
+  char parent[EOS_MID_STR_LEN];
+  fm_logic_parent_path(st->data.cwd, parent, sizeof(parent));
+  strlcpy(st->pending_nav_path, parent, sizeof(st->pending_nav_path));
+  eos_lvgl_clear_keys();
 }
 
 static void fm_back_btn_cb(lv_event_t *e) {
@@ -329,163 +290,112 @@ static void fm_jump_btn_cb(lv_event_t *e) {
   }
 }
 
-static void fm_row_click_cb(lv_event_t *e) {
-  fm_state_t *st = (fm_state_t *)lv_event_get_user_data(e);
-  int idx = (int)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-
-  // Special index -1 means parent ".."
-  if (idx == -1) {
-    fm_back_btn_cb(e);
-    return;
-  }
-
-  if (idx < 0 || idx >= st->entry_count) return;
-
-  fm_entry_t *entry = &st->entries[idx];
-  if (entry->is_dir) {
-    char new_path[EOS_MID_STR_LEN];
-    fm_join_path(new_path, sizeof(new_path), st->cwd, entry->name);
-    strlcpy(st->pending_nav_path, new_path, sizeof(st->pending_nav_path));
-  } else {
-    fm_show_file_actions(st, entry->name, false);
-  }
+static void fm_entry_focus_cb(eos_menu_t *menu, int item_id, void *user_data) {
+  (void)menu;
+  fm_state_t *st = (fm_state_t *)user_data;
+  if (!st || item_id < 0 || (size_t)item_id >= kv_size(st->data.entries)) return;
+  st->focused_idx = item_id;
 }
 
-static void fm_update_selection_highlight(fm_state_t *st) {
-  for (int i = 0; i < st->list_btns_count; i++) {
-    if (!st->list_btns[i]) continue;
-    if (i == st->selected_idx) {
-      lv_obj_set_style_bg_color(st->list_btns[i], lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
-      lv_obj_set_style_border_color(st->list_btns[i], lv_color_hex(EOS_THEME_INFO_BLUE), 0);
-      lv_obj_set_style_border_width(st->list_btns[i], 1, 0);
-      lv_obj_scroll_to_view(st->list_btns[i], LV_ANIM_OFF);
-    } else {
-      lv_obj_set_style_bg_color(st->list_btns[i], lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-      lv_obj_set_style_border_width(st->list_btns[i], 0, 0);
-    }
-  }
-}
+static void fm_render_file_list(fm_state_t *st) {
+  if (!st) return;
 
-static void fm_load_directory(fm_state_t *st, const char *path) {
-  DIR *d = opendir(path);
-  if (!d) {
-    printf("fm: failed to open directory: %s\n", path);
-    return;
-  }
-
-  strlcpy(st->cwd, path, sizeof(st->cwd));
   if (st->path_lbl) {
-    lv_label_set_text(st->path_lbl, st->cwd);
+    lv_label_set_text(st->path_lbl, st->data.cwd);
   }
 
-  st->entry_count = 0;
-  struct dirent *de;
-  while ((de = readdir(d)) != NULL) {
-    if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) {
-      continue;
-    }
-    if (st->entry_count >= FM_MAX_ENTRIES) {
-      break;
-    }
-
-    fm_entry_t *ent = &st->entries[st->entry_count];
-    memset(ent, 0, sizeof(fm_entry_t));
-    strlcpy(ent->name, de->d_name, sizeof(ent->name));
-
-    char full_p[EOS_MID_STR_LEN];
-    fm_join_path(full_p, sizeof(full_p), st->cwd, de->d_name);
-
-    struct stat sb;
-    if (stat(full_p, &sb) == 0) {
-      ent->is_dir = S_ISDIR(sb.st_mode);
-      ent->size = (size_t)sb.st_size;
-      ent->is_exec = (sb.st_mode & S_IXUSR) || (strncmp(st->cwd, "/bin", 4) == 0);
-    } else {
-      ent->is_dir = false;
-      ent->size = 0;
-    }
-    st->entry_count++;
+  if (st->menu_obj) {
+    lv_obj_del(st->menu_obj);
+    st->menu_obj = NULL;
   }
-  closedir(d);
+  if (st->details) {
+    free(st->details);
+    st->details = NULL;
+  }
 
-  // Sort: directories first (alphabetical), then files (alphabetical)
-  for (int i = 0; i < st->entry_count - 1; i++) {
-    for (int j = 0; j < st->entry_count - i - 1; j++) {
-      bool swap = false;
-      if (st->entries[j].is_dir != st->entries[j + 1].is_dir) {
-        swap = !st->entries[j].is_dir && st->entries[j + 1].is_dir;
+  uint32_t sw = eos_lvgl_get_width();
+  uint32_t sh = eos_lvgl_get_height();
+  bool is_small = EOS_LVGL_IS_COMPACT(sw, sh);
+
+  size_t count = kv_size(st->data.entries);
+  eos_menu_item_t *items = NULL;
+
+  if (count > 0) {
+    items = calloc(count, sizeof(eos_menu_item_t));
+    st->details = calloc(count, sizeof(*st->details));
+  }
+
+  if (items && st->details) {
+    for (size_t i = 0; i < count; i++) {
+      const fm_entry_t *e = &kv_A(st->data.entries, i);
+      items[i].id = (int)i;
+      items[i].icon = fm_logic_get_icon(e);
+      items[i].label = e->name;
+
+      if (strcmp(e->name, "..") == 0) {
+        snprintf(st->details[i], sizeof(st->details[i]), "[Up]");
+      } else if (fm_logic_is_dir(e)) {
+        snprintf(st->details[i], sizeof(st->details[i]), "[DIR]");
       } else {
-        swap = (strcmp(st->entries[j].name, st->entries[j + 1].name) > 0);
+        fm_logic_format_size(e->stat.st_size, st->details[i], sizeof(st->details[i]));
       }
-      if (swap) {
-        fm_entry_t tmp = st->entries[j];
-        st->entries[j] = st->entries[j + 1];
-        st->entries[j + 1] = tmp;
-      }
+      items[i].detail = st->details[i];
     }
   }
 
-  // Clear existing list items
-  lv_obj_clean(st->list);
-  st->list_btns_count = 0;
-  st->selected_idx = 0;
+  int top_offset = 0;
+  if (!is_small) {
+    int hdr_h = FM_HDR_HEIGHT_DEFAULT;
+    top_offset = hdr_h + FM_BAR_HEIGHT;
+  }
 
-  // Add parent ".." entry if not at root
-  if (strcmp(st->cwd, "/") != 0) {
-    lv_obj_t *up_btn = lv_list_add_btn(st->list, LV_SYMBOL_UP, "..");
-    lv_obj_set_style_bg_color(up_btn, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-    lv_obj_set_style_text_color(up_btn, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
-    lv_obj_set_user_data(up_btn, (void *)(intptr_t)-1);
-    lv_obj_add_event_cb(up_btn, fm_row_click_cb, LV_EVENT_CLICKED, st);
-    if (st->list_btns_count < FM_MAX_ENTRIES) {
-      st->list_btns[st->list_btns_count++] = up_btn;
+  eos_menu_cfg_t cfg = {
+    .title = st->data.cwd,
+    .icon = LV_SYMBOL_DIRECTORY,
+    .items = items,
+    .item_count = count,
+    .on_select = fm_entry_selected_cb,
+    .on_focus = fm_entry_focus_cb,
+    .user_data = st,
+    .headerless = false,
+    .force_fullscreen = is_small,
+    .width = is_small ? 0 : (int32_t)sw,
+    .height = is_small ? (int32_t)sh : (int32_t)(sh - top_offset),
+    .parent = st->scr,
+  };
+
+  st->menu_obj = eos_menu_create(&cfg);
+  if (st->menu_obj) {
+    if (!is_small) {
+      lv_obj_align(st->menu_obj, LV_ALIGN_TOP_MID, 0, top_offset);
+    }
+    if (count > 1 && strcmp(kv_A(st->data.entries, 0).name, "..") == 0) {
+      eos_menu_focus_index(st->menu_obj, 1);
     }
   }
 
-  // If directory is empty, show clean label
-  if (st->entry_count == 0) {
-    lv_obj_t *empty_lbl = lv_label_create(st->list);
-    lv_label_set_text(empty_lbl, LV_SYMBOL_DIRECTORY "  (empty)");
-    lv_obj_set_style_text_color(empty_lbl, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
-    lv_obj_set_style_pad_all(empty_lbl, 16, 0);
+  if (items) {
+    free(items);
   }
-
-  for (int i = 0; i < st->entry_count; i++) {
-    fm_entry_t *ent = &st->entries[i];
-    const char *icon = ent->is_dir ? LV_SYMBOL_DIRECTORY : (ent->is_exec ? LV_SYMBOL_PLAY : LV_SYMBOL_FILE);
-    uint32_t text_color = ent->is_dir ? EOS_THEME_TEXT_PRIMARY
-                                      : (ent->is_exec ? EOS_THEME_ACCENT_GREEN : EOS_THEME_TEXT_PRIMARY);
-
-    char row_txt[EOS_MID_STR_LEN];
-    if (ent->is_dir) {
-      snprintf(row_txt, sizeof(row_txt), "%s", ent->name);
-    } else {
-      char sz_buf[EOS_STR_20_LEN];
-      fm_format_size(ent->size, sz_buf, sizeof(sz_buf));
-      snprintf(row_txt, sizeof(row_txt), "%s   %s", ent->name, sz_buf);
-    }
-
-    lv_obj_t *btn = lv_list_add_btn(st->list, icon, row_txt);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-    lv_obj_set_style_text_color(btn, lv_color_hex(text_color), 0);
-    lv_obj_set_user_data(btn, (void *)(intptr_t)i);
-    lv_obj_add_event_cb(btn, fm_row_click_cb, LV_EVENT_CLICKED, st);
-
-    if (st->list_btns_count < FM_MAX_ENTRIES) {
-      st->list_btns[st->list_btns_count++] = btn;
-    }
-  }
-
-  fm_update_selection_highlight(st);
 }
 
 static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   (void)w;
   st->scr = lv_scr_act();
   lv_obj_set_style_bg_color(st->scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
+  lv_obj_set_style_pad_all(st->scr, 0, 0);
+  lv_obj_set_style_border_width(st->scr, 0, 0);
 
-  bool compact = (h <= EOS_LVGL_DIALOG_MIN_W);
-  int hdr_h = compact ? FM_HDR_HEIGHT_COMPACT : FM_HDR_HEIGHT_DEFAULT;
+  bool is_small = EOS_LVGL_IS_COMPACT(w, h);
+  if (is_small) {
+    // Small screens: pure menu mode (headerless) to maximize vertical space
+    st->hdr = NULL;
+    st->quick_bar = NULL;
+    st->path_lbl = NULL;
+    return;
+  }
+
+  int hdr_h = FM_HDR_HEIGHT_DEFAULT;
 
   // Header container
   st->hdr = lv_obj_create(st->scr);
@@ -495,12 +405,11 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   lv_obj_set_style_border_color(st->hdr, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
   lv_obj_set_style_border_width(st->hdr, 1, 0);
   lv_obj_set_style_pad_all(st->hdr, 2, 0);
-  lv_obj_set_flex_flow(st->hdr, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(st->hdr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
   // Up/Back button
   lv_obj_t *btn_up = lv_btn_create(st->hdr);
   lv_obj_set_size(btn_up, FM_BTN_ICON_W, FM_BTN_ICON_H);
+  lv_obj_set_pos(btn_up, 2, 2);
   lv_obj_set_style_bg_color(btn_up, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
   lv_obj_add_event_cb(btn_up, fm_back_btn_cb, LV_EVENT_CLICKED, st);
   lv_obj_t *lbl_up = lv_label_create(btn_up);
@@ -510,12 +419,12 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   st->path_lbl = lv_label_create(st->hdr);
   lv_label_set_text(st->path_lbl, "/");
   lv_obj_set_style_text_color(st->path_lbl, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
-  lv_obj_set_flex_grow(st->path_lbl, 1);
-  lv_label_set_long_mode(st->path_lbl, LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(st->path_lbl, FM_BTN_ICON_W + 8, 8);
 
   // New folder button
   lv_obj_t *btn_new = lv_btn_create(st->hdr);
   lv_obj_set_size(btn_new, FM_BTN_ICON_W, FM_BTN_ICON_H);
+  lv_obj_align(btn_new, LV_ALIGN_TOP_RIGHT, -(FM_BTN_ICON_W + 6), 2);
   lv_obj_set_style_bg_color(btn_new, lv_color_hex(EOS_THEME_ACCENT_GREEN), 0);
   lv_obj_add_event_cb(btn_new, fm_mkdir_btn_cb, LV_EVENT_CLICKED, st);
   lv_obj_t *lbl_new = lv_label_create(btn_new);
@@ -525,6 +434,7 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   // Refresh button
   lv_obj_t *btn_ref = lv_btn_create(st->hdr);
   lv_obj_set_size(btn_ref, FM_BTN_ICON_W, FM_BTN_ICON_H);
+  lv_obj_align(btn_ref, LV_ALIGN_TOP_RIGHT, -2, 2);
   lv_obj_set_style_bg_color(btn_ref, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
   lv_obj_add_event_cb(btn_ref, fm_refresh_btn_cb, LV_EVENT_CLICKED, st);
   lv_obj_t *lbl_ref = lv_label_create(btn_ref);
@@ -532,29 +442,28 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   lv_obj_center(lbl_ref);
 
   // Quick Jump Bar
-  lv_obj_t *bar = lv_obj_create(st->scr);
-  lv_obj_set_size(bar, lv_pct(100), FM_BAR_HEIGHT);
-  lv_obj_align(bar, LV_ALIGN_TOP_MID, 0, hdr_h);
-  lv_obj_set_style_bg_color(bar, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_color(bar, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(bar, 1, 0);
-  lv_obj_set_style_pad_all(bar, 2, 0);
-  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  st->quick_bar = lv_obj_create(st->scr);
+  lv_obj_set_size(st->quick_bar, lv_pct(100), FM_BAR_HEIGHT);
+  lv_obj_align(st->quick_bar, LV_ALIGN_TOP_MID, 0, hdr_h);
+  lv_obj_set_style_bg_color(st->quick_bar, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
+  lv_obj_set_style_border_color(st->quick_bar, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
+  lv_obj_set_style_border_width(st->quick_bar, 1, 0);
+  lv_obj_set_style_pad_all(st->quick_bar, 2, 0);
 
-  const struct {
+  static const struct {
     const char *label;
     const char *path;
   } shortcuts[] = {
       {LV_SYMBOL_SD_CARD " SD", "/mnt/sd"},
       {LV_SYMBOL_HOME " Root", "/"},
       {LV_SYMBOL_PLAY " Bin", "/bin"},
-      {LV_SYMBOL_DRIVE " Tmp", "/tmp"},
+      {LV_SYMBOL_DIRECTORY " Tmp", "/tmp"},
   };
 
   for (size_t i = 0; i < sizeof(shortcuts) / sizeof(shortcuts[0]); i++) {
-    lv_obj_t *b = lv_btn_create(bar);
+    lv_obj_t *b = lv_btn_create(st->quick_bar);
     lv_obj_set_size(b, FM_BTN_SHORTCUT_W, FM_BTN_SHORTCUT_H);
+    lv_obj_set_pos(b, (lv_coord_t)(i * (FM_BTN_SHORTCUT_W + 8) + 8), 2);
     lv_obj_set_style_bg_color(b, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
     lv_obj_set_style_radius(b, 4, 0);
     lv_obj_set_user_data(b, (void *)shortcuts[i].path);
@@ -563,66 +472,43 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
     lv_label_set_text(lbl, shortcuts[i].label);
     lv_obj_center(lbl);
   }
-
-  // Scrollable list container
-  st->list = lv_list_create(st->scr);
-  int top_offset = hdr_h + FM_BAR_HEIGHT;
-  lv_obj_set_size(st->list, lv_pct(100), h - top_offset);
-  lv_obj_align(st->list, LV_ALIGN_TOP_MID, 0, top_offset);
-  lv_obj_set_style_bg_color(st->list, lv_color_hex(EOS_THEME_BG_COLOR), 0);
-  lv_obj_set_style_border_width(st->list, 0, 0);
-  lv_obj_set_style_pad_all(st->list, 2, 0);
 }
 
 static void fm_handle_key(fm_state_t *st, uint16_t key) {
   if (st->dialog) {
+    if (eos_menu_handle_key(st->dialog, key)) {
+      return;
+    }
     if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE) {
-      lv_obj_del_async(st->dialog);
-      st->dialog = NULL;
+      fm_close_dialog(st);
     }
     return;
   }
 
-  switch (key) {
-  case KEY_UP:
-    if (st->selected_idx > 0) {
-      st->selected_idx--;
-      fm_update_selection_highlight(st);
-    }
-    break;
-  case KEY_DOWN:
-    if (st->selected_idx < st->list_btns_count - 1) {
-      st->selected_idx++;
-      fm_update_selection_highlight(st);
-    }
-    break;
-  case KEY_A:
-  case KEY_ENTER:
-    if (st->list_btns_count > 0 && st->selected_idx >= 0 &&
-        st->selected_idx < st->list_btns_count && st->list_btns[st->selected_idx]) {
-      lv_obj_send_event(st->list_btns[st->selected_idx], LV_EVENT_CLICKED, NULL);
-    }
-    break;
-  case KEY_B:
-  case KEY_BACKSPACE:
-  case KEY_ESC:
-    fm_navigate_up(st);
-    break;
-  case KEY_C:
+  if (key == KEY_C) {
     fm_trigger_mkdir(st);
-    break;
-  case KEY_D:
-    if (st->list_btns_count > 0 && st->selected_idx >= 0 &&
-        st->selected_idx < st->list_btns_count && st->list_btns[st->selected_idx]) {
-      int idx = (int)(intptr_t)lv_obj_get_user_data(st->list_btns[st->selected_idx]);
-      if (idx >= 0 && idx < st->entry_count) {
-        fm_entry_t *ent = &st->entries[idx];
-        fm_show_file_actions(st, ent->name, ent->is_dir);
+    return;
+  }
+
+  if (key == KEY_D) {
+    if (st->menu_obj) {
+      int sel = eos_menu_get_selected_index(st->menu_obj);
+      if (sel >= 0) {
+        fm_show_file_actions(st, (size_t)sel);
       }
     }
-    break;
-  default:
-    break;
+    return;
+  }
+
+  if (key == KEY_B || key == KEY_BACKSPACE || key == KEY_ESC) {
+    fm_navigate_up(st);
+    return;
+  }
+
+  if (st->menu_obj) {
+    if (eos_menu_handle_key(st->menu_obj, key)) {
+      return;
+    }
   }
 }
 
@@ -662,14 +548,15 @@ int lvgl_fm_main(int argc, char **argv) {
     return -1;
   }
 
-  st->entries = calloc(FM_MAX_ENTRIES, sizeof(fm_entry_t));
-  st->list_btns = calloc(FM_MAX_ENTRIES + 1, sizeof(lv_obj_t *));
-  if (!st->entries || !st->list_btns) {
-    free(st->entries);
-    free(st->list_btns);
-    free(st);
-    eos_lvgl_deinit();
-    return -1;
+  const char *initial_dir = "/";
+  if (start_path && access(start_path, F_OK) == 0) {
+    initial_dir = start_path;
+  } else if (access("/mnt/sd", F_OK) == 0) {
+    initial_dir = "/mnt/sd";
+  }
+
+  if (fm_logic_init(&st->data, initial_dir) != 0) {
+    printf("lvgl_fm: failed to load initial directory %s\n", initial_dir);
   }
 
   st->auto_mode = auto_mode;
@@ -679,30 +566,25 @@ int lvgl_fm_main(int argc, char **argv) {
   uint32_t h = eos_lvgl_get_height();
 
   fm_setup_ui(st, w, h);
-
-  const char *initial_dir = "/";
-  if (start_path && access(start_path, F_OK) == 0) {
-    initial_dir = start_path;
-  } else if (access("/mnt/sd", F_OK) == 0) {
-    initial_dir = "/mnt/sd";
-  }
-
-  fm_load_directory(st, initial_dir);
+  fm_render_file_list(st);
 
   (void)eos_toolbar_set("File Manager", "[▲▼]Move [A]Open [..]Up [D]Del [B]Exit");
 
-  uint64_t start_ms = get_time_ms();
+  uint64_t start_ms = fm_get_time_ms();
 
   while (!st->quit) {
     if (st->pending_nav_path[0] != '\0') {
       char target[EOS_MID_STR_LEN];
       strlcpy(target, st->pending_nav_path, sizeof(target));
       st->pending_nav_path[0] = '\0';
-      fm_load_directory(st, target);
+      if (fm_logic_load_dir(&st->data, target) == 0) {
+        fm_render_file_list(st);
+        eos_lvgl_clear_keys();
+      }
     }
 
     if (st->timeout_ms >= 0) {
-      uint64_t elapsed = get_time_ms() - start_ms;
+      uint64_t elapsed = fm_get_time_ms() - start_ms;
       if (elapsed >= (uint64_t)st->timeout_ms) {
         break;
       }
@@ -725,8 +607,11 @@ int lvgl_fm_main(int argc, char **argv) {
     printf("lvgl_fm: self-test completed cleanly\n");
   }
 
-  free(st->entries);
-  free(st->list_btns);
+  if (st->details) {
+    free(st->details);
+    st->details = NULL;
+  }
+  fm_logic_deinit(&st->data);
   free(st);
 
   eos_lvgl_deinit();

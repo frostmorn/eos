@@ -1,5 +1,7 @@
 #pragma once
-#include <esp_attr.h>
+
+#include <stddef.h>
+#include <stdint.h>
 
 ///
 // Took it from KeiraOS ==> https://github.com/lilka-dev/keira
@@ -20,7 +22,7 @@
 
 #define FNV_1A_INITIAL_HVAL 0x811C9DC5
 
-static inline IRAM_ATTR uint32_t fnv_32a_buf(const void* buf, size_t len, uint32_t hval) {
+static inline uint32_t fnv_32a_buf(const void* buf, size_t len, uint32_t hval) {
     const unsigned char* bp = (const unsigned char*)buf;
     const unsigned char* be = bp + len;
 
@@ -37,7 +39,7 @@ static inline IRAM_ATTR uint32_t fnv_32a_buf(const void* buf, size_t len, uint32
 }
 
 /* Null-terminated string variant */
-static inline IRAM_ATTR uint32_t fnv_32a_cstr(const char* str, uint32_t hval) {
+static inline uint32_t fnv_32a_cstr(const char* str, uint32_t hval) {
     const unsigned char* s = (const unsigned char*)str;
 
     while (*s) {

@@ -47,7 +47,7 @@ static int run_child_hooks(void) {
     return 102;
   }
 
-  return EOS_DEFAULT_MAGIC_42;
+  return EOS_TEST_MAGIC_STATUS;
 }
 
 static int run_child_socket(void) {
@@ -123,7 +123,7 @@ static int test_leaks_main(int argc, char **argv) {
   int exit_code = spawn_child("child_hooks");
 
   int fd = open("/tmp/t_hooks.txt", O_RDONLY);
-  char buf[EOS_LINE_64_LEN];
+  char buf[EOS_LINE_STR_LEN];
   memset(buf, 0, sizeof(buf));
   if (fd >= 0) {
     read(fd, buf, sizeof(buf) - 1);
@@ -131,7 +131,7 @@ static int test_leaks_main(int argc, char **argv) {
   }
   unlink("/tmp/t_hooks.txt");
 
-  if (exit_code == EOS_DEFAULT_MAGIC_42 && strcmp(buf, "3\n1\n") == 0) {
+  if (exit_code == EOS_TEST_MAGIC_STATUS && strcmp(buf, "3\n1\n") == 0) {
     printf("  [PASS] hooks: LIFO execution and cancellation verified (output: 3, 1)\n");
     passed++;
   } else {

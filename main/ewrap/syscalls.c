@@ -88,7 +88,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     if (*p == '}')
       p++;
 
-    char name_buf[EOS_LINE_64_LEN];
+    char name_buf[EOS_LINE_STR_LEN];
     if (name_len < sizeof(name_buf)) {
       memcpy(name_buf, name_start, name_len);
       name_buf[name_len] = '\0';
@@ -109,7 +109,7 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     return;
   }
 
-  char name_buf[EOS_LINE_64_LEN];
+  char name_buf[EOS_LINE_STR_LEN];
   int i = 0;
   while (*p && (isalnum((unsigned char)*p) || *p == '_') &&
          i < (int)sizeof(name_buf) - 1) {
@@ -670,7 +670,7 @@ static int builtin_env_entry(int argc, char **argv) {
       char *eq = strchr(argv[i], '=');
       if (eq) {
         size_t klen = (size_t)(eq - argv[i]);
-        char key[EOS_LINE_64_LEN];
+        char key[EOS_LINE_STR_LEN];
         if (klen > 0 && klen < sizeof(key)) {
           memcpy(key, argv[i], klen);
           key[klen] = '\0';
@@ -704,7 +704,7 @@ static int builtin_env_entry(int argc, char **argv) {
     char *eq = strchr(argv[i], '=');
     if (eq) {
       size_t klen = (size_t)(eq - argv[i]);
-      char key[EOS_LINE_64_LEN];
+      char key[EOS_LINE_STR_LEN];
       if (klen > 0 && klen < sizeof(key)) {
         memcpy(key, argv[i], klen);
         key[klen] = '\0';

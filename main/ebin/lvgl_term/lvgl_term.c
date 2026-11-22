@@ -15,32 +15,8 @@
 #include <sys/time.h>
 #include <unistd.h>
 
-static const char *const s_preset_cmds[] = {
-    "cat /proc/cpuinfo",
-    "cat /eos.log",
-    "env",
-    "tree /",
-    "ls /bin",
-    "ls /dev",
-    "cat /proc/heapinfo",
-    "cat /proc/mounts",
-    "cat /proc/fds",
-    "cat /proc/gpio",
-    "cat /proc/interrupts",
-    "cat /proc/uptime",
-    "pwd",
-};
-
 typedef struct {
-  char file_path[EOS_MID_STR_LEN];
-  char title[EOS_SMALL_STR_LEN];
-  char active_cmd[EOS_MID_STR_LEN];
-  int preset_idx;
-  int last_exit_code;
-  bool has_exit_code;
-  int total_lines;
-  size_t total_bytes;
-  char *text_buf;
+  term_logic_t logic;
   bool should_exit;
   bool trigger_run;
   bool is_editing;
@@ -71,193 +47,10 @@ static uint64_t get_time_ms(void) {
   return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
-static void ensure_empty_input_file(void) {
-  int fd = open(TERM_DEFAULT_IN_FILE, O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
-  if (fd >= 0) {
-    close(fd);
-  }
-}
-
 // Forward declarations
 static void term_update_ui(term_viewer_state_t *st);
 static void term_open_edit_mode(term_viewer_state_t *st);
 static void term_close_edit_mode(term_viewer_state_t *st);
-static int term_load_from_file(term_viewer_state_t *st, const char *path);
-static int term_execute_cmd_to_file(term_viewer_state_t *st, const char *cmd);
-
-// Sanitize raw terminal text for LVGL's built-in font:
-// - Strip ANSI CSI escape sequences (\x1b[...m)
-// - Convert UTF-8 box-drawing chars (used by `tree`) to ASCII equivalents
-// - Normalize \r\n and \t
-static int sanitize_terminal_text(const char *raw, size_t raw_len, char *dst,
-                                  size_t dst_cap, size_t *out_bytes) {
-  if (!dst || dst_cap == 0)
-    return 0;
-
-  size_t r = 0;
-  size_t w = 0;
-  int lines = 1;
-
-  while (r < raw_len && w + 1 < dst_cap) {
-    unsigned char ch = (unsigned char)raw[r];
-
-    // Strip ANSI escape sequences: ESC '[' ... [A-Za-z~]
-    if (ch == 0x1B) {
-      r++;
-      if (r < raw_len && raw[r] == '[') {
-        r++;
-        while (r < raw_len) {
-          unsigned char c = (unsigned char)raw[r++];
-          if ((c >= '@' && c <= '~') || c == 'm') {
-            break;
-          }
-        }
-      }
-      continue;
-    }
-
-    // Convert UTF-8 box-drawing sequences (0xE2 0x94 0x80..0xBF) used by `tree`
-    if (ch == 0xE2 && r + 2 < raw_len) {
-      if ((unsigned char)raw[r + 1] == 0x94) {
-        unsigned char b3 = (unsigned char)raw[r + 2];
-        char repl = '-';
-        if (b3 == 0x82)      repl = '|'; // │
-        else if (b3 == 0x9C) repl = '+'; // ├
-        else if (b3 == 0x94) repl = '`'; // └
-        else if (b3 == EOS_HEX_BYTE_MSB) repl = '-'; // ─
-        dst[w++] = repl;
-        r += 3;
-        continue;
-      }
-    }
-
-    // Skip other multi-byte UTF-8 sequences not supported in ASCII font
-    if (ch >= EOS_HEX_BYTE_MSB) {
-      r++;
-      while (r < raw_len && (((unsigned char)raw[r] & 0xC0) == EOS_HEX_BYTE_MSB)) {
-        r++;
-      }
-      dst[w++] = '?';
-      continue;
-    }
-
-    if (ch == '\r') {
-      r++;
-      continue;
-    }
-
-    if (ch == '\t') {
-      int spaces = 2;
-      while (spaces-- > 0 && w + 1 < dst_cap) {
-        dst[w++] = ' ';
-      }
-      r++;
-      continue;
-    }
-
-    if (ch == '\n') {
-      dst[w++] = '\n';
-      lines++;
-      r++;
-      continue;
-    }
-
-    if (ch >= 0x20 && ch <= 0x7E) {
-      dst[w++] = (char)ch;
-    }
-    r++;
-  }
-
-  dst[w] = '\0';
-  if (out_bytes) {
-    *out_bytes = w;
-  }
-  return lines;
-}
-
-static int term_load_from_fd(term_viewer_state_t *st, int fd,
-                             const char *save_copy_path) {
-  char *raw = malloc(TERM_MAX_TEXT_BYTES);
-  if (!raw)
-    return -1;
-
-  size_t total = 0;
-  while (total + 1 < TERM_MAX_TEXT_BYTES) {
-    ssize_t n = read(fd, raw + total, TERM_MAX_TEXT_BYTES - 1 - total);
-    if (n > 0) {
-      total += (size_t)n;
-    } else if (n == 0) {
-      break;
-    } else {
-      if (errno == EAGAIN || errno == EINTR) {
-        usleep(5000);
-        continue;
-      }
-      break;
-    }
-  }
-  raw[total] = '\0';
-
-  if (save_copy_path && save_copy_path[0]) {
-    int out_fd = open(save_copy_path, O_WRONLY | O_CREAT | O_TRUNC, EOS_DEFAULT_FILE_MODE);
-    if (out_fd >= 0) {
-      if (total > 0) {
-        (void)write(out_fd, raw, total);
-      }
-      close(out_fd);
-    }
-  }
-
-  st->total_lines = sanitize_terminal_text(raw, total, st->text_buf,
-                                           TERM_MAX_TEXT_BYTES, &st->total_bytes);
-  free(raw);
-
-  if (st->total_bytes == 0) {
-    snprintf(st->text_buf, TERM_MAX_TEXT_BYTES,
-             "(Command completed with no stdout/stderr output)");
-    st->total_bytes = strlen(st->text_buf);
-    st->total_lines = 1;
-  }
-  return 0;
-}
-
-static int term_load_from_file(term_viewer_state_t *st, const char *path) {
-  int fd = open(path, O_RDONLY, 0);
-  if (fd < 0) {
-    snprintf(st->text_buf, TERM_MAX_TEXT_BYTES,
-             "No output file at '%s'.\nPress ▶ Run or A/ENTER to run '%s'.", path,
-             st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx]);
-    st->total_bytes = strlen(st->text_buf);
-    st->total_lines = 2;
-    return -1;
-  }
-
-  int rc = term_load_from_fd(st, fd, NULL);
-  close(fd);
-  return rc;
-}
-
-static int term_execute_cmd_to_file(term_viewer_state_t *st, const char *cmd) {
-  if (!cmd || !cmd[0])
-    return -1;
-
-  ensure_empty_input_file();
-
-  const char *out_path =
-      st->file_path[0] ? st->file_path : TERM_DEFAULT_OUT_FILE;
-  char full_cmd[EOS_LARGE_STR_LEN];
-  snprintf(full_cmd, sizeof(full_cmd), "%s < %s > %s", cmd,
-           TERM_DEFAULT_IN_FILE, out_path);
-
-  int rc = system(full_cmd);
-  st->last_exit_code = rc;
-  st->has_exit_code = true;
-  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", cmd);
-  snprintf(st->title, sizeof(st->title), "%.18s (exit %d)", cmd, rc);
-
-  term_load_from_file(st, out_path);
-  return rc;
-}
 
 // Proportional scrolling based on viewport dimensions
 static void term_scroll_by(term_viewer_state_t *st, int32_t dy) {
@@ -325,41 +118,38 @@ static void term_update_ui(term_viewer_state_t *st) {
     return;
 
   lv_label_set_text(st->hdr_title,
-                    st->title[0] ? st->title : "Terminal Viewer");
+                    st->logic.title[0] ? st->logic.title : "Terminal Viewer");
 
   if (st->hdr_meta) {
-    char mbuf[EOS_STR_48_LEN];
-    snprintf(mbuf, sizeof(mbuf), "%d lines", st->total_lines);
+    char mbuf[EOS_BADGE_STR_LEN];
+    snprintf(mbuf, sizeof(mbuf), "%d lines", st->logic.total_lines);
     lv_label_set_text(st->hdr_meta, mbuf);
   }
 
   if (st->cmd_label) {
-    const char *cmd =
-        st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
-    char cbuf[EOS_STR_96_LEN];
-    snprintf(cbuf, sizeof(cbuf), "%.48s", cmd);
+    char cbuf[EOS_HEADER_STR_LEN];
+    snprintf(cbuf, sizeof(cbuf), "%.48s", st->logic.active_cmd);
     lv_label_set_text(st->cmd_label, cbuf);
   }
 
-  if (st->out_label && st->text_buf) {
-    lv_label_set_text(st->out_label, st->text_buf);
+  if (st->out_label && st->logic.text_buf) {
+    lv_label_set_text(st->out_label, st->logic.text_buf);
   }
 
   if (st->footer_label) {
     int32_t sy = st->viewport ? lv_obj_get_scroll_y(st->viewport) : 0;
     int32_t bottom = st->viewport ? lv_obj_get_scroll_bottom(st->viewport) : 0;
-    char fbuf[EOS_STR_96_LEN];
+    char fbuf[EOS_HEADER_STR_LEN];
     snprintf(fbuf, sizeof(fbuf),
              "U/D:Scrl(%d/%d)  L/R:Preset  A:Run  D/KB:Edit  B:Exit", (int)sy,
              (int)(sy + (bottom > 0 ? bottom : 0)));
     lv_label_set_text(st->footer_label, fbuf);
   }
 
-  const char *cur_cmd = st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
   FILE *tb = fopen("/tmp/tbar.tmp", "w");
   if (tb) {
     fprintf(tb, "@%ld Term: %s\n[▲▼]Scroll  [◄►]Preset  [A]Run  [D]Edit  [B]Exit\n",
-            (long)getpid(), cur_cmd);
+            (long)getpid(), st->logic.active_cmd);
     fclose(tb);
     rename("/tmp/tbar.tmp", "/tmp/tbar");
   }
@@ -368,15 +158,13 @@ static void term_update_ui(term_viewer_state_t *st) {
 // Touch button event handlers
 static void term_btn_prev_cb(lv_event_t *e) {
   term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
-  st->preset_idx = (st->preset_idx - 1 + TERM_PRESET_COUNT) % TERM_PRESET_COUNT;
-  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", s_preset_cmds[st->preset_idx]);
+  term_logic_prev_preset(&st->logic);
   term_update_ui(st);
 }
 
 static void term_btn_next_cb(lv_event_t *e) {
   term_viewer_state_t *st = (term_viewer_state_t *)lv_event_get_user_data(e);
-  st->preset_idx = (st->preset_idx + 1) % TERM_PRESET_COUNT;
-  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", s_preset_cmds[st->preset_idx]);
+  term_logic_next_preset(&st->logic);
   term_update_ui(st);
 }
 
@@ -592,9 +380,9 @@ static void term_dialog_submit_cb(const char *text, void *user_data) {
     size_t len = strlen(text);
     while (len > 0 && isspace((unsigned char)text[len - 1])) len--;
     if (len > 0) {
-      if (len >= sizeof(st->active_cmd)) len = sizeof(st->active_cmd) - 1;
-      memcpy(st->active_cmd, text, len);
-      st->active_cmd[len] = '\0';
+      if (len >= sizeof(st->logic.active_cmd)) len = sizeof(st->logic.active_cmd) - 1;
+      memcpy(st->logic.active_cmd, text, len);
+      st->logic.active_cmd[len] = '\0';
     }
   }
   st->trigger_run = true;
@@ -627,8 +415,7 @@ static void term_open_edit_mode(term_viewer_state_t *st) {
     return;
 
   st->is_editing = true;
-  const char *initial =
-      st->active_cmd[0] ? st->active_cmd : s_preset_cmds[st->preset_idx];
+  const char *initial = st->logic.active_cmd;
 
   eos_lvgl_input_dialog_cfg_t cfg = {
       .title = "Terminal Command",
@@ -676,17 +463,12 @@ static void term_handle_key(term_viewer_state_t *st, uint16_t key) {
     break;
 
   case KEY_LEFT:
-    st->preset_idx =
-        (st->preset_idx - 1 + TERM_PRESET_COUNT) % TERM_PRESET_COUNT;
-    snprintf(st->active_cmd, sizeof(st->active_cmd), "%s",
-             s_preset_cmds[st->preset_idx]);
+    term_logic_prev_preset(&st->logic);
     term_update_ui(st);
     break;
 
   case KEY_RIGHT:
-    st->preset_idx = (st->preset_idx + 1) % TERM_PRESET_COUNT;
-    snprintf(st->active_cmd, sizeof(st->active_cmd), "%s",
-             s_preset_cmds[st->preset_idx]);
+    term_logic_next_preset(&st->logic);
     term_update_ui(st);
     break;
 
@@ -717,17 +499,17 @@ static int term_parse_args(term_viewer_state_t *st, int argc, char **argv,
       printf("  lvgl_term -t <timeout_ms>\n");
       return -1;
     } else if (strcmp(argv[i], "-c") == 0 && i + 1 < argc) {
-      snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", argv[++i]);
+      snprintf(st->logic.active_cmd, sizeof(st->logic.active_cmd), "%s", argv[++i]);
       *run_cmd_arg = true;
     } else if (strcmp(argv[i], "-t") == 0 && i + 1 < argc) {
       st->timeout_ms = (uint32_t)strtoul(argv[++i], NULL, 10);
     } else if (argv[i][0] != '-') {
       if (!*explicit_file) {
-        snprintf(st->file_path, sizeof(st->file_path), "%s", argv[i]);
-        snprintf(st->title, sizeof(st->title), "Term: %.22s", argv[i]);
+        snprintf(st->logic.file_path, sizeof(st->logic.file_path), "%s", argv[i]);
+        snprintf(st->logic.title, sizeof(st->logic.title), "Term: %.22s", argv[i]);
         *explicit_file = true;
-      } else if (!st->has_exit_code && argv[i][0]) {
-        snprintf(st->title, sizeof(st->title), "%s", argv[i]);
+      } else if (!st->logic.has_exit_code && argv[i][0]) {
+        snprintf(st->logic.title, sizeof(st->logic.title), "%s", argv[i]);
       }
     }
   }
@@ -738,7 +520,7 @@ static int term_cli_fallback(term_viewer_state_t *st, bool run_cmd_arg,
                              bool stdin_redirected, bool explicit_file) {
   if (run_cmd_arg) {
     char full_cmd[EOS_LARGE_STR_LEN];
-    snprintf(full_cmd, sizeof(full_cmd), "%s", st->active_cmd);
+    snprintf(full_cmd, sizeof(full_cmd), "%s", st->logic.active_cmd);
     system(full_cmd);
   } else if (stdin_redirected && !explicit_file) {
     char chunk[EOS_SECTOR_SIZE];
@@ -747,7 +529,7 @@ static int term_cli_fallback(term_viewer_state_t *st, bool run_cmd_arg,
       (void)write(STDOUT_FILENO, chunk, (size_t)n);
     }
   } else if (explicit_file) {
-    int fd = open(st->file_path, O_RDONLY);
+    int fd = open(st->logic.file_path, O_RDONLY);
     if (fd >= 0) {
       char chunk[EOS_SECTOR_SIZE];
       ssize_t n;
@@ -757,7 +539,7 @@ static int term_cli_fallback(term_viewer_state_t *st, bool run_cmd_arg,
       close(fd);
     }
   }
-  free(st->text_buf);
+  term_logic_deinit(&st->logic);
   free(st);
   return 0;
 }
@@ -780,7 +562,7 @@ static void term_run_event_loop(term_viewer_state_t *st) {
 
     if (st->trigger_run) {
       st->trigger_run = false;
-      term_execute_cmd_to_file(st, st->active_cmd);
+      term_logic_execute_cmd(&st->logic, st->logic.active_cmd);
       if (st->viewport) {
         lv_obj_scroll_to_y(st->viewport, 0, LV_ANIM_OFF);
       }
@@ -806,30 +588,27 @@ int lvgl_term_main(int argc, char **argv) {
     return -1;
   }
 
-  st->text_buf = calloc(1, TERM_MAX_TEXT_BYTES);
-  if (!st->text_buf) {
+  if (term_logic_init(&st->logic) != 0) {
     free(st);
     return -1;
   }
 
   st->start_time_ms = get_time_ms();
-  snprintf(st->file_path, sizeof(st->file_path), "%s", TERM_DEFAULT_OUT_FILE);
-  snprintf(st->title, sizeof(st->title), "Terminal Viewer");
-  snprintf(st->active_cmd, sizeof(st->active_cmd), "%s", s_preset_cmds[0]);
+  snprintf(st->logic.file_path, sizeof(st->logic.file_path), "%s", TERM_DEFAULT_OUT_FILE);
 
   bool run_cmd_arg = false;
   bool explicit_file = false;
 
   if (term_parse_args(st, argc, argv, &run_cmd_arg, &explicit_file) != 0) {
-    free(st->text_buf);
+    term_logic_deinit(&st->logic);
     free(st);
     return 0;
   }
 
   // Sync preset index if active_cmd matches a preset
   for (int i = 0; i < TERM_PRESET_COUNT; i++) {
-    if (strcmp(st->active_cmd, s_preset_cmds[i]) == 0) {
-      st->preset_idx = i;
+    if (strcmp(st->logic.active_cmd, term_logic_get_preset(i)) == 0) {
+      st->logic.preset_idx = i;
       break;
     }
   }
@@ -847,21 +626,21 @@ int lvgl_term_main(int argc, char **argv) {
   term_build_ui(st);
 
   if (run_cmd_arg) {
-    term_execute_cmd_to_file(st, st->active_cmd);
+    term_logic_execute_cmd(&st->logic, st->logic.active_cmd);
   } else if (stdin_redirected && !explicit_file) {
-    snprintf(st->title, sizeof(st->title), "Piped Stream Output");
-    term_load_from_fd(st, STDIN_FILENO, TERM_DEFAULT_OUT_FILE);
+    snprintf(st->logic.title, sizeof(st->logic.title), "Piped Stream Output");
+    term_logic_load_fd(&st->logic, STDIN_FILENO, TERM_DEFAULT_OUT_FILE);
   } else if (explicit_file) {
-    term_load_from_file(st, st->file_path);
+    term_logic_load_file(&st->logic, st->logic.file_path);
   } else {
     // Default initial execution of first preset
-    term_execute_cmd_to_file(st, st->active_cmd);
+    term_logic_execute_cmd(&st->logic, st->logic.active_cmd);
   }
 
   term_update_ui(st);
   term_run_event_loop(st);
 
-  free(st->text_buf);
+  term_logic_deinit(&st->logic);
   free(st);
   return 0;
 }

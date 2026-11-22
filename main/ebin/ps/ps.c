@@ -16,7 +16,7 @@ typedef struct {
   char state_c;
   char name[EOS_SMALL_STR_LEN];
   char tty[EOS_XSMALL_STR_LEN];
-  char cmdline[EOS_LINE_64_LEN];
+  char cmdline[EOS_LINE_STR_LEN];
   uint64_t cpu_time_us;
   uint64_t start_time_us;
 } ps_proc_info_t;

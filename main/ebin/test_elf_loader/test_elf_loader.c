@@ -238,7 +238,7 @@ int test_elf_loader_main(int argc, char **argv) {
   }
 
   // 5. Environment $PATH resolution
-  char old_path[EOS_LINE_64_LEN];
+  char old_path[EOS_LINE_STR_LEN];
   const char *cur_p = getenv("PATH");
   strlcpy(old_path, cur_p ? cur_p : "/bin", sizeof(old_path));
 

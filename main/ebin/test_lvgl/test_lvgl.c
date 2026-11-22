@@ -30,20 +30,20 @@ static void update_test_ui(test_lvgl_ui_t *ui, const char *last_key_name) {
   if (!ctx)
     return;
 
-  char mode_buf[EOS_LINE_64_LEN];
+  char mode_buf[EOS_LINE_STR_LEN];
   snprintf(mode_buf, sizeof(mode_buf), "Mode: %s (%ux%u, strip=%u)",
            ctx->fallback_full ? "FULL FALLBACK" : "PARTIAL DRAW",
            (unsigned)ctx->width, (unsigned)ctx->height,
            (unsigned)ctx->partial_lines);
   lv_label_set_text(ui->mode_label, mode_buf);
 
-  char stats_buf[EOS_LINE_64_LEN];
+  char stats_buf[EOS_LINE_STR_LEN];
   snprintf(stats_buf, sizeof(stats_buf), "Flushes: partial=%u  full=%u",
            (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes);
   lv_label_set_text(ui->stats_label, stats_buf);
 
   if (last_key_name) {
-    char kbuf[EOS_LINE_64_LEN];
+    char kbuf[EOS_LINE_STR_LEN];
     snprintf(kbuf, sizeof(kbuf), "Last key: %s | Pos:(%d,%d)", last_key_name,
              (int)ui->box_x, (int)ui->box_y);
     lv_label_set_text(ui->key_label, kbuf);
@@ -134,19 +134,19 @@ static void test_lvgl_run_auto(test_lvgl_ui_t *ui) {
   eos_lvgl_set_full_fallback(false);
   ui->progress = 25;
   update_test_ui(ui, "AUTO_PARTIAL");
-  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  eos_lvgl_step(EOS_POLL_INTERVAL_MS);
   uint32_t p_flushes1 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
 
   eos_lvgl_set_full_fallback(true);
   ui->progress = 75;
   update_test_ui(ui, "AUTO_FULL");
-  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  eos_lvgl_step(EOS_POLL_INTERVAL_MS);
   uint32_t f_flushes = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->full_flushes : 0;
 
   eos_lvgl_set_full_fallback(false);
   ui->progress = 100;
   update_test_ui(ui, "AUTO_DONE");
-  eos_lvgl_step(EOS_MS_PER_TICK_50);
+  eos_lvgl_step(EOS_POLL_INTERVAL_MS);
   uint32_t p_flushes2 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
 
   printf("Automated test flushes: partial=%u->%u, full=%u\n",

@@ -27,6 +27,16 @@ static inline bool is_system_task(void) {
   return eos_proc_task_is_system();
 }
 
+static inline bool heap_skip_tracking(uint32_t caps) {
+  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled() || (caps & MALLOC_CAP_DMA)) {
+    return true;
+  }
+  if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || xPortInIsrContext() || !xPortCanYield()) {
+    return true;
+  }
+  return false;
+}
+
 static inline eos_proc_t *get_alloc_owner_proc(void) {
   if (eos_proc_is_kernel()) {
     return eos_proc_kernel();
@@ -40,7 +50,7 @@ void *__wrap_heap_caps_malloc_base(size_t size, uint32_t caps) {
     if (ptr) return ptr;
     return __real_heap_caps_malloc_base(size, caps);
   }
-  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled() || (caps & MALLOC_CAP_DMA)) {
+  if (heap_skip_tracking(caps)) {
     return __real_heap_caps_malloc_base(size, caps);
   }
   eos_proc_t *proc = get_alloc_owner_proc();
@@ -68,7 +78,7 @@ void *__wrap_heap_caps_calloc_base(size_t n, size_t size, uint32_t caps) {
     if (ptr) return ptr;
     return __real_heap_caps_calloc_base(n, size, caps);
   }
-  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled() || (caps & MALLOC_CAP_DMA)) {
+  if (heap_skip_tracking(caps)) {
     return __real_heap_caps_calloc_base(n, size, caps);
   }
   eos_proc_t *proc = get_alloc_owner_proc();
@@ -96,7 +106,7 @@ void *__wrap_heap_caps_aligned_alloc_base(size_t alignment, size_t size, uint32_
     if (ptr) return ptr;
     return __real_heap_caps_aligned_alloc_base(alignment, size, caps);
   }
-  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled() || (caps & MALLOC_CAP_DMA)) {
+  if (heap_skip_tracking(caps)) {
     return __real_heap_caps_aligned_alloc_base(alignment, size, caps);
   }
   eos_proc_t *proc = get_alloc_owner_proc();
@@ -124,7 +134,7 @@ void *__wrap_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps) {
     if (new_ptr) return new_ptr;
     return __real_heap_caps_realloc_base(ptr, size, caps);
   }
-  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled() || (caps & MALLOC_CAP_DMA)) {
+  if (heap_skip_tracking(caps)) {
     return __real_heap_caps_realloc_base(ptr, size, caps);
   }
   eos_proc_t *proc = get_alloc_owner_proc();
@@ -147,7 +157,7 @@ void *__wrap_heap_caps_realloc_base(void *ptr, size_t size, uint32_t caps) {
 
 void __wrap_heap_caps_free(void *ptr) {
   if (!ptr) return;
-  if (is_system_task() || eos_proc_in_heap_wrap() || eos_proc_heap_tracking_is_disabled()) {
+  if (heap_skip_tracking(0)) {
     __real_heap_caps_free(ptr);
     return;
   }

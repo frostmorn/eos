@@ -28,37 +28,31 @@ static uint64_t get_ms(void) {
   return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
-static void update_mem_row(uint32_t caps, const char *title, lv_obj_t *lbl,
-                           lv_obj_t *bar) {
-  size_t free_b = heap_caps_get_free_size(caps);
-  size_t total_b = heap_caps_get_total_size(caps);
-  size_t used_b = (total_b >= free_b) ? (total_b - free_b) : 0;
-  int32_t pct = (total_b > 0) ? (int32_t)((used_b * 100ULL) / total_b) : 0;
-
-  char buf[EOS_LINE_64_LEN];
-  snprintf(buf, sizeof(buf), "%s: %u / %u KB (%d%%)", title,
-           (unsigned)(used_b / (size_t)EOS_LARGE_STR_LEN),
-           (unsigned)(total_b / (size_t)EOS_LARGE_STR_LEN), (int)pct);
-  lv_label_set_text(lbl, buf);
-  lv_bar_set_value(bar, pct, LV_ANIM_OFF);
-}
-
 static void sysmon_refresh(sysmon_ui_t *ui, uint64_t start_ms) {
-  uint64_t elapsed_s = (get_ms() - start_ms) / (uint64_t)EOS_MS_PER_SEC;
-  eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
+  uint64_t now = get_ms();
+  sysmon_snapshot_t snap;
+  sysmon_logic_take_snapshot(&snap, start_ms, now);
 
-  char ubuf[EOS_LINE_64_LEN];
-  snprintf(ubuf, sizeof(ubuf), "EOS System Monitor   Up: %llus",
-           (unsigned long long)elapsed_s);
+  char ubuf[EOS_LINE_STR_LEN];
+  sysmon_logic_format_uptime(snap.uptime_sec, ubuf, sizeof(ubuf));
   lv_label_set_text(ui->lbl_uptime, ubuf);
 
-  update_mem_row(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT, "DRAM", ui->lbl_dram,
-                 ui->bar_dram);
-  update_mem_row(MALLOC_CAP_SPIRAM, "PSRAM", ui->lbl_psram, ui->bar_psram);
-  update_mem_row(MALLOC_CAP_DMA, "DMA", ui->lbl_dma, ui->bar_dma);
+  char buf[EOS_LINE_STR_LEN];
+  sysmon_logic_format_mem_row("DRAM", &snap.dram, buf, sizeof(buf));
+  lv_label_set_text(ui->lbl_dram, buf);
+  lv_bar_set_value(ui->bar_dram, snap.dram.usage_pct, LV_ANIM_OFF);
 
+  sysmon_logic_format_mem_row("PSRAM", &snap.psram, buf, sizeof(buf));
+  lv_label_set_text(ui->lbl_psram, buf);
+  lv_bar_set_value(ui->bar_psram, snap.psram.usage_pct, LV_ANIM_OFF);
+
+  sysmon_logic_format_mem_row("DMA", &snap.dma, buf, sizeof(buf));
+  lv_label_set_text(ui->lbl_dma, buf);
+  lv_bar_set_value(ui->bar_dma, snap.dma.usage_pct, LV_ANIM_OFF);
+
+  eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
   if (ctx) {
-    char lbuf[EOS_STR_80_LEN];
+    char lbuf[EOS_TITLE_STR_LEN];
     snprintf(lbuf, sizeof(lbuf), "LVGL Flushes: P:%u F:%u (%ux%u)",
              (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes,
              (unsigned)ctx->width, (unsigned)ctx->height);

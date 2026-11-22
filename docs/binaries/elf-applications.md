@@ -81,7 +81,7 @@ make app
 You will be prompted for the application name:
 ```text
 Enter value for $APP_NAME$: snake
-Generated files (in /home/ai/eos/apps):
+Generated files (in `apps/`):
   snake/snake.c
   snake/Makefile
 ```

@@ -1,16 +1,18 @@
 #pragma once
 
 #include "ecore/lvgl.h"
-#include "emisc/fancymacro.h"
-#include "emisc/strlimits.h"
+#include "ebin/lvgl_net/net_logic.h"
 
-#define NET_MAX_SCAN_APS 16
-#define NET_NUM_TABS     5
-#define NET_MAX_ITEMS    48
-
-#define NET_SSID_MAX_LEN     33
-#define NET_SCAN_DWELL_MS    120
-#define NET_MIN_CONTENT_H    60
+#define NET_HDR_HEIGHT      20
+#define NET_TAB_HEIGHT      20
+#define NET_TOAST_HEIGHT    18
+#define NET_SWITCH_WIDTH    36
+#define NET_SWITCH_HEIGHT   18
+#define NET_ROW_HEIGHT      26
+#define NET_BTN_HEIGHT      24
+#define NET_SCROLL_STEP     30
+#define NET_STEP_DELAY_MS   10
+#define NET_SCAN_STEP_MS    20
 
 // Color Palette (standard EOS theme from ecore/lvgl.h)
 #define COL_BG_DEEP       EOS_COLOR_BG_DARK

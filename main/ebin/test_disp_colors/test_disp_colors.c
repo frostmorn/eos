@@ -69,21 +69,21 @@ static void test_colors(int fd, uint32_t fmt) {
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Red");
   }
-  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
+  usleep(EOS_HALF_SEC_TIMEOUT_MS * EOS_US_PER_MS);
 
   // Green
   fill_solid_frame(buf, w * h, fmt, 0, EOS_COLOR_8BIT_MAX, 0);
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Green");
   }
-  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
+  usleep(EOS_HALF_SEC_TIMEOUT_MS * EOS_US_PER_MS);
 
   // Blue
   fill_solid_frame(buf, w * h, fmt, 0, 0, EOS_COLOR_8BIT_MAX);
   if (write(fd, buf, frame_bytes) < 0) {
     perror("test_disp_colors: write Blue");
   }
-  usleep(EOS_TIMEOUT_500_MS * EOS_US_PER_MS);
+  usleep(EOS_HALF_SEC_TIMEOUT_MS * EOS_US_PER_MS);
 
   // Gradient
   fill_gradient_frame(buf, w, h, fmt);

@@ -86,7 +86,11 @@ static int binfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_
 
   const char *name = path;
   while (*name == '/') name++;
-  if (strncmp(name, "bin/", 4) == 0) name += 4;
+  if (strcmp(name, "bin") == 0) {
+    name += 3;
+  } else if (strncmp(name, "bin/", 4) == 0) {
+    name += 4;
+  }
   while (*name == '/') name++;
 
   pthread_mutex_lock(&s_binfs_lock);
@@ -211,7 +215,11 @@ static int binfs_stat(void *ctx, const char *path, struct stat *st) {
 
   const char *name = path;
   while (*name == '/') name++;
-  if (strncmp(name, "bin/", 4) == 0) name += 4;
+  if (strcmp(name, "bin") == 0) {
+    name += 3;
+  } else if (strncmp(name, "bin/", 4) == 0) {
+    name += 4;
+  }
   while (*name == '/') name++;
 
   if (*name == '\0') {
@@ -246,7 +254,16 @@ static int binfs_stat(void *ctx, const char *path, struct stat *st) {
 
 static int binfs_opendir(void *ctx, const char *path, eos_vfs_dir_t **out_dir) {
   (void)ctx;
-  if (!path || (strcmp(path, "/") != 0 && strcmp(path, "") != 0)) {
+  const char *p = path ? path : "";
+  while (*p == '/') p++;
+  if (strcmp(p, "bin") == 0) {
+    p += 3;
+  } else if (strncmp(p, "bin/", 4) == 0) {
+    p += 4;
+  }
+  while (*p == '/') p++;
+
+  if (*p != '\0') {
     errno = ENOTDIR;
     return -1;
   }
@@ -317,7 +334,8 @@ static long binfs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
 
 // ── Initialization ────────────────────────────────────────────
 
-void eos_binfs_init(void) {
+static int binfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
   static const eos_vfs_ops_t ops = {
       .open = binfs_open,
       .close = binfs_close,
@@ -333,19 +351,15 @@ void eos_binfs_init(void) {
       .telldir = binfs_telldir,
   };
 
-  mkdir(EOS_BINFS_ROOT, EOS_DEFAULT_DIR_MODE);
-  esp_err_t err = eos_vfs_register_ops(EOS_BINFS_ROOT, &ops, NULL);
+  const char *mount_target = (tgt && tgt[0] != '\0') ? tgt : EOS_BINFS_ROOT;
+  mkdir(mount_target, EOS_DEFAULT_DIR_MODE);
+  esp_err_t err = eos_vfs_register_ops(mount_target, &ops, NULL);
   if (err != ESP_OK) {
-    EOS_LOGE("Failed to register binfs at %s: %s", EOS_BINFS_ROOT, esp_err_to_name(err));
-  } else {
-    EOS_LOGI("binfs mounted at %s with %d registered bins and %d registered assets", EOS_BINFS_ROOT,
-             binfs_bin_count(), binfs_asset_count());
+    EOS_LOGE("Failed to register binfs at %s: %s", mount_target, esp_err_to_name(err));
+    return -1;
   }
-}
-
-static int binfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
-  (void)src; (void)flags; (void)opts; (void)out_ctx;
-  eos_binfs_init();
+  EOS_LOGI("binfs mounted at %s with %d registered bins and %d registered assets", mount_target,
+           binfs_bin_count(), binfs_asset_count());
   return 0;
 }
 
@@ -356,6 +370,8 @@ static int binfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_binfs = {
     .name = "binfs",
+    .default_source = "none",
+    .default_target = EOS_BINFS_ROOT,
     .flags = EOS_FS_FLAG_PSEUDO | EOS_FS_FLAG_READONLY,
     .mount = binfs_fs_mount,
     .umount = binfs_fs_umount,

@@ -681,28 +681,28 @@ int pipe(int pipefd[2]) {
   return 0;
 }
 
-void eos_pipefs_init(void) {
-  if (s_pipe_table && s_pipe_table->initialized)
-    return;
+static int pipefs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
+  if (!s_pipe_table || !s_pipe_table->initialized) {
+    bool prev_h = eos_proc_heap_tracking_disable();
+    s_pipe_table = eos_psram_calloc_prefer(1, sizeof(eos_pipe_table_t));
+    if (!s_pipe_table) {
+      eos_proc_heap_tracking_restore(prev_h);
+      EOS_LOGE("Failed to allocate pipe table in PSRAM\n");
+      return -1;
+    }
 
-  bool prev_h = eos_proc_heap_tracking_disable();
-  s_pipe_table = eos_psram_calloc_prefer(1, sizeof(eos_pipe_table_t));
-  if (!s_pipe_table) {
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&s_pipe_table->lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+
+    kv_init(s_pipe_table->nodes);
+    s_pipe_table->auto_seq = 0;
+    s_pipe_table->initialized = true;
     eos_proc_heap_tracking_restore(prev_h);
-    EOS_LOGE("Failed to allocate pipe table in PSRAM\n");
-    return;
   }
-
-  pthread_mutexattr_t attr;
-  pthread_mutexattr_init(&attr);
-  pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&s_pipe_table->lock, &attr);
-  pthread_mutexattr_destroy(&attr);
-
-  kv_init(s_pipe_table->nodes);
-  s_pipe_table->auto_seq = 0;
-  s_pipe_table->initialized = true;
-  eos_proc_heap_tracking_restore(prev_h);
 
   static const eos_vfs_ops_t ops = {
       .open = pipefs_open,
@@ -719,14 +719,14 @@ void eos_pipefs_init(void) {
       .telldir = pipefs_telldir,
   };
 
-  mkdir(EOS_PIPEFS_ROOT, EOS_DEFAULT_DIR_MODE);
-  eos_vfs_register_ops(EOS_PIPEFS_ROOT, &ops, NULL);
-  EOS_LOGI("pipefs mounted at %s\n", EOS_PIPEFS_ROOT);
-}
-
-static int pipefs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
-  (void)src; (void)flags; (void)opts; (void)out_ctx;
-  eos_pipefs_init();
+  const char *mount_target = (tgt && tgt[0] != '\0') ? tgt : EOS_PIPEFS_ROOT;
+  (void)mkdir(mount_target, EOS_DEFAULT_DIR_MODE);
+  esp_err_t err = eos_vfs_register_ops(mount_target, &ops, NULL);
+  if (err != ESP_OK) {
+    EOS_LOGE("Failed to register pipefs at %s: %s", mount_target, esp_err_to_name(err));
+    return -1;
+  }
+  EOS_LOGI("pipefs mounted at %s\n", mount_target);
   return 0;
 }
 
@@ -737,6 +737,8 @@ static int pipefs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_pipefs = {
     .name = "pipefs",
+    .default_source = "none",
+    .default_target = EOS_PIPEFS_ROOT,
     .flags = EOS_FS_FLAG_PSEUDO,
     .mount = pipefs_fs_mount,
     .umount = pipefs_fs_umount,

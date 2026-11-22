@@ -312,7 +312,7 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
     return -1;
   }
 
-  char buf[EOS_LINE_64_LEN];
+  char buf[EOS_LINE_STR_LEN];
   int n = snprintf(buf, sizeof(buf), "pin: %" PRId32 "\nraw: %" PRId32 "\nmv: %" PRId32 "\n",
                    st->default_pin, raw, mv);
   if (n <= 0) {

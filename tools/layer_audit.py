@@ -851,10 +851,86 @@ def run_rule_filesystem_structure(rule):
                 print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Filesystem directory missing eos_fs_type_t structure: {fs_path}")
                 violations += 1
 
+        # 3. Check that VFS operations registration occurs strictly inside mount callbacks
+        #    and no loose imperative filesystem init functions exist
+        loose_fs_init_pat = re.compile(r"\beos_(?!fs_init\b|vfs_init\b)\w*fs_init\b")
+        vfs_reg_pat = re.compile(r"\b(?:eos|esp)_vfs_register\w*\b")
+        for root, _, files in os.walk(dir_path):
+            for file in sorted(files):
+                if not file.endswith((".c", ".h")):
+                    continue
+                filepath = os.path.join(root, file)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        lines = f.readlines()
+                except Exception as e:
+                    print(f"Error reading {filepath}: {e}")
+                    continue
+
+                curr_func = None
+                brace_depth = 0
+                for line_idx, line in enumerate(lines, 1):
+                    # Check for forbidden loose fs init function
+                    if loose_fs_init_pat.search(line):
+                        print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] Loose filesystem init function forbidden at {filepath}:{line_idx}: {line.strip()}")
+                        violations += 1
+
+                    # Track simple C function signature / scope
+                    clean_line = line.split("//")[0].strip()
+                    if brace_depth == 0:
+                        m = FUNC_START_RE.match(clean_line)
+                        if m:
+                            curr_func = m.group(1)
+
+                    brace_depth += line.count("{") - line.count("}")
+                    if brace_depth <= 0:
+                        curr_func = None
+                        brace_depth = 0
+
+                    if vfs_reg_pat.search(line):
+                        if not curr_func or "mount" not in curr_func.lower():
+                            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] VFS registration call outside mount callback at {filepath}:{line_idx} (in function '{curr_func}'): {line.strip()}")
+                            violations += 1
+
     if violations == 0:
         print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All filesystem folders contain an eos_fs_type_t structure and no loose files exist.")
     else:
         print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} filesystem structure violation(s).")
+    return violations
+
+
+def run_rule_gui_logic_separation(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", ["main/ebin"])
+    prefix = rule.get("app_prefix", "lvgl_")
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for dir_path in paths:
+        if not os.path.exists(dir_path):
+            continue
+        for app_name in sorted(os.listdir(dir_path)):
+            if not app_name.startswith(prefix):
+                continue
+            app_dir = os.path.join(dir_path, app_name)
+            if not os.path.isdir(app_dir):
+                continue
+
+            files = os.listdir(app_dir)
+            has_logic_c = any(f.endswith("_logic.c") for f in files)
+            has_logic_h = any(f.endswith("_logic.h") for f in files)
+
+            if not has_logic_c:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {app_dir}: GUI application missing business logic source (*_logic.c)")
+                violations += 1
+            if not has_logic_h:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {app_dir}: GUI application missing business logic header (*_logic.h)")
+                violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All GUI ({prefix}*) applications strictly decouple presentation and business logic into *_logic.c / *_logic.h.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} GUI application architecture violation(s).")
     return violations
 
 
@@ -1019,6 +1095,7 @@ DISPATCHER = {
     "symbols_documented": run_rule_symbols_documented,
     "filesystem_structure": run_rule_filesystem_structure,
     "required_patterns": run_rule_required_patterns,
+    "gui_logic_separation": run_rule_gui_logic_separation,
 }
 
 
@@ -1044,6 +1121,11 @@ def main():
         dest="rule_ids",
         help="Run only specific rule ID(s) (can be specified multiple times)"
     )
+    parser.add_argument(
+        "-x", "--failfast",
+        action="store_true",
+        help="Exit immediately upon first architectural violation to speed up testing"
+    )
     args = parser.parse_args()
 
     print(f"{Colors.CYAN}{Colors.BOLD}Running Declarative EOS Layer Separation Audit ({args.rules})...{Colors.RESET}")
@@ -1060,8 +1142,12 @@ def main():
         if not handler:
             print(f"{Colors.YELLOW}[WARN] Unknown rule type '{rule_type}' for rule '{rule.get('id')}'; skipping.{Colors.RESET}")
             continue
-        total_violations += handler(rule)
+        v = handler(rule)
+        total_violations += v
         executed_rules += 1
+        if v > 0 and args.failfast:
+            print(f"{Colors.RED}{Colors.BOLD}>>> Halting audit immediately due to --failfast flag. <<<{Colors.RESET}")
+            break
 
     print(f"\n{Colors.BOLD}========================================{Colors.RESET}")
     print(f"Executed {executed_rules} architectural rules.")

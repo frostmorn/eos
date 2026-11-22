@@ -94,7 +94,7 @@ static int cmd_getmac(int argc, char **argv) {
 
   uint8_t mac[6] = {0};
   if (ioctl(fd, EOS_NETIF_IOCTL_GET_MAC, mac) == 0) {
-    char mac_str[EOS_STR_20_LEN];
+    char mac_str[EOS_ADDR_STR_LEN];
     eos_net_format_mac(mac, mac_str, sizeof(mac_str));
     printf("%s: MAC address %s\n", dev, mac_str);
     close(fd);
@@ -241,7 +241,7 @@ static void dump_display_packet(int displayed, const eos_wifi_raw_packet_t *pkt,
          pkt->type_name[0] ? pkt->type_name : "UNKNOWN",
          pkt->frame_subtype);
   if (pkt->has_addrs) {
-    char a1[EOS_STR_20_LEN], a2[EOS_STR_20_LEN], a3[EOS_STR_20_LEN];
+    char a1[EOS_ADDR_STR_LEN], a2[EOS_ADDR_STR_LEN], a3[EOS_ADDR_STR_LEN];
     eos_net_format_mac(pkt->addr1, a1, sizeof(a1));
     eos_net_format_mac(pkt->addr2, a2, sizeof(a2));
     eos_net_format_mac(pkt->addr3, a3, sizeof(a3));
@@ -249,7 +249,7 @@ static void dump_display_packet(int displayed, const eos_wifi_raw_packet_t *pkt,
   }
   if (verbose && pkt->length > 0) {
     printf("      Payload hex (%u bytes):\n      ", pkt->length);
-    for (uint16_t j = 0; j < pkt->length && j < EOS_LINE_64_LEN; j++) {
+    for (uint16_t j = 0; j < pkt->length && j < EOS_LINE_STR_LEN; j++) {
       printf("%02x ", pkt->payload[j]);
       if ((j + 1) % EOS_XSMALL_STR_LEN == 0) printf("\n      ");
     }
@@ -438,7 +438,7 @@ static int cmd_scan(int argc, char **argv) {
       printf("-----------------------------------------------------------------------\n");
       for (size_t i = 0; i < res.count; i++) {
         const char *ssid = res.aps[i].is_hidden ? "<hidden>" : res.aps[i].ssid;
-        char bssid_str[EOS_STR_20_LEN];
+        char bssid_str[EOS_ADDR_STR_LEN];
         eos_net_format_mac(res.aps[i].bssid, bssid_str, sizeof(bssid_str));
         printf("%-32s  %-17s  %4d  %2u  %-12s\n",
                ssid, bssid_str,

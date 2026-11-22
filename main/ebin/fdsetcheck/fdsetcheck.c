@@ -6,7 +6,7 @@ int fdsetcheck_main(int argc, char **argv){
 
   printf("FD set set to %d\n", FD_SETSIZE);
   
-  char filename[EOS_LINE_64_LEN];
+  char filename[EOS_LINE_STR_LEN];
 
   size_t index = 0;
   while(1){

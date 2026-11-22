@@ -11,4 +11,4 @@
 #define EOS_DEVFS_ROOT "/dev"
 #endif
 
-void eos_devfs_init();
+

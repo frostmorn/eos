@@ -141,7 +141,7 @@ static int parse_sound_args(int argc, char **argv, sound_opts_t *opts) {
   }
 
   if (opts->duration_ms < 0) {
-    opts->duration_ms = opts->is_march ? EOS_TIMEOUT_5000_MS : EOS_MS_PER_SEC;
+    opts->duration_ms = opts->is_march ? EOS_EXTENDED_TIMEOUT_MS : EOS_MS_PER_SEC;
   }
   return 0;
 }

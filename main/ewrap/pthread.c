@@ -74,13 +74,18 @@ int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
   bool prev_h = eos_proc_heap_tracking_disable();
   int rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
 
-  // If PSRAM allocation failed, fallback gracefully to internal SRAM
+  // If stack allocation failed, fallback gracefully (PSRAM <-> internal SRAM)
   if (rc != 0) {
     esp_pthread_cfg_t cur_cfg;
-    if (esp_pthread_get_cfg(&cur_cfg) == ESP_OK &&
-        (cur_cfg.stack_alloc_caps & MALLOC_CAP_SPIRAM)) {
-      EOS_LOGW("PSRAM stack allocation failed (%d); falling back to internal SRAM\n", rc);
-      cur_cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+    if (esp_pthread_get_cfg(&cur_cfg) == ESP_OK) {
+      if (cur_cfg.stack_alloc_caps & MALLOC_CAP_SPIRAM) {
+        EOS_LOGW("PSRAM stack allocation failed (%d); falling back to internal SRAM\n", rc);
+        cur_cfg.stack_alloc_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+      } else {
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+        cur_cfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+#endif
+      }
       esp_pthread_set_cfg(&cur_cfg);
       rc = __real_pthread_create(thread, use_attr, eos_proc_wrap_pthread, pwrap);
     }

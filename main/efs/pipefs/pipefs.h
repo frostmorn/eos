@@ -20,8 +20,7 @@
 #define EOS_PIPE_BUF_SIZE 1024
 #endif
 
-// Initializes and mounts pipefs at EOS_PIPEFS_ROOT
-void eos_pipefs_init(void);
+
 
 // Creates a new pipe instance in pipefs and writes its VFS path
 // (e.g. "/pipe/p0") into path_out. Returns pipe slot index on success, -1 on error.

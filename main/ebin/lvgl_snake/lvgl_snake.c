@@ -9,29 +9,10 @@
 #include <unistd.h>
 
 typedef struct {
-  int8_t x;
-  int8_t y;
-} snake_pt_t;
-
-typedef struct {
-  int cols;
-  int rows;
+  snake_logic_t logic;
   int cell_size;
   int board_w;
   int board_h;
-
-  snake_pt_t body[SNAKE_MAX_LEN];
-  int len;
-  int8_t dir_x;
-  int8_t dir_y;
-  int8_t next_dx;
-  int8_t next_dy;
-  snake_pt_t food;
-  int score;
-  int high_score;
-  bool paused;
-  bool game_over;
-  bool fast_mode;
   bool quit;
 
   lv_obj_t *board;
@@ -47,66 +28,15 @@ static uint64_t now_ms(void) {
   return (uint64_t)tv.tv_sec * (uint64_t)EOS_MS_PER_SEC + (uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS;
 }
 
-static bool snake_occupies(const snake_game_t *g, int8_t x, int8_t y) {
-  for (int i = 0; i < g->len; i++) {
-    if (g->body[i].x == x && g->body[i].y == y)
-      return true;
-  }
-  return false;
-}
-
-static void snake_spawn_food(snake_game_t *g) {
-  int cols = g->cols > 0 ? g->cols : 18;
-  int rows = g->rows > 0 ? g->rows : 14;
-  for (int tries = 0; tries < SNAKE_MAX_FOOD_TRIES; tries++) {
-    int8_t fx = (int8_t)(rand() % cols);
-    int8_t fy = (int8_t)(rand() % rows);
-    if (!snake_occupies(g, fx, fy)) {
-      g->food.x = fx;
-      g->food.y = fy;
-      return;
-    }
-  }
-  for (int8_t y = 0; y < rows; y++) {
-    for (int8_t x = 0; x < cols; x++) {
-      if (!snake_occupies(g, x, y)) {
-        g->food.x = x;
-        g->food.y = y;
-        return;
-      }
-    }
-  }
-}
-
-static void snake_reset(snake_game_t *g) {
-  int cols = g->cols > 0 ? g->cols : 18;
-  int rows = g->rows > 0 ? g->rows : 14;
-  g->len = 4;
-  int8_t sx = (int8_t)(cols / 2);
-  int8_t sy = (int8_t)(rows / 2);
-  for (int i = 0; i < g->len; i++) {
-    g->body[i].x = (int8_t)(sx - i);
-    g->body[i].y = sy;
-  }
-  g->dir_x = 1;
-  g->dir_y = 0;
-  g->next_dx = 1;
-  g->next_dy = 0;
-  g->score = 0;
-  g->paused = false;
-  g->game_over = false;
-  snake_spawn_food(g);
-}
-
 static void snake_sync_ui(snake_game_t *g) {
   int cs = g->cell_size > 0 ? g->cell_size : 10;
   if (g->food_obj) {
-    lv_obj_set_pos(g->food_obj, g->food.x * cs + 1,
-                   g->food.y * cs + 1);
+    lv_obj_set_pos(g->food_obj, g->logic.food.x * cs + 1,
+                   g->logic.food.y * cs + 1);
   }
 
   for (int i = 0; i < SNAKE_MAX_LEN; i++) {
-    if (i < g->len) {
+    if (i < g->logic.len) {
       if (!g->seg_objs[i]) {
         lv_obj_t *seg = lv_obj_create(g->board);
         lv_obj_set_size(seg, cs - 2, cs - 2);
@@ -117,8 +47,8 @@ static void snake_sync_ui(snake_game_t *g) {
         g->seg_objs[i] = seg;
       }
       lv_obj_clear_flag(g->seg_objs[i], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_pos(g->seg_objs[i], g->body[i].x * cs + 1,
-                     g->body[i].y * cs + 1);
+      lv_obj_set_pos(g->seg_objs[i], g->logic.body[i].x * cs + 1,
+                     g->logic.body[i].y * cs + 1);
       lv_obj_set_style_bg_color(
           g->seg_objs[i],
           (i == 0) ? lv_color_hex(EOS_THEME_ACCENT_GREEN) : lv_color_hex(0x10B981), 0);
@@ -127,14 +57,14 @@ static void snake_sync_ui(snake_game_t *g) {
     }
   }
 
-  char sbuf[EOS_LINE_64_LEN];
-  snprintf(sbuf, sizeof(sbuf), "Score: %d   Best: %d   [%s]", g->score,
-           g->high_score, g->fast_mode ? "FAST" : "NORM");
+  char sbuf[EOS_LINE_STR_LEN];
+  snprintf(sbuf, sizeof(sbuf), "Score: %d   Best: %d   [%s]", g->logic.score,
+           g->logic.high_score, g->logic.fast_mode ? "FAST" : "NORM");
   lv_label_set_text(g->score_lbl, sbuf);
 
-  if (g->game_over) {
+  if (g->logic.game_over) {
     lv_label_set_text(g->status_lbl, "GAME OVER! Press A/ENTER to retry, B:Exit");
-  } else if (g->paused) {
+  } else if (g->logic.paused) {
     lv_label_set_text(g->status_lbl, "PAUSED — Press A/ENTER to resume, B:Exit");
   } else {
     lv_label_set_text(g->status_lbl, "Arrows:Steer A:Pause C:Speed B/ESC:Quit");
@@ -142,9 +72,9 @@ static void snake_sync_ui(snake_game_t *g) {
 
   FILE *tb = fopen("/tmp/tbar.tmp", "w");
   if (tb) {
-    if (g->game_over) {
-      fprintf(tb, "@%ld Game Over (Score: %d)\n[A]Retry  [B]Exit\n", (long)getpid(), g->score);
-    } else if (g->paused) {
+    if (g->logic.game_over) {
+      fprintf(tb, "@%ld Game Over (Score: %d)\n[A]Retry  [B]Exit\n", (long)getpid(), g->logic.score);
+    } else if (g->logic.paused) {
       fprintf(tb, "@%ld Game Paused\n[A]Resume  [B]Exit\n", (long)getpid());
     } else {
       fprintf(tb, "@%ld Snake Game\n[▲▼◄►]Steer  [A]Pause  [C]Speed  [B]Exit\n", (long)getpid());
@@ -155,43 +85,9 @@ static void snake_sync_ui(snake_game_t *g) {
 }
 
 static void snake_tick(snake_game_t *g) {
-  if (g->paused || g->game_over)
-    return;
-
-  g->dir_x = g->next_dx;
-  g->dir_y = g->next_dy;
-
-  int8_t nx = (int8_t)(g->body[0].x + g->dir_x);
-  int8_t ny = (int8_t)(g->body[0].y + g->dir_y);
-
-  if (nx < 0 || nx >= g->cols || ny < 0 || ny >= g->rows ||
-      snake_occupies(g, nx, ny)) {
-    g->game_over = true;
+  if (snake_logic_tick(&g->logic)) {
     snake_sync_ui(g);
-    return;
   }
-
-  bool ate = (nx == g->food.x && ny == g->food.y);
-  int new_len = g->len + (ate ? 1 : 0);
-  if (new_len > SNAKE_MAX_LEN)
-    new_len = SNAKE_MAX_LEN;
-
-  for (int i = new_len - 1; i > 0; i--) {
-    g->body[i] = g->body[i - 1];
-  }
-  g->body[0].x = nx;
-  g->body[0].y = ny;
-  g->len = new_len;
-
-  if (ate) {
-    g->score += 10;
-    if (g->score > g->high_score) {
-      g->high_score = g->score;
-    }
-    snake_spawn_food(g);
-  }
-
-  snake_sync_ui(g);
 }
 
 static void snake_back_btn_cb(lv_event_t *e) {
@@ -219,8 +115,7 @@ static void snake_build_ui(snake_game_t *g) {
   if (cell_size < 6) cell_size = 6;
   if (cell_size > 22) cell_size = 22;
 
-  g->cols = cols;
-  g->rows = rows;
+  snake_logic_init(&g->logic, cols, rows);
   g->cell_size = cell_size;
   g->board_w = cols * cell_size + 4;
   g->board_h = rows * cell_size + 4;
@@ -265,41 +160,25 @@ static void snake_build_ui(snake_game_t *g) {
 static void snake_handle_key(snake_game_t *g, uint16_t key) {
   switch (key) {
   case KEY_UP:
-    if (g->dir_y == 0) {
-      g->next_dx = 0;
-      g->next_dy = -1;
-    }
+    snake_logic_set_direction(&g->logic, 0, -1);
     break;
   case KEY_DOWN:
-    if (g->dir_y == 0) {
-      g->next_dx = 0;
-      g->next_dy = 1;
-    }
+    snake_logic_set_direction(&g->logic, 0, 1);
     break;
   case KEY_LEFT:
-    if (g->dir_x == 0) {
-      g->next_dx = -1;
-      g->next_dy = 0;
-    }
+    snake_logic_set_direction(&g->logic, -1, 0);
     break;
   case KEY_RIGHT:
-    if (g->dir_x == 0) {
-      g->next_dx = 1;
-      g->next_dy = 0;
-    }
+    snake_logic_set_direction(&g->logic, 1, 0);
     break;
   case KEY_A:
   case KEY_ENTER:
   case KEY_SPACE:
-    if (g->game_over) {
-      snake_reset(g);
-    } else {
-      g->paused = !g->paused;
-    }
+    snake_logic_toggle_pause(&g->logic);
     snake_sync_ui(g);
     break;
   case KEY_C:
-    g->fast_mode = !g->fast_mode;
+    snake_logic_toggle_speed(&g->logic);
     snake_sync_ui(g);
     break;
   case KEY_B:
@@ -329,7 +208,6 @@ int lvgl_snake_main(int argc, char **argv) {
 
   srand((unsigned)now_ms());
   snake_build_ui(g);
-  snake_reset(g);
   snake_sync_ui(g);
 
   uint64_t last_step = now_ms();
@@ -341,7 +219,7 @@ int lvgl_snake_main(int argc, char **argv) {
     }
 
     uint64_t cur = now_ms();
-    uint64_t interval = g->fast_mode ? 95ULL : 160ULL;
+    uint64_t interval = g->logic.fast_mode ? 95ULL : 160ULL;
     if (cur - last_step >= interval) {
       last_step = cur;
       snake_tick(g);

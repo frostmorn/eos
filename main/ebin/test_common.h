@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include "ecore/display.h"
 #include "ecore/ioctl.h"
 #include "emisc/fancymacro.h"
 #include "emisc/strlimits.h"
@@ -44,10 +45,7 @@ static inline eos_disp_test_args_t eos_disp_parse_args(int argc, char **argv) {
 static inline int eos_disp_open_and_configure(const eos_disp_test_args_t *args, uint32_t *out_fmt, uint32_t *out_orig_fmt) {
   const char *path = args->fb_path;
   if (!path || !path[0]) {
-    path = getenv("EOS_FB");
-  }
-  if (!path || !path[0]) {
-    path = (access("/dev/vfb3", F_OK) == 0) ? "/dev/vfb3" : (access("/dev/fb0", F_OK) == 0 ? "/dev/fb0" : "/dev/vfb0");
+    path = eos_display_default_fb_path();
   }
   int fd = open(path, O_RDWR);
   if (fd < 0) {
@@ -90,7 +88,7 @@ static inline void eos_disp_close_and_restore(int fd, uint32_t orig_fmt, uint32_
 #define TEST_PROC_STRESS_CYCLES 1000
 #define TEST_BIN_DEFAULT_STACK_SIZE 16384
 #define TEST_HASH_PATTERN_LEN 1000
-#define TEST_HEX_STR_LEN      EOS_STR_10_LEN
+#define TEST_HEX_STR_LEN      EOS_NUM_STR_LEN
 
 static inline void report_test(test_ctx_t *ctx, const char *name, bool ok) {
   if (ok) {

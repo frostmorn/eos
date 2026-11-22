@@ -17,5 +17,4 @@
 #define EOS_BINFS_MAX_FDS 16
 #endif
 
-// Inits EOS binfs
-void eos_binfs_init();
+

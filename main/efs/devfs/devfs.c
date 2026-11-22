@@ -15,6 +15,7 @@
 typedef struct {
   eos_vfs_file_t base;
   eos_dev_t *dev;
+  uint32_t dev_generation;
   int drvfd;
   bool is_null;
   bool is_zero;
@@ -114,6 +115,7 @@ static int devfs_open(void *ctx, const char *path, int flags, int mode, eos_vfs_
   }
 
   file->dev = dev;
+  file->dev_generation = dev->generation;
   file->drvfd = drvfd;
   *out_file = &file->base;
   return file->base.fd;
@@ -127,7 +129,7 @@ static int devfs_close(void *ctx, eos_vfs_file_t *file) {
   if (df->is_null || df->is_zero) {
     return 0;
   }
-  if (df->dev) {
+  if (df->dev && df->dev->in_use && df->dev->generation == df->dev_generation) {
     return eos_dev_close(df->dev, df->drvfd);
   }
   return 0;
@@ -149,7 +151,7 @@ static ssize_t devfs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t siz
     }
     return (ssize_t)size;
   }
-  if (!df->dev || !df->dev->in_use) {
+  if (!df->dev || !df->dev->in_use || df->dev->generation != df->dev_generation) {
     errno = ENODEV;
     return -1;
   }
@@ -167,7 +169,7 @@ static ssize_t devfs_write(void *ctx, eos_vfs_file_t *file, const void *src, siz
     (void)src;
     return (ssize_t)size;
   }
-  if (!df->dev || !df->dev->in_use) {
+  if (!df->dev || !df->dev->in_use || df->dev->generation != df->dev_generation) {
     errno = ENODEV;
     return -1;
   }
@@ -186,7 +188,7 @@ static off_t devfs_lseek(void *ctx, eos_vfs_file_t *file, off_t offset, int when
     (void)whence;
     return 0;
   }
-  if (!df->dev || !df->dev->in_use) {
+  if (!df->dev || !df->dev->in_use || df->dev->generation != df->dev_generation) {
     errno = ENODEV;
     return -1;
   }
@@ -209,7 +211,7 @@ static int devfs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
     st->st_mode = S_IFCHR | EOS_DEFAULT_DEV_MODE;
     return 0;
   }
-  if (!df->dev || !df->dev->in_use) {
+  if (!df->dev || !df->dev->in_use || df->dev->generation != df->dev_generation) {
     errno = ENODEV;
     return -1;
   }
@@ -318,7 +320,7 @@ static int devfs_ioctl(void *ctx, eos_vfs_file_t *file, int cmd, va_list args) {
   if (df->is_null || df->is_zero) {
     return 0;
   }
-  if (!df->dev || !df->dev->in_use) {
+  if (!df->dev || !df->dev->in_use || df->dev->generation != df->dev_generation) {
     errno = ENODEV;
     return -1;
   }
@@ -464,7 +466,8 @@ static long devfs_telldir(void *ctx, eos_vfs_dir_t *pdir) {
   return (long)dir->index;
 }
 
-void eos_devfs_init(void) {
+static int devfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
+  (void)src; (void)flags; (void)opts; (void)out_ctx;
   static const eos_vfs_ops_t ops = {
       .open = devfs_open,
       .close = devfs_close,
@@ -487,14 +490,14 @@ void eos_devfs_init(void) {
       .telldir = devfs_telldir,
   };
 
-  mkdir(EOS_DEVFS_ROOT, EOS_DEFAULT_DIR_MODE);
-  eos_vfs_register_ops(EOS_DEVFS_ROOT, &ops, NULL);
-  EOS_LOGI("devfs mounted at %s\n", EOS_DEVFS_ROOT);
-}
-
-static int devfs_fs_mount(const char *src, const char *tgt, uint32_t flags, const char *opts, void **out_ctx) {
-  (void)src; (void)flags; (void)opts; (void)out_ctx;
-  eos_devfs_init();
+  const char *mount_target = (tgt && tgt[0] != '\0') ? tgt : EOS_DEVFS_ROOT;
+  mkdir(mount_target, EOS_DEFAULT_DIR_MODE);
+  esp_err_t err = eos_vfs_register_ops(mount_target, &ops, NULL);
+  if (err != ESP_OK) {
+    EOS_LOGE("Failed to register devfs at %s: %s", mount_target, esp_err_to_name(err));
+    return -1;
+  }
+  EOS_LOGI("devfs mounted at %s\n", mount_target);
   return 0;
 }
 
@@ -505,6 +508,8 @@ static int devfs_fs_umount(const char *tgt, void *ctx, uint32_t flags) {
 
 EOS_FS_ATTR eos_fs_type_t eos_fs_devfs = {
     .name = "devfs",
+    .default_source = "none",
+    .default_target = EOS_DEVFS_ROOT,
     .flags = EOS_FS_FLAG_PSEUDO,
     .mount = devfs_fs_mount,
     .umount = devfs_fs_umount,

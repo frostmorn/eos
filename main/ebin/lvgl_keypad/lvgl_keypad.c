@@ -6,30 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct {
-  uint16_t code;
-  const char *label;
-  int32_t x;
-  int32_t y;
-  int32_t w;
-  int32_t h;
-} key_cap_def_t;
-
-// Action buttons layout on Lilka v2.3:
-// C = top, B = bottom, D = left, A = right
-static const key_cap_def_t s_key_caps[] = {
-    {KEY_UP, "UP", 40, 32, 36, 26},
-    {KEY_LEFT, "L", 6, 62, 32, 26},
-    {KEY_RIGHT, "R", 78, 62, 32, 26},
-    {KEY_DOWN, "DN", 40, 92, 36, 26},
-    {KEY_ENTER, "SEL", 92, 124, 44, 22},
-    {KEY_SPACE, "STA", 144, 124, 44, 22},
-    {KEY_C, "C", 188, 32, 36, 26},
-    {KEY_D, "D", 150, 62, 36, 26},
-    {KEY_A, "A", 226, 62, 36, 26},
-    {KEY_B, "B", 188, 92, 36, 26},
-};
-
 static void keypad_back_btn_cb(lv_event_t *e) {
   bool *r = (bool *)lv_event_get_user_data(e);
   if (r) *r = false;
@@ -50,10 +26,11 @@ static void keypad_setup_ui(lv_obj_t **cap_objs, lv_obj_t **out_lbl_last,
 
   eos_lvgl_create_back_btn(scr, keypad_back_btn_cb, running);
 
+  const key_cap_def_t *caps = keypad_logic_get_caps();
   for (size_t i = 0; i < KEY_CAP_COUNT; i++) {
     lv_obj_t *box = lv_obj_create(scr);
-    lv_obj_set_size(box, s_key_caps[i].w, s_key_caps[i].h);
-    lv_obj_set_pos(box, s_key_caps[i].x, s_key_caps[i].y);
+    lv_obj_set_size(box, caps[i].w, caps[i].h);
+    lv_obj_set_pos(box, caps[i].x, caps[i].y);
     lv_obj_set_style_bg_color(box, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
     lv_obj_set_style_border_color(box, lv_color_hex(0x475569), 0);
     lv_obj_set_style_border_width(box, 1, 0);
@@ -62,7 +39,7 @@ static void keypad_setup_ui(lv_obj_t **cap_objs, lv_obj_t **out_lbl_last,
     lv_obj_clear_flag(box, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl = lv_label_create(box);
-    lv_label_set_text(lbl, s_key_caps[i].label);
+    lv_label_set_text(lbl, caps[i].label);
     lv_obj_set_style_text_color(lbl, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
     lv_obj_center(lbl);
     cap_objs[i] = box;
@@ -95,8 +72,9 @@ static void keypad_setup_ui(lv_obj_t **cap_objs, lv_obj_t **out_lbl_last,
 }
 
 static void keypad_update_caps(lv_obj_t **cap_objs, uint16_t active_key) {
+  const key_cap_def_t *caps = keypad_logic_get_caps();
   for (size_t i = 0; i < KEY_CAP_COUNT; i++) {
-    if (s_key_caps[i].code == active_key) {
+    if (caps[i].code == active_key) {
       lv_obj_set_style_bg_color(cap_objs[i], lv_color_hex(EOS_THEME_PRIMARY_BLUE), 0);
       lv_obj_set_style_border_color(cap_objs[i], lv_color_hex(0x93C5FD), 0);
     } else {
@@ -148,13 +126,13 @@ int lvgl_keypad_main(int argc, char **argv) {
 
       keypad_update_caps(cap_objs, key);
 
-      char buf1[EOS_LINE_64_LEN];
+      char buf1[EOS_LINE_STR_LEN];
       snprintf(buf1, sizeof(buf1), "Key: %s (code=%u)", eos_lvgl_key_name(key),
                (unsigned)key);
       lv_label_set_text(lbl_last, buf1);
 
       uint32_t lv_k = eos_lvgl_map_key(key, false);
-      char buf2[EOS_LINE_64_LEN];
+      char buf2[EOS_LINE_STR_LEN];
       snprintf(buf2, sizeof(buf2), "LVGL key: %u  Events: %u (B:%d/3)",
                (unsigned)lv_k, (unsigned)total_events, consecutive_b);
       lv_label_set_text(lbl_lv, buf2);
@@ -162,7 +140,7 @@ int lvgl_keypad_main(int argc, char **argv) {
 
     eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
     if (ctx) {
-      char buf3[EOS_LINE_64_LEN];
+      char buf3[EOS_LINE_STR_LEN];
       snprintf(buf3, sizeof(buf3), "Flushes: P:%u F:%u",
                (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes);
       lv_label_set_text(lbl_fb, buf3);

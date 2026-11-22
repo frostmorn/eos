@@ -47,7 +47,7 @@ static int pwmctl_cmd_list(void) {
     eos_pwm_caps_t caps;
     memset(&caps, 0, sizeof(caps));
     if (ioctl(fd, EOS_PWM_IOCTL_GET_CAPS, &caps) == 0) {
-      char duty_str[EOS_STR_10_LEN] = "0%";
+      char duty_str[EOS_NUM_STR_LEN] = "0%";
       ssize_t n = read(fd, duty_str, sizeof(duty_str) - 1);
       if (n > 0) {
         duty_str[n] = '\0';

@@ -40,7 +40,7 @@ static sdl2_context_t *sdl2_get_context(void) {
 
 struct SDL_Window {
   int w, h;
-  char title[EOS_LINE_64_LEN];
+  char title[EOS_LINE_STR_LEN];
 };
 
 struct SDL_Renderer {

@@ -1,4 +1,5 @@
 #include "ecore/bin.h"
+#include "ecore/display.h"
 #include "ecore/ioctl.h"
 #include "ebin/bar_common.h"
 #include "ebin/lvfont_render.h"
@@ -47,7 +48,7 @@ static void read_fallback_stats(sbar_content_t *out) {
   uint32_t mem_int_kb = 0;
   uint32_t mem_spi_kb = 0;
 
-  char pbuf[EOS_STR_384_LEN];
+  char pbuf[EOS_STATUSBAR_STR_LEN];
   if (bar_read_file("/proc/meminfo", pbuf, sizeof(pbuf)) > 0) {
     char *line = pbuf;
     while (line && *line) {
@@ -155,16 +156,9 @@ int statusbar_main(int argc, char **argv) {
   int timeout_ms = -1;
   bar_parse_args(argc, argv, &auto_mode, &timeout_ms);
 
-  const char *fb_path = getenv("EOS_FB");
-  if (!fb_path || !*fb_path) {
-    fb_path = "/dev/vfb1";
-  }
+  const char *fb_path = eos_display_role_fb_path("statusbar");
 
   int fd = open(fb_path, O_RDWR);
-  if (fd < 0) {
-    fb_path = "/dev/fb0";
-    fd = open(fb_path, O_RDWR);
-  }
   if (fd < 0) {
     fprintf(stderr, "statusbar: cannot open %s: %s\n", fb_path, strerror(errno));
     return 1;

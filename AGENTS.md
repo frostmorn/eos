@@ -20,13 +20,14 @@ This document serves as the authoritative specification, agent guidelines, and a
 ## 2. Core Development & Agent Guardrails
 
 1.  **Planning Mode:** Use planning mode (`enter_plan_mode`) for designing and drafting new features before implementation.
-2.  **Mandatory Automated Testing:** Every new feature, driver, or bug fix requires corresponding automated tests in `tools/hardware_test.py` with zero regressions across target boards.
+2.  **Mandatory Automated Testing:** Every new feature, driver, or bug fix requires corresponding automated tests in `tools/hardware_test.py` (executed with `-x` / `--failfast` to halt immediately on failure) with zero regressions across target boards.
 3.  **KISS & Occam's Razor:** Keep solutions simple, direct, and free of over-engineering or redundant fallback paths. Prioritize code reuse via `emisc/`.
 4.  **Universal & Iterative Approach:** Prefer universal, robust abstractions and adopt an iterative refinement process over monolithic changes.
 5.  **Strict Git Commit Prohibition:** The agent must **NEVER** run `git commit`. All changes must be left in the working tree or staged (`git add`) for human review and commit.
 6.  **Continuous Architectural Audit:** All modifications must maintain zero violations across repository audits:
     *   `python3 tools/wrapcheck.py` (all linker wrapped symbols accounted for and documented).
     *   `python3 tools/layer_audit.py` (all declarative layer separation rules passed).
+7.  **GUI Application Architecture & Logic Separation:** All graphical applications (`main/ebin/lvgl_*`) must strictly decouple presentation from business logic into separate source files (`*_logic.c` / `*_ui.c`) with zero GUI dependencies in the logic module, as specified in `DEVELOPMENT.md`.
 
 ---
 
@@ -40,8 +41,8 @@ This document serves as the authoritative specification, agent guidelines, and a
     *   **No Loose Driver Files:** No loose `.c` or `.h` files are permitted directly under `main/edriver/` or `main/edriver/<scope>/`.
     *   **IOCTL-Only Driver Communication:** Drivers must pass and consume functionality strictly via standard VFS and `ioctl` interfaces (`eos_dev_ioctl_call` on parent/child/peer devices) rather than loose C helper functions or ad-hoc cross-driver exports.
 *   **`ecore/`**: Core kernel subsystems (VFS, process table, capability manager, driver model, filesystem registry).
-*   **`efs/`**: Filesystem implementations (VFS providers: `tmpfs`, `devfs`, `binfs`, `procfs`, `pipefs`, `fat`). Every filesystem directory under `main/efs/<name>/` defines an `eos_fs_type_t` structure registered in the `.eos_fs` section (`EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };`).
-*   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables.
+*   **`efs/`**: Filesystem implementations (VFS providers: `tmpfs`, `devfs`, `binfs`, `procfs`, `pipefs`, `fat`). Every filesystem directory under `main/efs/<name>/` defines an `eos_fs_type_t` structure registered in the `.eos_fs` section (`EOS_FS_ATTR eos_fs_type_t eos_fs_<name> = { ... };`). All filesystem initialization, VFS operations registration (`eos_vfs_register_ops`, `esp_vfs_register`), and directory creation must reside strictly inside the `mount` callback of `eos_fs_type_t`. Imperative per-filesystem init functions (`eos_*fs_init`) are prohibited; filesystems are mounted declaratively by `eos_fs_init()` using `.default_source` and `.default_target`.
+*   **`ebin/`**: User-space commands and apps. **Must use POSIX / standard C interfaces (`usleep`, `pthread`, VFS file I/O)**. **Strictly forbidden:** RTOS primitives and global/static variables. GUI applications must decouple business logic (`*_logic.c`) from UI presentation (`*_ui.c`), use `eos_open_menu()` for screen-adaptive menus (headerless `eos_menu` on small screens, `eos_popup_menu` on large screens), and avoid `lv_flex` on dynamic list containers.
 *   **`eboard/`**: Board configurations and declarative startup scripts (`init.sh`, `sdkconfig`). Peripheral attachments are declared via `devctl attach` rather than hardcoded C initialization files.
 *   **`eld/`**: Linker and link-fragment scripts (`.ld`, `.lf`). **All linker scripts must reside exclusively within `main/eld/`**.
 *   **`ewrap/`**: System call and library wrappers. **All `__wrap_*` wrapper function definitions must reside exclusively within `main/ewrap/`**.
@@ -81,21 +82,21 @@ Always use OpenOCD JTAG commands to control the target hardware:
 1.  **Target Reset (Clean JTAG CPU Reset, No Strapping Pin Hazard):**
     *   **ESP32-P4 (JC4880P443C):**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "init; reset run; shutdown"
+        ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "init; reset run; shutdown"
         ```
     *   **ESP32-S3 (Lilka v2.3):**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "init; reset run; shutdown"
+        ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "init; reset run; shutdown"
         ```
 
 2.  **Flash Firmware & Verify via JTAG:**
     *   **ESP32-P4:**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
+        ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32p4-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
         ```
     *   **ESP32-S3:**
         ```bash
-        /home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
+        ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "program_esp_bins build flasher_args.json verify reset exit"
         ```
 
 3.  **Live Inspection & Crash Diagnosis (GDB + OpenOCD):**
