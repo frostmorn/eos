@@ -9,4 +9,3 @@
 #define LAUNCHER_CMD_FILE             "/tmp/launcher.cmd"
 #define LAUNCHER_MIN_LIST_H           60
 #define LAUNCHER_DESC_DIALOG_PAD      36
-#define LAUNCHER_COMPACT_HEIGHT_LIMIT 200

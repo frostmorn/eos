@@ -30,6 +30,17 @@ extern "C" {
 #define EOS_LVGL_DIALOG_MIN_KB_H   60
 #define EOS_LVGL_DIALOG_MIN_W      200
 
+#define EOS_PREVIEW_DIALOG_COMPACT_MARGIN  8
+#define EOS_PREVIEW_DIALOG_LARGE_MARGIN_X  40
+#define EOS_PREVIEW_DIALOG_LARGE_MARGIN_Y  80
+#define EOS_PREVIEW_DIALOG_LARGE_MAX_W     460
+#define EOS_PREVIEW_DIALOG_LARGE_MAX_H     620
+#define EOS_PREVIEW_DIALOG_MIN_H           180
+#define EOS_PREVIEW_DIALOG_BTN_W_COMPACT   80
+#define EOS_PREVIEW_DIALOG_BTN_W_LARGE     100
+#define EOS_PREVIEW_DIALOG_BTN_H_COMPACT   24
+#define EOS_PREVIEW_DIALOG_BTN_H_LARGE     28
+
 // Key event callback invoked when a physical key press is polled
 typedef void (*eos_lvgl_key_cb_t)(uint16_t eos_key, uint32_t lv_key,
                                   void *user_data);
@@ -93,6 +104,28 @@ lv_group_t *eos_lvgl_get_group(void);
 uint32_t eos_lvgl_get_width(void);
 uint32_t eos_lvgl_get_height(void);
 const char *eos_lvgl_get_fb_path(void);
+
+// ===================== Screen Form Factor & Dimensions =====================
+
+#define EOS_SCREEN_COMPACT_WIDTH_MAX   320
+#define EOS_SCREEN_COMPACT_HEIGHT_MAX  240
+#define EOS_SCREEN_LARGE_HEIGHT_MIN    400
+
+typedef enum {
+  EOS_SCREEN_SIZE_COMPACT = 0, // Small handhelds (<= 320x240, e.g. Lilka v2.3, QEMU)
+  EOS_SCREEN_SIZE_REGULAR = 1, // Intermediate / standard displays (e.g. 480x320)
+  EOS_SCREEN_SIZE_LARGE   = 2, // Large / high-res displays (>= 480x800, e.g. JC4880P443C)
+} eos_screen_size_t;
+
+// Active screen form factor queries (evaluates active display dimensions)
+eos_screen_size_t eos_screen_get_size(void);
+bool eos_screen_is_compact(void);
+bool eos_screen_is_large(void);
+
+// Pure dimension evaluators (for pre-init or offscreen layout computations)
+eos_screen_size_t eos_screen_size_from_dim(uint32_t width, uint32_t height);
+bool eos_screen_is_compact_dim(uint32_t width, uint32_t height);
+bool eos_screen_is_large_dim(uint32_t width, uint32_t height);
 
 // Pump LVGL timers and sleep up to max_sleep_ms milliseconds.
 uint32_t eos_lvgl_step(uint32_t max_sleep_ms);
@@ -302,6 +335,20 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg);
 // Closes any shared modal dialog
 void eos_lvgl_dialog_close(lv_obj_t *dialog);
 
+// Shared Preview Dialog
+typedef void (*eos_lvgl_preview_cb_t)(void *user_data);
+
+typedef struct {
+  const char *title;            // Dialog title (e.g. filename)
+  const char *content;          // Text content to display (or NULL for empty)
+  const char *close_label;      // Close button label (NULL defaults to "Close")
+  eos_lvgl_preview_cb_t cb;     // Optional callback invoked on dismissal
+  void *user_data;              // Context pointer passed to cb
+} eos_lvgl_preview_dialog_cfg_t;
+
+lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg);
+bool eos_lvgl_dialog_preview_handle_key(lv_obj_t *dialog, uint16_t key);
+
 // ===================== Unified Menus (eos_menu & eos_popup_menu) =====================
 
 #define EOS_MENU_POPUP_DEFAULT_W   220
@@ -309,10 +356,9 @@ void eos_lvgl_dialog_close(lv_obj_t *dialog);
 #define EOS_MENU_ITEM_HEIGHT_SMALL 28
 #define EOS_MENU_HEADER_HEIGHT     30
 #define EOS_MENU_BACKDROP_OPACITY  180
-#define EOS_MENU_COMPACT_WIDTH_THRESHOLD   320
-#define EOS_MENU_COMPACT_HEIGHT_THRESHOLD  240
-#define EOS_LVGL_IS_COMPACT(w, h) \
-  (((w) <= EOS_MENU_COMPACT_WIDTH_THRESHOLD) || ((h) <= EOS_MENU_COMPACT_HEIGHT_THRESHOLD))
+#define EOS_MENU_COMPACT_WIDTH_THRESHOLD   EOS_SCREEN_COMPACT_WIDTH_MAX
+#define EOS_MENU_COMPACT_HEIGHT_THRESHOLD  EOS_SCREEN_COMPACT_HEIGHT_MAX
+#define EOS_LVGL_IS_COMPACT(w, h)          eos_screen_is_compact_dim((w), (h))
 
 struct eos_menu_s;
 typedef struct eos_menu_s eos_menu_t;

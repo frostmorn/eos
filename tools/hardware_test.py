@@ -10,6 +10,7 @@ import hashlib
 import glob
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -190,7 +191,10 @@ class EOSTestHarness:
                 return b""
             if hasattr(self.ser, "_socket") and self.ser._socket:
                 try:
-                    return self.ser._socket.recv(4096)
+                    r, _, _ = select.select([self.ser._socket], [], [], 0)
+                    if r:
+                        return self.ser._socket.recv(4096)
+                    return b""
                 except (BlockingIOError, OSError):
                     return b""
             n = self.ser.in_waiting
@@ -204,8 +208,8 @@ class EOSTestHarness:
         deadline = time.time() + timeout
         while time.time() < deadline:
             chunk = self._read_available()
-            if not chunk:
-                break
+            if chunk:
+                deadline = time.time() + 0.1
             time.sleep(0.02)
 
     def _wait_and_reopen(self, timeout=15.0):
@@ -327,13 +331,8 @@ class EOSTestHarness:
             full_cmd = f"echo {marker}\n"
 
         while True:
-            try:
-                if self.ser and self.ser.in_waiting:
-                    self._read_available()
-                    time.sleep(0.005)
-                else:
-                    break
-            except Exception:
+            chunk = self._read_available()
+            if not chunk:
                 break
         # self.ser.reset_input_buffer()
 

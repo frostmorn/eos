@@ -1041,6 +1041,36 @@ uint32_t eos_lvgl_get_width(void) { return s_lvgl.pub.width; }
 
 uint32_t eos_lvgl_get_height(void) { return s_lvgl.pub.height; }
 
+eos_screen_size_t eos_screen_size_from_dim(uint32_t width, uint32_t height) {
+  if (width <= EOS_SCREEN_COMPACT_WIDTH_MAX || height <= EOS_SCREEN_COMPACT_HEIGHT_MAX) {
+    return EOS_SCREEN_SIZE_COMPACT;
+  }
+  if (height >= EOS_SCREEN_LARGE_HEIGHT_MIN) {
+    return EOS_SCREEN_SIZE_LARGE;
+  }
+  return EOS_SCREEN_SIZE_REGULAR;
+}
+
+bool eos_screen_is_compact_dim(uint32_t width, uint32_t height) {
+  return (width <= EOS_SCREEN_COMPACT_WIDTH_MAX || height <= EOS_SCREEN_COMPACT_HEIGHT_MAX);
+}
+
+bool eos_screen_is_large_dim(uint32_t width, uint32_t height) {
+  return (width > EOS_SCREEN_COMPACT_WIDTH_MAX && height >= EOS_SCREEN_LARGE_HEIGHT_MIN);
+}
+
+eos_screen_size_t eos_screen_get_size(void) {
+  return eos_screen_size_from_dim(s_lvgl.pub.width, s_lvgl.pub.height);
+}
+
+bool eos_screen_is_compact(void) {
+  return eos_screen_is_compact_dim(s_lvgl.pub.width, s_lvgl.pub.height);
+}
+
+bool eos_screen_is_large(void) {
+  return eos_screen_is_large_dim(s_lvgl.pub.width, s_lvgl.pub.height);
+}
+
 uint32_t eos_lvgl_step(uint32_t max_sleep_ms) {
   if (!s_lvgl.pub.initialized)
     return 0;
@@ -1106,6 +1136,9 @@ bool eos_lvgl_poll_key(uint16_t *eos_key_out) {
 
   uint16_t key = s_lvgl.poll_key_queue[s_lvgl.poll_key_tail];
   s_lvgl.poll_key_tail = (uint8_t)((s_lvgl.poll_key_tail + 1U) % EOS_LVGL_KEY_QUEUE_SIZE);
+  // Synchronize indev queue: key was consumed by application event loop
+  s_lvgl.indev_key_tail = s_lvgl.indev_key_head;
+  s_lvgl.send_release = false;
   if (eos_key_out) {
     *eos_key_out = key;
   }
@@ -2016,6 +2049,184 @@ void eos_lvgl_dialog_close(lv_obj_t *dialog) {
   }
 }
 
+// ── Shared Preview Dialog ──────────────────────────────────────
+
+typedef struct {
+  eos_lvgl_preview_dialog_cfg_t cfg;
+  lv_obj_t *overlay;
+  lv_obj_t *card;
+  lv_obj_t *ta;
+  lv_obj_t *btn;
+} eos_preview_dialog_data_t;
+
+static void preview_dialog_delete_cb(lv_event_t *e) {
+  eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_event_get_user_data(e);
+  if (data) {
+    if (data->cfg.cb) {
+      data->cfg.cb(data->cfg.user_data);
+    }
+    free(data);
+  }
+  eos_lvgl_clear_keys();
+}
+
+static void preview_dialog_close_click(lv_event_t *e) {
+  eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_event_get_user_data(e);
+  if (data && data->overlay) {
+    eos_lvgl_dialog_close(data->overlay);
+  }
+}
+
+static void preview_dialog_key_cb(lv_event_t *e) {
+  uint32_t key = lv_event_get_key(e);
+  if (key == LV_KEY_ESC || key == LV_KEY_ENTER) {
+    eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_event_get_user_data(e);
+    if (data && data->overlay) {
+      eos_lvgl_dialog_close(data->overlay);
+    }
+  }
+}
+
+bool eos_lvgl_dialog_preview_handle_key(lv_obj_t *dialog, uint16_t key) {
+  if (!dialog) return false;
+  eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_obj_get_user_data(dialog);
+  if (!data || data->overlay != dialog) return false;
+
+  switch (key) {
+  case KEY_UP:
+    if (data->ta) {
+      lv_obj_scroll_by_bounded(data->ta, 0, 30, LV_ANIM_OFF);
+    }
+    return true;
+
+  case KEY_DOWN:
+    if (data->ta) {
+      lv_obj_scroll_by_bounded(data->ta, 0, -30, LV_ANIM_OFF);
+    }
+    return true;
+
+  case KEY_A:
+  case KEY_B:
+  case KEY_ENTER:
+  case KEY_ESC:
+  case KEY_BACKSPACE:
+  case KEY_SPACE:
+    eos_lvgl_dialog_close(dialog);
+    return true;
+
+  default:
+    return false;
+  }
+}
+
+lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg) {
+  if (!cfg) return NULL;
+  lv_obj_t *scr = lv_screen_active();
+  if (!scr) return NULL;
+
+  eos_lvgl_clear_keys();
+
+  eos_preview_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_preview_dialog_data_t));
+  if (!data) return NULL;
+  data->cfg = *cfg;
+
+  uint32_t w = eos_lvgl_get_width();
+  uint32_t h = eos_lvgl_get_height();
+  bool is_compact = eos_screen_is_compact();
+
+  lv_obj_t *ov = lv_obj_create(scr);
+  data->overlay = ov;
+  lv_obj_set_user_data(ov, data);
+  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_pos(ov, 0, 0);
+  lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
+  lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(ov, preview_dialog_delete_cb, LV_EVENT_DELETE, data);
+
+  int32_t dlg_w = is_compact ? ((int32_t)w - EOS_PREVIEW_DIALOG_COMPACT_MARGIN)
+                             : ((int32_t)w - EOS_PREVIEW_DIALOG_LARGE_MARGIN_X);
+  if (!is_compact && dlg_w > EOS_PREVIEW_DIALOG_LARGE_MAX_W) {
+    dlg_w = EOS_PREVIEW_DIALOG_LARGE_MAX_W;
+  }
+  if (!is_compact && dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = (int32_t)w;
+
+  int32_t dlg_h = is_compact ? ((int32_t)h - EOS_PREVIEW_DIALOG_COMPACT_MARGIN)
+                             : ((int32_t)h - EOS_PREVIEW_DIALOG_LARGE_MARGIN_Y);
+  if (!is_compact && dlg_h > EOS_PREVIEW_DIALOG_LARGE_MAX_H) {
+    dlg_h = EOS_PREVIEW_DIALOG_LARGE_MAX_H;
+  }
+  if (!is_compact && dlg_h < EOS_PREVIEW_DIALOG_MIN_H) dlg_h = (int32_t)h;
+
+  lv_obj_t *card = lv_obj_create(ov);
+  data->card = card;
+  lv_obj_set_size(card, dlg_w, dlg_h);
+  lv_obj_center(card);
+  lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
+  lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
+  lv_obj_set_style_border_width(card, 1, 0);
+  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_pad_all(card, is_compact ? 4 : 8, 0);
+  lv_obj_set_style_pad_row(card, is_compact ? 4 : 6, 0);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  // Title / Header
+  lv_obj_t *tlbl = lv_label_create(card);
+  char thdr[EOS_LINE_STR_LEN];
+  snprintf(thdr, sizeof(thdr), "%s  %s", LV_SYMBOL_FILE, cfg->title ? cfg->title : "Preview");
+  lv_label_set_text(tlbl, thdr);
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+
+  // Textarea body (scrollable and read-only)
+  lv_obj_t *ta = lv_textarea_create(card);
+  data->ta = ta;
+  lv_obj_set_width(ta, lv_pct(100));
+  lv_obj_set_flex_grow(ta, 1);
+  lv_textarea_set_cursor_click_pos(ta, false);
+  lv_textarea_set_text(ta, cfg->content ? cfg->content : "");
+  lv_obj_set_style_bg_color(ta, lv_color_hex(EOS_COLOR_BG_DARK), 0);
+  lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+  lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(ta, 1, 0);
+  lv_obj_set_style_radius(ta, 4, 0);
+  lv_obj_set_style_pad_all(ta, 4, 0);
+
+  // Close Button
+  lv_obj_t *btn = lv_button_create(card);
+  data->btn = btn;
+  lv_obj_set_size(btn, is_compact ? EOS_PREVIEW_DIALOG_BTN_W_COMPACT : EOS_PREVIEW_DIALOG_BTN_W_LARGE,
+                       is_compact ? EOS_PREVIEW_DIALOG_BTN_H_COMPACT : EOS_PREVIEW_DIALOG_BTN_H_LARGE);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
+  lv_obj_set_style_radius(btn, 3, 0);
+  lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_add_event_cb(btn, preview_dialog_close_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *blbl = lv_label_create(btn);
+  char btn_text[EOS_SMALL_STR_LEN];
+  snprintf(btn_text, sizeof(btn_text), "%s %s", LV_SYMBOL_CLOSE, cfg->close_label ? cfg->close_label : "Close");
+  lv_label_set_text(blbl, btn_text);
+  lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(blbl);
+
+  // Keyboard / Keypad navigation
+  lv_group_t *grp = eos_lvgl_get_group();
+  if (grp) {
+    lv_group_add_obj(grp, ta);
+    lv_group_add_obj(grp, btn);
+    lv_group_focus_obj(btn);
+  }
+
+  // Intercept ESC / Button B to dismiss dialog
+  lv_obj_add_event_cb(ov, preview_dialog_key_cb, LV_EVENT_KEY, data);
+  lv_obj_add_event_cb(card, preview_dialog_key_cb, LV_EVENT_KEY, data);
+  lv_obj_add_event_cb(ta, preview_dialog_key_cb, LV_EVENT_KEY, data);
+  lv_obj_add_event_cb(btn, preview_dialog_key_cb, LV_EVENT_KEY, data);
+
+  return ov;
+}
+
 // ===================== Unified Menus (eos_menu & eos_popup_menu) =====================
 
 typedef struct {
@@ -2385,7 +2596,7 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
 
   uint32_t sw = eos_lvgl_get_width();
   uint32_t sh = eos_lvgl_get_height();
-  bool is_small = EOS_LVGL_IS_COMPACT(sw, sh);
+  bool is_small = eos_screen_is_compact();
   lv_obj_t *parent = cfg->parent ? cfg->parent : lv_screen_active();
 
   eos_menu_ctx_t *ctx = calloc(1, sizeof(eos_menu_ctx_t));
@@ -2487,7 +2698,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
 
   uint32_t sw = eos_lvgl_get_width();
   uint32_t sh = eos_lvgl_get_height();
-  bool is_small = EOS_LVGL_IS_COMPACT(sw, sh);
+  bool is_small = eos_screen_is_compact();
   lv_obj_t *parent = cfg->parent ? cfg->parent : lv_screen_active();
 
   eos_menu_ctx_t *ctx = calloc(1, sizeof(eos_menu_ctx_t));
@@ -2593,9 +2804,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
 
 lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg) {
   if (!cfg) return NULL;
-  uint32_t sw = eos_lvgl_get_width();
-  uint32_t sh = eos_lvgl_get_height();
-  bool is_small = EOS_LVGL_IS_COMPACT(sw, sh);
+  bool is_small = eos_screen_is_compact();
 
   if (is_small || cfg->force_fullscreen) {
     eos_menu_cfg_t small_cfg = *cfg;

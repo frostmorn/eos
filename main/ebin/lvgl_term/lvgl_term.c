@@ -352,7 +352,7 @@ static void term_build_ui(term_viewer_state_t *st) {
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
 
-  bool is_large = (h >= 400);
+  bool is_large = eos_screen_is_large();
   int32_t hdr_h = is_large ? 32 : 22;
   int32_t cbar_h = is_large ? 38 : 24;
   int32_t ftr_h = is_large ? 26 : 0;

@@ -18,10 +18,19 @@ static uint64_t fm_get_time_ms(void) {
          ((uint64_t)tv.tv_usec / (uint64_t)EOS_US_PER_MS);
 }
 
+static void fm_close_action_menu(fm_state_t *st) {
+  if (st && st->action_menu) {
+    eos_menu_close(st->action_menu);
+    st->action_menu = NULL;
+    eos_lvgl_clear_keys();
+  }
+}
+
 static void fm_close_dialog(fm_state_t *st) {
   if (st && st->dialog) {
-    eos_menu_close(st->dialog);
+    eos_lvgl_dialog_close(st->dialog);
     st->dialog = NULL;
+    eos_lvgl_clear_keys();
   }
 }
 
@@ -32,12 +41,13 @@ static void fm_reset_widget_ptrs(fm_state_t *st) {
   st->path_lbl = NULL;
   st->quick_bar = NULL;
   st->menu_obj = NULL;
+  st->action_menu = NULL;
   st->dialog = NULL;
 }
 
-static void fm_preview_close_cb(lv_event_t *e) {
-  fm_state_t *st = (fm_state_t *)lv_event_get_user_data(e);
-  fm_close_dialog(st);
+static void fm_preview_dialog_cb(void *user_data) {
+  fm_state_t *st = (fm_state_t *)user_data;
+  if (st) st->dialog = NULL;
 }
 
 static void fm_show_file_preview(fm_state_t *st) {
@@ -53,38 +63,15 @@ static void fm_show_file_preview(fm_state_t *st) {
     close(fd);
   }
 
-  lv_obj_t *box = lv_obj_create(st->scr);
-  lv_obj_set_size(box, lv_pct(FM_VIEW_MODAL_W_PCT), lv_pct(FM_VIEW_MODAL_H_PCT));
-  lv_obj_center(box);
-  lv_obj_set_style_bg_color(box, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
-  lv_obj_set_style_border_color(box, lv_color_hex(EOS_THEME_INFO_BLUE), 0);
-  lv_obj_set_style_border_width(box, 1, 0);
-  lv_obj_set_style_radius(box, 6, 0);
-  lv_obj_set_style_pad_all(box, 8, 0);
-
-  lv_obj_t *v_title = lv_label_create(box);
-  lv_label_set_text_fmt(v_title, "📄  %s", st->selected_name);
-  lv_obj_set_style_text_color(v_title, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
-  lv_obj_align(v_title, LV_ALIGN_TOP_LEFT, 0, 0);
-
-  lv_obj_t *txt = lv_textarea_create(box);
-  lv_obj_set_size(txt, lv_pct(100), lv_pct(70));
-  lv_obj_align(txt, LV_ALIGN_TOP_MID, 0, 24);
-  lv_textarea_set_text(txt, view_buf ? view_buf : "Error reading file");
-  lv_obj_set_style_bg_color(txt, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
-  lv_obj_set_style_text_color(txt, lv_color_hex(EOS_THEME_TEXT_PRIMARY), 0);
-  lv_obj_set_style_border_width(txt, 0, 0);
-
-  lv_obj_t *c_btn = lv_btn_create(box);
-  lv_obj_align(c_btn, LV_ALIGN_BOTTOM_MID, 0, 0);
-  lv_obj_set_size(c_btn, lv_pct(FM_VIEW_CLOSE_BTN_W_PCT), 28);
-  lv_obj_add_event_cb(c_btn, fm_preview_close_cb, LV_EVENT_CLICKED, st);
-  lv_obj_t *c_lbl = lv_label_create(c_btn);
-  lv_label_set_text(c_lbl, LV_SYMBOL_CLOSE " Close");
-  lv_obj_center(c_lbl);
-
+  eos_lvgl_preview_dialog_cfg_t cfg = {
+    .title = st->selected_name,
+    .content = view_buf ? view_buf : "Error reading file",
+    .close_label = "Close",
+    .cb = fm_preview_dialog_cb,
+    .user_data = st,
+  };
+  st->dialog = eos_lvgl_dialog_preview(&cfg);
   free(view_buf);
-  st->dialog = box;
 }
 
 static void fm_delete_confirmed_cb(bool confirmed, void *user_data) {
@@ -128,6 +115,8 @@ static void fm_action_menu_cb(eos_menu_t *menu, int item_id, void *user_data) {
   fm_state_t *st = (fm_state_t *)user_data;
   if (!st) return;
 
+  fm_close_action_menu(st);
+
   switch (item_id) {
   case 0: // Open
     if (st->selected_is_dir) {
@@ -151,9 +140,10 @@ static void fm_action_menu_cb(eos_menu_t *menu, int item_id, void *user_data) {
         uint32_t h = eos_lvgl_get_height();
         fm_setup_ui(st, w, h);
         fm_render_file_list(st);
+      } else {
+        fm_show_file_preview(st);
       }
     }
-    fm_close_dialog(st);
     break;
 
   case 1: // Preview
@@ -161,20 +151,20 @@ static void fm_action_menu_cb(eos_menu_t *menu, int item_id, void *user_data) {
     break;
 
   case 2: // Delete
-    fm_close_dialog(st);
     fm_trigger_delete_confirm(st);
     break;
 
   case 3: // Cancel
   default:
-    fm_close_dialog(st);
     break;
   }
 }
 
 static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
   if (entry_idx >= kv_size(st->data.entries)) return;
+  fm_close_action_menu(st);
   fm_close_dialog(st);
+  eos_lvgl_clear_keys();
 
   const fm_entry_t *entry = &kv_A(st->data.entries, entry_idx);
   strlcpy(st->selected_name, entry->name, sizeof(st->selected_name));
@@ -189,7 +179,7 @@ static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
     { .id = 3, .icon = LV_SYMBOL_CLOSE,    .label = "Cancel",  .detail = NULL, .is_destructive = false, .is_disabled = false },
   };
 
-  bool is_small = EOS_LVGL_IS_COMPACT(eos_lvgl_get_width(), eos_lvgl_get_height());
+  bool is_small = eos_screen_is_compact();
   eos_menu_cfg_t cfg = {
     .title = st->selected_name,
     .icon = fm_logic_get_icon(entry),
@@ -201,7 +191,7 @@ static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
     .parent = st->scr,
   };
 
-  st->dialog = eos_open_menu(&cfg);
+  st->action_menu = eos_open_menu(&cfg);
 }
 
 static void fm_entry_selected_cb(eos_menu_t *menu, int item_id, void *user_data) {
@@ -315,7 +305,7 @@ static void fm_render_file_list(fm_state_t *st) {
 
   uint32_t sw = eos_lvgl_get_width();
   uint32_t sh = eos_lvgl_get_height();
-  bool is_small = EOS_LVGL_IS_COMPACT(sw, sh);
+  bool is_small = eos_screen_is_compact();
 
   size_t count = kv_size(st->data.entries);
   eos_menu_item_t *items = NULL;
@@ -386,7 +376,7 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
   lv_obj_set_style_pad_all(st->scr, 0, 0);
   lv_obj_set_style_border_width(st->scr, 0, 0);
 
-  bool is_small = EOS_LVGL_IS_COMPACT(w, h);
+  bool is_small = eos_screen_is_compact();
   if (is_small) {
     // Small screens: pure menu mode (headerless) to maximize vertical space
     st->hdr = NULL;
@@ -475,11 +465,21 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
 }
 
 static void fm_handle_key(fm_state_t *st, uint16_t key) {
-  if (st->dialog) {
-    if (eos_menu_handle_key(st->dialog, key)) {
+  if (st->action_menu) {
+    if (eos_menu_handle_key(st->action_menu, key)) {
       return;
     }
     if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE) {
+      fm_close_action_menu(st);
+    }
+    return;
+  }
+
+  if (st->dialog) {
+    if (eos_lvgl_dialog_preview_handle_key(st->dialog, key)) {
+      return;
+    }
+    if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE || key == KEY_A || key == KEY_ENTER) {
       fm_close_dialog(st);
     }
     return;

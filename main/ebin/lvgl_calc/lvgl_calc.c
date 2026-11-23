@@ -202,7 +202,7 @@ int lvgl_calc_main(int argc, char **argv) {
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
-  bool compact = (h <= EOS_LVGL_DIALOG_MIN_W);
+  bool compact = eos_screen_is_compact();
 
   calc_setup_ui(&st, w, h, compact);
 

@@ -219,7 +219,7 @@ static void launcher_update_details(launcher_state_t *st) {
     }
 
     eos_toolbar_set(bin_effective_name(b),
-                    (eos_lvgl_get_height() <= LAUNCHER_COMPACT_HEIGHT_LIMIT)
+                    eos_screen_is_compact()
                         ? "[▲▼]Nav  [◄►]Tab  [A]Run  [D]Info"
                         : "[▲▼]Nav  [◄►]Tab  [A]Run");
   } else {
@@ -372,7 +372,7 @@ static void launcher_populate_list(launcher_state_t *st) {
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
-  bool compact_mode = (h <= EOS_LVGL_DIALOG_MIN_W);
+  bool compact_mode = eos_screen_is_compact();
 
   int32_t top_y = compact_mode ? 0 : 24;
   int32_t list_y = top_y + 24;
@@ -454,7 +454,7 @@ static void launcher_build_ui(launcher_state_t *st) {
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
   lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-  bool compact_mode = (h <= EOS_LVGL_DIALOG_MIN_W);
+  bool compact_mode = eos_screen_is_compact();
 
   // Top navigation / group selector bar
   int32_t top_y = 0;
