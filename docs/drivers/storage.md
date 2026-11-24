@@ -38,6 +38,7 @@ All storage subsystem IOCTLs reside in range `150–199`:
 | `EOS_STORAGE_IOCTL_GET_CAPACITY` | `151` | `uint64_t *out_capacity_bytes`| Returns total media storage capacity in bytes (supports 64-bit sizes). |
 | `EOS_STORAGE_IOCTL_MOUNT` | `152` | `const char *mount_point` | Mounts FAT/LittleFS filesystem on this block device to target VFS path. |
 | `EOS_STORAGE_IOCTL_UMOUNT` | `153` | `none` | Flushes cached sectors and unmounts filesystem from VFS. |
+| `EOS_STORAGE_IOCTL_GET_CARD` | `154` | `void **card_ptr` | Returns pointer to underlying `sdmmc_card_t` descriptor (for USB MSC bridging). |
 
 ---
 

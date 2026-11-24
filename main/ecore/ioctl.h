@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "emisc/rect.h"
 #include "ecore/netif.h"
+#include "ecore/usb.h"
 
 // Hardware address & protocol bounds
 #define EOS_I2C_ADDR_MIN 0x08
@@ -353,6 +354,7 @@ typedef enum {
   EOS_STORAGE_IOCTL_GET_PART_TYPE,   // uint8_t *part_type
   EOS_STORAGE_IOCTL_MOUNT,           // const char *path, bool *result
   EOS_STORAGE_IOCTL_UMOUNT,          // bool *result
+  EOS_STORAGE_IOCTL_GET_CARD,        // void **card_ptr (sdmmc_card_t **)
 
   //=====================================================
   // edriver/input/keyboard
@@ -470,6 +472,23 @@ typedef enum {
   EOS_PWM_IOCTL_SET_POLARITY,       // uint32_t polarity (0=active-high, 1=active-low)
   EOS_PWM_IOCTL_FADE,               // const eos_pwm_fade_t *fade
   EOS_PWM_IOCTL_GET_CAPS,           // eos_pwm_caps_t *out_caps
+
+  //=====================================================
+  // edriver/bus/usb
+  //=====================================================
+  EOS_USB_IOCTL_BASE = 800,
+  EOS_USB_IOCTL_GET_ROLE = 800,       // eos_usb_role_t *out_role
+  EOS_USB_IOCTL_SET_ROLE,             // eos_usb_role_t role
+  EOS_USB_IOCTL_GET_STATUS,           // eos_usb_bus_status_t *out_status
+  EOS_USB_IOCTL_GADGET_SET_FUNCS,     // uint32_t funcs_mask
+  EOS_USB_IOCTL_GADGET_GET_FUNCS,     // uint32_t *out_funcs_mask
+  EOS_USB_IOCTL_GADGET_SET_MSC_DEV,   // const char *dev_path (e.g. "/dev/sd0")
+  EOS_USB_IOCTL_GADGET_GET_MSC_DEV,   // char *out_dev_path
+  EOS_USB_IOCTL_JTAG_SET_FREQ,        // uint32_t freq_hz
+  EOS_USB_IOCTL_JTAG_SCAN,            // eos_usb_jtag_pattern_t *pattern
+  EOS_USB_IOCTL_HOST_ENUM,            // no args
+  EOS_USB_IOCTL_HOST_RESET_PORT,      // uint32_t port_no
+  EOS_USB_IOCTL_HOST_GET_DEV_LIST,    // eos_usb_host_dev_list_t *out_list
 } eos_ioctl_t;
 
 // (^__^)==\~

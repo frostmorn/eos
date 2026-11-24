@@ -10,9 +10,9 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 
 - [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `time`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
 - [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`, `statusbar`, `toolbar`
-- [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`
+- [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`, `usbctl`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
-- [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`
+- [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_backlight`, `lvgl_calc`, `lvgl_fm`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`, `lvgl_usb`
 - [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
 
 ---
@@ -444,6 +444,30 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
 * **Function:** Scans `/dev/gpio/*`, drives test patterns across available user GPIO pins with pull-ups and pull-downs, detecting shorts to GND, VCC, and pin-to-pin solder bridges during PCB manufacturing.
 * **Capabilities:** Direct GPIO VFS manipulation (`/dev/gpio/*`), GPIO ioctls (`SET_PULLUP`, `SET_PULLDOWN`, `SET_DIRECTION`).
 
+### `usbctl` — USB Controller & Composite Gadget Manager
+* **Syntax:** `usbctl [-d <device>] [-c <0|1>] <command> [args...]`
+* **Flags:** `0` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-d <device>`: Path to USB controller node (default: `/dev/usb0`).
+  * `-c <0|1>`: Select controller port index (0 -> `/dev/usb0`, 1 -> `/dev/usb1`).
+* **Subcommands:**
+  * `usbctl status`: Displays controller port, operating role (`debug`, `device`, `host`, `off`), negotiated speed, VBUS status, and enabled gadget functions.
+  * `usbctl role <debug|device|host|off>`: Switches the controller role between hardware JTAG+CDC (`debug`), programmable composite gadgets (`device`), USB host master (`host`), or powered down (`off`).
+  * `usbctl gadget <enable|disable> <serial|modem|msc>`: Dynamically toggles individual composite functions in device mode.
+  * `usbctl msc <block_device_path>`: Binds or queries the backing block device (e.g. `/dev/sd0`) for the Mass Storage gadget.
+  * `usbctl serial [message]`: Sends a test payload to CDC Serial (`/dev/usb_serial0`) and reads loopback response.
+  * `usbctl modem [at_command]`: Sends an AT command to `/dev/usb_modem0` and displays the modem response (default: `ATI`).
+* **Capabilities:** USB bus and gadget ioctl calls, VFS device node read/write.
+* **Examples:**
+  ```sh
+  usbctl status
+  usbctl -c 1 status
+  usbctl role device
+  usbctl gadget enable serial
+  usbctl msc /dev/sd0
+  usbctl modem "AT+CSQ"
+  ```
+
 ---
 
 ## 4. Network Management
@@ -531,6 +555,10 @@ All GUI binaries automatically declare `EOS_BIN_FLAG_GUI` and execute on dedicat
 ### `lvgl_term` — Graphical Terminal Viewer
 * **Flags:** `EOS_BIN_FLAG_GUI` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
 * **Function:** Embedded graphical terminal emulator allowing interactive shell command execution directly on the handheld screen.
+
+### `lvgl_usb` — Graphical USB Settings & Gadget Manager
+* **Flags:** `EOS_BIN_FLAG_GUI` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
+* **Function:** Interactive settings utility for multi-controller USB management, configuring controller operating roles (Hardware JTAG+CDC / Composite Gadgets / Host / Off), toggling slave composite gadgets (CDC Serial, CDC Modem, MSC), cycling Mass Storage backing media, inspecting VBUS and link speed, and running CDC Serial echo and modem diagnostics.
 
 ---
 

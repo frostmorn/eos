@@ -15,7 +15,7 @@ Only drivers with `is_bus == true` can parent child devices. `eos_dev_attach()` 
 | **`i2c`** | `/dev/i2c0` | Manages I2C master controllers, transaction queuing, clock stretching, and address probing. | ESP32-S3, ESP32-P4 |
 | **`sdio`** | `/dev/sdio0`, `/dev/sdio1` | Manages SDMMC host slots. Slot 0 for high-speed storage; Slot 1 for lazy ESP-Hosted co-processor links. | ESP32-P4 (SDMMC controller) |
 | **`gpio`** | `/dev/gpio` | Container bus exposing individual GPIO pins as virtual nodes (`/dev/gpio/<pin>`). | Universal |
-| **`usb`** | `/dev/usb0` | Manages USB host/device controllers and composite device endpoints. | ESP32-S3 / ESP32-P4 USB OTG |
+| **`usb`** | `/dev/usb0`, `/dev/usb1` | Manages USB host/device controllers and composite device endpoints (Port 0: FS, Port 1: HS). | ESP32-S3 (FS OTG), ESP32-P4 (Dual FS/HS OTG) |
 
 ---
 
@@ -85,6 +85,24 @@ Exposed when opening individual GPIO pin nodes:
 | `EOS_SDIO_IOCTL_IO_READ_BYTES`| `200` | `eos_sdio_cmd53_t *cmd` | Multi-byte / block transfer read via SDIO Command 53. |
 | `EOS_SDIO_IOCTL_IO_WRITE_BYTES`| `201`| `eos_sdio_cmd53_t *cmd` | Multi-byte / block transfer write via SDIO Command 53. |
 | `EOS_SDIO_IOCTL_PROBE_CARD` | `203` | `sdmmc_card_t *` | Probes and initializes card inserted in SDIO slot. |
+
+### USB Bus IOCTLs (`/dev/usb*`)
+
+| IOCTL Command | Numeric Code | Argument | Description |
+| :--- | :---: | :--- | :--- |
+| `EOS_USB_IOCTL_BASE` | `800` | `none` | Base numeric code for USB ioctls. |
+| `EOS_USB_IOCTL_GET_ROLE` | `800` | `eos_usb_role_t *out_role` | Queries active USB operating role (`OFF`, `HOST`, `DEVICE_COMPOSITE`, `DEBUG_USJ`). |
+| `EOS_USB_IOCTL_SET_ROLE` | `801` | `eos_usb_role_t role` | Switches USB controller operating role. |
+| `EOS_USB_IOCTL_GET_STATUS` | `802` | `eos_usb_bus_status_t *out_status` | Queries port ID, bus speed, VBUS, active gadgets, and I/O counts. |
+| `EOS_USB_IOCTL_GADGET_SET_FUNCS` | `803` | `uint32_t funcs_mask` | Configures enabled composite gadget functions bitmask (`SERIAL`, `MODEM`, `MSC`). |
+| `EOS_USB_IOCTL_GADGET_GET_FUNCS` | `804` | `uint32_t *out_funcs_mask` | Queries enabled composite gadget functions bitmask. |
+| `EOS_USB_IOCTL_GADGET_SET_MSC_DEV` | `805` | `const char *dev_path` | Binds backing block device (e.g. `/dev/sd0`) to MSC gadget. |
+| `EOS_USB_IOCTL_GADGET_GET_MSC_DEV` | `806` | `char *out_dev_path` | Queries current backing block device path. |
+| `EOS_USB_IOCTL_SERIAL_SET_CODING` | `807` | `eos_usb_line_coding_t *coding` | Configures CDC Serial baud rate and line coding. |
+| `EOS_USB_IOCTL_SERIAL_GET_CODING` | `808` | `eos_usb_line_coding_t *coding` | Queries CDC Serial baud rate and line coding. |
+| `EOS_USB_IOCTL_HOST_ENUM` | `809` | `none` | Triggers bus enumeration of downstream host devices. |
+| `EOS_USB_IOCTL_HOST_RESET_PORT` | `810` | `uint32_t port_no` | Drives hardware reset on downstream host port. |
+| `EOS_USB_IOCTL_HOST_GET_DEV_LIST` | `811` | `eos_usb_host_dev_list_t *out_list` | Queries enumerated downstream devices list. |
 
 ---
 

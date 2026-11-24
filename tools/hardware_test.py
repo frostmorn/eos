@@ -31,19 +31,6 @@ class Colors:
     RESET = "\033[0m"
 
 
-def get_port_usb_info(port):
-    """Dynamically resolves USB bus topology and serial number from sysfs for any tty port."""
-    try:
-        tty_name = os.path.basename(port)
-        usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
-        loc = os.path.basename(usb_dir)
-        serial_path = os.path.join(usb_dir, "serial")
-        serial_num = open(serial_path).read().strip() if os.path.exists(serial_path) else None
-        return loc, serial_num
-    except Exception:
-        return None, None
-
-
 def get_target_chip():
     if os.path.exists("sdkconfig"):
         try:
@@ -64,12 +51,17 @@ def get_port_chip(port):
         tty_name = os.path.basename(port)
         usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
         bcd_path = os.path.join(usb_dir, "bcdDevice")
+        pid_path = os.path.join(usb_dir, "idProduct")
         if os.path.exists(bcd_path):
             bcd = open(bcd_path).read().strip()
             if bcd == "0101":
                 return "esp32s3"
             elif bcd == "0102":
                 return "esp32p4"
+        if os.path.exists(pid_path):
+            pid = open(pid_path).read().strip()
+            if pid in ("4001", "4002", "4003"):
+                return get_target_chip()
     except Exception:
         pass
     return None
@@ -100,16 +92,21 @@ def resolve_port(port, target_chip=None):
 
 def jtag_reset(port):
     target_chip = get_port_chip(port) or get_target_chip()
+    try:
+        tty_name = os.path.basename(port)
+        pid_path = os.path.realpath(f"/sys/class/tty/{tty_name}/device/../idProduct")
+        if os.path.exists(pid_path) and open(pid_path).read().strip() in ("4001", "4002", "4003"):
+            # Device is running TinyUSB composite mode, JTAG PHY is disconnected
+            return
+    except Exception:
+        pass
     cfg = "board/esp32s3-builtin.cfg" if target_chip == "esp32s3" else "board/esp32p4-builtin.cfg"
-    loc, serial_num = get_port_usb_info(port)
     cmd = ["/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd"]
     if target_chip == "esp32s3":
         cmd.extend(["-c", "set ESP_ONLYCPU 1"])
     cmd.extend(["-f", cfg])
-    if serial_num:
-        cmd.extend(["-c", f"adapter serial {serial_num}"])
     cmd.extend(["-c", "init; reset run; shutdown"])
-    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({serial_num or 'auto'})...{Colors.RESET}")
+    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({target_chip})...{Colors.RESET}")
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
         time.sleep(3.0)
@@ -134,7 +131,6 @@ class EOSTestHarness:
         self.failed = 0
         self.suite_counts = {}
         self.target_chip = get_port_chip(port) or get_target_chip()
-        self.loc, self.serial_num = get_port_usb_info(port)
 
     def record_fail(self, suite):
         self.failed += 1
@@ -151,9 +147,6 @@ class EOSTestHarness:
             resolved = resolve_port(self.port, getattr(self, "target_chip", None))
             if resolved:
                 self.port = resolved
-                loc, s = get_port_usb_info(resolved)
-                if s:
-                    self.serial_num = s
             if hasattr(serial, "serial_for_url") and self.port.startswith("socket://"):
                 self.ser = serial.serial_for_url(self.port, baudrate=self.baudrate, timeout=self.timeout)
                 return
@@ -1464,6 +1457,61 @@ class EOSTestHarness:
         self.check(suite, "pwmctl get reports faded duty", "pwmctl get pwm0", r"(49%|50%)", wait=1.0)
         self.check(suite, "Restore duty to 100%", "pwmctl set pwm0 100", r"duty set to 100%", wait=1.0)
 
+    def test_usb(self):
+        suite = "usb"
+        print(f"\n{Colors.BOLD}=== USB Subsystem & Composite Gadget Tests (Slave & Master) ==={Colors.RESET}")
+        self.check(suite, "binfs exposes usbctl", "ls -l /bin/usbctl", r"usbctl", wait=1.0)
+        self.check(suite, "binfs exposes lvgl_usb GUI utility", "ls -l /bin/lvgl_usb", r"lvgl_usb", wait=1.0)
+        self.check(suite, "/dev/usb0 device node exists", "ls /dev", r"usb0", wait=1.0)
+        self.check(suite, "/dev/usb_serial0 device node exists", "ls /dev", r"usb_serial0", wait=1.0)
+        self.check(suite, "/dev/usb_modem0 device node exists", "ls /dev", r"usb_modem0", wait=1.0)
+        self.check(suite, "/dev/usb_msc0 device node exists", "ls /dev", r"usb_msc0", wait=1.0)
+
+        # 1. Composite Gadget Initial State & Port Inspection
+        self.check(suite, "usbctl status reports USB status", "usbctl status", r"Role:\s+(DEBUG_USJ|DEVICE)", wait=1.0)
+        self.check(suite, "usbctl role reports active role", "usbctl role", r"Active USB Role:\s+\d+\s+\(\w+\)", wait=1.0)
+        self.check(suite, "usbctl funcs reports default gadget mask", "usbctl funcs", r"Gadget Functions Mask:\s+0x07", wait=1.0)
+        self.check(suite, "usbctl msc reports default backing dev", "usbctl msc", r"MSC Backing Device:\s+\S+", wait=1.0)
+
+        # 2. Virtual CDC-ACM Serial Loopback Test
+        self.check(suite, "usbctl serial executes CDC loopback test", "usbctl serial", r"Serial Echo:.*\(PASS\)", wait=1.0)
+
+        # 3. Virtual CDC-ACM Modem Hayes AT Command Protocol Suite
+        self.check(suite, "usbctl modem AT ping responds OK", "usbctl modem AT", r"Modem Response:.*OK", wait=1.0)
+        self.check(suite, "usbctl modem ATI identification query", "usbctl modem ATI", r"EOS USB CDC-ACM Virtual Modem", wait=1.0)
+        self.check(suite, "usbctl modem AT+CSQ signal quality query", "usbctl modem AT+CSQ", r"\+CSQ: 31,99", wait=1.0)
+        self.check(suite, "usbctl modem AT+CGMI manufacturer query", "usbctl modem AT+CGMI", r"EOS-OS", wait=1.0)
+        self.check(suite, "usbctl modem AT+CGMM model query", "usbctl modem AT+CGMM", r"EOS-VMODEM", wait=1.0)
+        self.check(suite, "usbctl modem AT+CGMR revision query", "usbctl modem AT+CGMR", r"1\.0\.0", wait=1.0)
+        self.check(suite, "usbctl modem AT+CGATT? packet attach query", "usbctl modem AT+CGATT?", r"\+CGATT: 1", wait=1.0)
+        self.check(suite, "usbctl modem AT+COPS? operator query", "usbctl modem AT+COPS?", r"\+COPS: 0,0,\"EOS NET\",7", wait=1.0)
+        self.check(suite, "usbctl modem ATD*99# data call connect", "usbctl modem ATD*99#", r"CONNECT 115200", wait=1.0)
+        self.check(suite, "usbctl modem +++ escape back to command mode", "usbctl modem +++", r"OK", wait=1.0)
+        self.check(suite, "usbctl modem ATH call hangup", "usbctl modem ATH", r"NO CARRIER", wait=1.0)
+
+        # 4. MSC Backing Storage Device Configuration
+        self.check(suite, "usbctl msc binds temporary backing storage", "usbctl msc /tmp/test_msc.bin", r"Bound MSC backing device to '/tmp/test_msc\.bin'", wait=1.0)
+        self.check(suite, "usbctl msc verifies updated backing dev", "usbctl msc", r"MSC Backing Device:\s+/tmp/test_msc\.bin", wait=1.0)
+        self.check(suite, "usbctl msc restores /dev/sd0 backing dev", "usbctl msc /dev/sd0", r"Bound MSC backing device to '/dev/sd0'", wait=1.0)
+
+        # 5. Dynamic Slave Gadget Mask Reconfiguration
+        self.check(suite, "usbctl funcs sets Serial+Modem mask (0x03)", "usbctl funcs 0x03", r"Updated gadget functions mask to 0x03", wait=1.0)
+        self.check(suite, "usbctl status verifies Serial+Modem active", "usbctl status", r"Gadgets:\s+0x03 \(SERIAL:ON, MODEM:ON, MSC:OFF\)", wait=1.0)
+        self.check(suite, "usbctl funcs sets Serial-only mask (0x01)", "usbctl funcs 0x01", r"Updated gadget functions mask to 0x01", wait=1.0)
+        self.check(suite, "usbctl status verifies Serial-only active", "usbctl status", r"Gadgets:\s+0x01 \(SERIAL:ON, MODEM:OFF, MSC:OFF\)", wait=1.0)
+        self.check(suite, "usbctl funcs restores all gadgets mask (0x07)", "usbctl funcs 0x07", r"Updated gadget functions mask to 0x07", wait=1.0)
+        self.check(suite, "usbctl status verifies all gadgets active", "usbctl status", r"Gadgets:\s+0x07 \(SERIAL:ON, MODEM:ON, MSC:ON\)", wait=1.0)
+
+        # 6. Role Switching & Restore to Device Mode
+        # On single-PHY ESP32-S3 over /dev/ttyACM*, switching USB role disconnects the test console itself.
+        is_single_phy_usb = (self.target_chip == "esp32s3" and "/dev/ttyACM" in (self.port or ""))
+        if not is_single_phy_usb:
+            self.check(suite, "usbctl role host switches to host mode", "usbctl role host", r"Switched USB role to 'host'", wait=1.0)
+            self.check(suite, "usbctl host enumerates downstream devices", "usbctl host", r"Host Downstream Devices", wait=1.0)
+            self.check(suite, "usbctl role device restores slave mode", "usbctl role device", r"Switched USB role to 'device'", wait=1.0)
+            self.check(suite, "usbctl role verifies restored slave mode", "usbctl role", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)", wait=1.0)
+            self.check(suite, "usbctl status verifies slave composite status", "usbctl status", r"Role:\s+DEVICE \(Composite Gadgets\)", wait=1.0)
+
     def print_summary(self):
         total = self.passed + self.failed
         print(f"\n{Colors.BOLD}===================================================={Colors.RESET}")
@@ -1513,6 +1561,7 @@ SUITE_REGISTRY = {
     "disp_format": {"name": "Display Color Format & Manifest v2 Tests", "tag": "qemu", "func": lambda h: h.test_disp_format()},
     "caps": {"name": "Capability Manager Tests", "tag": "qemu", "func": lambda h: h.test_caps()},
     "pwm": {"name": "Hardware PWM & Backlight Tests", "tag": "hardware-only", "func": lambda h: h.test_pwm()},
+    "usb": {"name": "USB Subsystem & Composite Gadget Tests", "tag": "qemu", "func": lambda h: h.test_usb()},
     "gui": {"name": "GUI Launcher & lvgl_net IPC Tests", "tag": "qemu", "func": lambda h: h.test_gui_launcher()},
     "emisc": {"name": "emisc Math, Hierarchy & Utility Tests", "tag": "qemu", "func": lambda h: h.test_emisc()},
     "coreutils": {"name": "Coreutils (rm, cp, mv, sleep) Tests", "tag": "qemu", "func": lambda h: h.test_coreutils()},

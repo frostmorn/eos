@@ -329,6 +329,13 @@ int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     *result = false; // Nothing to unmount
     break;
   }
+  case EOS_STORAGE_IOCTL_GET_CARD:{
+    void **card_ptr = va_arg(args, void **);
+    if (card_ptr) {
+      *card_ptr = &state->card;
+    }
+    break;
+  }
   }
   return ret;
 }

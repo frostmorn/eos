@@ -1,0 +1,274 @@
+#include "ebin/lvgl_usb/lvgl_usb.h"
+#include "ebin/lvgl_usb/usb_logic.h"
+#include "ecore/bin.h"
+#include "ecore/lvgl.h"
+#include "emisc/strlimits.h"
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+enum {
+  ACT_PORT = 1,
+  ACT_ROLE,
+  ACT_GADGETS,
+  ACT_MSC_CYCLE,
+  ACT_DIAG,
+  ACT_SET_ROLE_DEBUG,
+  ACT_SET_ROLE_COMP,
+  ACT_SET_ROLE_HOST,
+  ACT_SET_ROLE_OFF,
+  ACT_TOGGLE_SERIAL,
+  ACT_TOGGLE_MODEM,
+  ACT_TOGGLE_MSC,
+  ACT_SET_PORT0,
+  ACT_SET_PORT1,
+  ACT_TEST_CDC,
+  ACT_TEST_MODEM,
+  ACT_REFRESH,
+};
+
+typedef struct {
+  usb_logic_ctx_t logic;
+  usb_menu_page_t page;
+  lv_obj_t *menu;
+  eos_menu_item_t items[EOS_LVGL_USB_MAX_ITEMS];
+  char details[EOS_LVGL_USB_MAX_ITEMS][EOS_LINE_STR_LEN];
+  bool has_port1;
+  bool rebuild_pending;
+  bool quit;
+} usb_ui_t;
+
+static void usb_ui_rebuild(usb_ui_t *ui);
+
+static const char *role_label(eos_usb_role_t role) {
+  switch (role) {
+  case EOS_USB_ROLE_DEBUG_USJ:
+    return "JTAG + CDC";
+  case EOS_USB_ROLE_DEVICE_COMPOSITE:
+    return "Gadgets";
+  case EOS_USB_ROLE_HOST:
+    return "Host";
+  default:
+    return "Off";
+  }
+}
+
+static void format_gadget_summary(const usb_logic_ctx_t *l, char *buf, size_t sz) {
+  buf[0] = '\0';
+  if (l->gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) strlcat(buf, "CDC ", sz);
+  if (l->gadget_mask & EOS_USB_GADGET_FUNC_MODEM) strlcat(buf, "Modem ", sz);
+  if (l->gadget_mask & EOS_USB_GADGET_FUNC_MSC) strlcat(buf, "MSC", sz);
+  if (!buf[0]) strlcpy(buf, "None", sz);
+}
+
+static void add_item(usb_ui_t *ui, size_t *idx, int id, const char *icon,
+                     const char *label, const char *detail) {
+  if (*idx >= EOS_LVGL_USB_MAX_ITEMS) return;
+  strlcpy(ui->details[*idx], detail ? detail : "", sizeof(ui->details[*idx]));
+  ui->items[*idx] = (eos_menu_item_t){
+      .id = id,
+      .icon = icon,
+      .label = label,
+      .detail = ui->details[*idx],
+  };
+  (*idx)++;
+}
+
+static void menu_cancel_cb(eos_menu_t *menu, void *user_data) {
+  (void)menu;
+  usb_ui_t *ui = (usb_ui_t *)user_data;
+  if (!ui) return;
+  if (ui->page == USB_MENU_ROOT) {
+    ui->quit = true;
+  } else {
+    ui->page = USB_MENU_ROOT;
+    ui->rebuild_pending = true;
+  }
+}
+
+static void handle_root_select(usb_ui_t *ui, int id) {
+  if (id == ACT_PORT) ui->page = USB_MENU_PORT;
+  else if (id == ACT_ROLE) ui->page = USB_MENU_ROLE;
+  else if (id == ACT_GADGETS) ui->page = USB_MENU_GADGETS;
+  else if (id == ACT_MSC_CYCLE) usb_logic_cycle_msc_device(&ui->logic);
+  else if (id == ACT_DIAG) ui->page = USB_MENU_DIAG;
+  ui->rebuild_pending = true;
+}
+
+static void handle_sub_select(usb_ui_t *ui, int id) {
+  if (id == ACT_SET_ROLE_DEBUG) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_DEBUG_USJ);
+  else if (id == ACT_SET_ROLE_COMP) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_DEVICE_COMPOSITE);
+  else if (id == ACT_SET_ROLE_HOST) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_HOST);
+  else if (id == ACT_SET_ROLE_OFF) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_OFF);
+  else if (id == ACT_TOGGLE_SERIAL) {
+    bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) == 0;
+    usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_SERIAL, en);
+  } else if (id == ACT_TOGGLE_MODEM) {
+    bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MODEM) == 0;
+    usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_MODEM, en);
+  } else if (id == ACT_TOGGLE_MSC) {
+    bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) == 0;
+    usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_MSC, en);
+  } else if (id == ACT_SET_PORT0) usb_logic_select_dev(&ui->logic, "/dev/usb0");
+  else if (id == ACT_SET_PORT1) usb_logic_select_dev(&ui->logic, "/dev/usb1");
+  else if (id == ACT_TEST_CDC) {
+    ui->logic.last_test_modem_valid = false;
+    usb_logic_run_serial_echo(&ui->logic);
+  } else if (id == ACT_TEST_MODEM) {
+    ui->logic.last_test_serial_valid = false;
+    usb_logic_run_modem_ping(&ui->logic, "ATI");
+  } else if (id == ACT_REFRESH) {
+    usb_logic_refresh(&ui->logic);
+  }
+  ui->rebuild_pending = true;
+}
+
+static void menu_select_cb(eos_menu_t *menu, int item_id, void *user_data) {
+  (void)menu;
+  usb_ui_t *ui = (usb_ui_t *)user_data;
+  if (!ui) return;
+  if (ui->page == USB_MENU_ROOT) {
+    handle_root_select(ui, item_id);
+  } else {
+    handle_sub_select(ui, item_id);
+  }
+}
+
+static size_t build_root_items(usb_ui_t *ui) {
+  size_t n = 0;
+  char gbuf[EOS_LINE_STR_LEN];
+  format_gadget_summary(&ui->logic, gbuf, sizeof(gbuf));
+  if (ui->has_port1) {
+    const char *p = (strcmp(ui->logic.dev_path, "/dev/usb1") == 0) ? "usb1 (HS)" : "usb0 (FS)";
+    add_item(ui, &n, ACT_PORT, LV_SYMBOL_USB, "Controller", p);
+  }
+  add_item(ui, &n, ACT_ROLE, LV_SYMBOL_SETTINGS, "USB Role", role_label(ui->logic.active_role));
+  add_item(ui, &n, ACT_GADGETS, LV_SYMBOL_LIST, "Gadgets", gbuf);
+  add_item(ui, &n, ACT_MSC_CYCLE, LV_SYMBOL_SD_CARD, "MSC Storage",
+           ui->logic.msc_backing[0] ? ui->logic.msc_backing : "None");
+  add_item(ui, &n, ACT_DIAG, LV_SYMBOL_REFRESH, "Diagnostics", "Run tests");
+  return n;
+}
+
+static size_t build_sub_items(usb_ui_t *ui, const char **title) {
+  size_t n = 0;
+  if (ui->page == USB_MENU_ROLE) {
+    *title = "USB Role";
+    add_item(ui, &n, ACT_SET_ROLE_DEBUG, LV_SYMBOL_SETTINGS, "JTAG + CDC",
+             ui->logic.active_role == EOS_USB_ROLE_DEBUG_USJ ? "Active" : "");
+    add_item(ui, &n, ACT_SET_ROLE_COMP, LV_SYMBOL_USB, "Gadgets",
+             ui->logic.active_role == EOS_USB_ROLE_DEVICE_COMPOSITE ? "Active" : "");
+    add_item(ui, &n, ACT_SET_ROLE_HOST, LV_SYMBOL_DRIVE, "USB Host",
+             ui->logic.active_role == EOS_USB_ROLE_HOST ? "Active" : "");
+    add_item(ui, &n, ACT_SET_ROLE_OFF, LV_SYMBOL_POWER, "Off",
+             ui->logic.active_role == EOS_USB_ROLE_OFF ? "Active" : "");
+  } else if (ui->page == USB_MENU_GADGETS) {
+    *title = "Gadget Functions";
+    add_item(ui, &n, ACT_TOGGLE_SERIAL, LV_SYMBOL_CALL, "CDC Serial",
+             (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) ? "ON" : "OFF");
+    add_item(ui, &n, ACT_TOGGLE_MODEM, LV_SYMBOL_WIFI, "CDC Modem",
+             (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MODEM) ? "ON" : "OFF");
+    add_item(ui, &n, ACT_TOGGLE_MSC, LV_SYMBOL_SD_CARD, "Mass Storage",
+             (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) ? "ON" : "OFF");
+  } else if (ui->page == USB_MENU_PORT) {
+    *title = "USB Controller";
+    bool p0 = (strcmp(ui->logic.dev_path, "/dev/usb0") == 0);
+    add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)", p0 ? "Active" : "");
+    add_item(ui, &n, ACT_SET_PORT1, LV_SYMBOL_USB, "usb1 (High Speed)", !p0 ? "Active" : "");
+  } else {
+    *title = "Diagnostics";
+    const char *sres = !ui->logic.last_test_serial_valid ? "Tap/A to run"
+                       : (ui->logic.serial_test_passed ? "OK" : "FAIL");
+    const char *mres = !ui->logic.last_test_modem_valid ? "Tap/A to run"
+                       : ui->logic.modem_test_response;
+    add_item(ui, &n, ACT_TEST_CDC, LV_SYMBOL_CALL, "Test CDC Serial", sres);
+    add_item(ui, &n, ACT_TEST_MODEM, LV_SYMBOL_WIFI, "Ping AT Modem", mres);
+    add_item(ui, &n, ACT_REFRESH, LV_SYMBOL_REFRESH, "Refresh Status", "");
+  }
+  return n;
+}
+
+static void usb_ui_rebuild(usb_ui_t *ui) {
+  int prev_focus = ui->menu ? eos_menu_get_focused_index(ui->menu) : 0;
+  if (ui->menu) {
+    eos_menu_close(ui->menu);
+    ui->menu = NULL;
+  }
+
+  const char *title = "USB Settings";
+  size_t count = (ui->page == USB_MENU_ROOT) ? build_root_items(ui)
+                                             : build_sub_items(ui, &title);
+
+  eos_menu_cfg_t cfg = {
+      .title = title,
+      .icon = LV_SYMBOL_USB,
+      .items = ui->items,
+      .item_count = count,
+      .on_select = menu_select_cb,
+      .on_cancel = menu_cancel_cb,
+      .user_data = ui,
+  };
+  ui->menu = eos_open_menu(&cfg);
+  if (ui->menu && prev_focus >= 0 && (size_t)prev_focus < count) {
+    eos_menu_focus_index(ui->menu, prev_focus);
+  }
+}
+
+int lvgl_usb_main(int argc, char **argv) {
+  const char *fb_path = (argc > 1) ? argv[1] : NULL;
+  const char *kbd_path = (argc > 2) ? argv[2] : NULL;
+
+  if (eos_lvgl_init_paths(fb_path, kbd_path) != 0) {
+    printf("lvgl_usb: failed to initialize LVGL\n");
+    return -1;
+  }
+
+  usb_ui_t ui;
+  memset(&ui, 0, sizeof(ui));
+  int p1_fd = open("/dev/usb1", O_RDWR);
+  if (p1_fd >= 0) {
+    ui.has_port1 = true;
+    close(p1_fd);
+  }
+  usb_logic_init(&ui.logic);
+
+  lv_obj_t *scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
+
+  usb_ui_rebuild(&ui);
+
+  while (!ui.quit) {
+    uint16_t key = 0;
+    while (eos_lvgl_poll_key(&key)) {
+      if (ui.menu) {
+        eos_menu_handle_key(ui.menu, key);
+      }
+    }
+    if (ui.rebuild_pending && !ui.quit) {
+      ui.rebuild_pending = false;
+      usb_ui_rebuild(&ui);
+    }
+    eos_lvgl_step(EOS_LVGL_USB_STEP_MS);
+  }
+
+  if (ui.menu) {
+    eos_menu_close(ui.menu);
+    ui.menu = NULL;
+  }
+  usb_logic_close(&ui.logic);
+  eos_lvgl_deinit();
+  return 0;
+}
+
+EOS_BIN_ATTR const eos_bin_t lvgl_usb_app = {
+    EOS_BIN_INITIALIZER,
+    .flags       = EOS_BIN_FLAG_GUI,
+    .stack_size  = EOS_BIN_GUI_STACK_SIZE,
+    .filename    = "lvgl_usb",
+    .name        = "USB Settings",
+    .group       = "Settings",
+    .description = "Configure USB Dual-Mode roles, composite gadgets, and diagnostics",
+    .entry_point = lvgl_usb_main,
+};

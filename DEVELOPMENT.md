@@ -92,6 +92,8 @@ All GUI applications (`main/ebin/lvgl_*`) must use centralized EOS LVGL kernel a
   - Full responsive width: menus on small screens automatically occupy 100% of available screen width (`lv_pct(100)`).
   - Focus vs Selection: Arrow/D-pad navigation updates *focus* (`eos_menu_focus_index()`, triggering `cfg->on_focus`), visually highlighting exactly one candidate item with `EOS_THEME_PRIMARY_BLUE` and scrolling into view. Deliberate activation (Enter/A key or touch tap) triggers *selection* (`cfg->on_select`), preserving architectural readiness for future multi-file batch operations.
   - Keyboard/D-pad navigation: apps must delegate keypad arrow and confirmation events to `eos_menu_handle_key()`.
+  - Dual-input & single exit path: every GUI application must be 100% operable in both **keyboard-only** mode (D-pad + Enter/A + Esc/B) and **touch-only** mode (tap item / single back button via `on_cancel` or `eos_lvgl_create_back_btn()`), without duplicate exit buttons.
+  - Banned complex LVGL widgets: `lv_tabview_create`, `lv_tileview_create`, `lv_win_create`, `lv_spinbox_create`, `lv_roller_create`, `lv_arc_create`, `lv_chart_create`, `lv_calendar_create`, `lv_colorwheel_create`, `lv_led_create`, `lv_meter_create`, `lv_spinner_create`, `lv_dropdown_create`, `lv_switch_create`, `lv_slider_create`, `lv_btnmatrix_create`, `lv_obj_set_flex_flow`, `lv_obj_set_flex_align`, and `lv_obj_set_style_transform_scale` are forbidden in `main/ebin` (enforced by `layer_audit.py`). Use hierarchical `eos_open_menu()` flows instead.
 * **Modal Dialogs (Alerts, Confirms, Info)**:
   - Must use `eos_lvgl_dialog_confirm()`, `eos_lvgl_dialog_alert()`, or `eos_lvgl_dialog_info()` instead of ad-hoc custom message boxes or `lv_msgbox_create()`.
 * **Virtual Keyboards & Text Input**:
@@ -106,5 +108,43 @@ All GUI applications (`main/ebin/lvgl_*`) must use centralized EOS LVGL kernel a
   - Sizing must be configured to at least `131072` (128 KB) on ESP32-S3 boards and `262144` (256 KB) on ESP32-P4 boards (`CONFIG_LV_MEM_SIZE=131072`).
 * **Kernel & Process Dynamic Storage**:
   - Dynamic tables (process tables, file descriptors, pipe tables, cleanup hooks) utilize `kvec_psram_t` with preferred allocation in external PSRAM (`eos_psram_calloc_prefer()`), preserving DMA-capable internal SRAM for high-speed hardware transactions.
+
+---
+
+## 9. Firmware Flashing & Hardware Bootloader Recovery
+
+On devices with a single physical USB controller (e.g. ESP32-S3 on Lilka v2.3), transitioning to TinyUSB Device mode (`303a:4001`) severs the internal USB-Serial-JTAG peripheral (`303a:1001`), disconnecting OpenOCD JTAG.
+
+### 9.1 Primary Flashing Methods
+
+1. **Automated CDC-ACM Flashing (`make flash`, Primary)**:
+   - Run `make flash` (which executes [`tools/flash.py`](tools/flash.py)).
+   - When the board is running in TinyUSB Device mode (`303a:4001`), the script automatically issues a **1200-baud CDC touch** (`usb_cdc_line_coding_cb` sets `RTC_CNTL_FORCE_DOWNLOAD_BOOT` and calls `esp_restart()`), waits for the board to re-enumerate in ESP-ROM Download Mode (`303a:1001`), and flashes with `esptool --before no-reset --after watchdog-reset` (avoiding `GPIO0` strapping lockups).
+
+2. **Hardware ROM Download Mode (Manual Fallback / Recovery)**:
+   - Hold down the **BOOT** button (`GPIO0` on ESP32-S3 / `GPIO35` on ESP32-P4).
+   - Press and release the **RESET** button.
+   - Release the **BOOT** button.
+   - The ESP-ROM hardware bootloader takes ownership of the USB bus and enumerates as `303a:1001` (ROM USB-Serial-JTAG).
+   - Flash firmware using `make flash` or directly via `esptool`:
+     ```bash
+     make flash
+     # or directly via esptool:
+     python -m esptool --chip esp32s3 --before no-reset --after watchdog-reset write-flash "@build/flash_args"
+     ```
+
+2. **Runtime Software Role Switch (`usbctl`)**:
+   - If EOS is booted and running:
+     ```bash
+     usbctl role debug
+     ```
+   - This uninstalls TinyUSB and re-attaches the physical PHY to the built-in `DEBUG_USJ` peripheral (`303a:1001`), restoring OpenOCD JTAG access dynamically.
+
+3. **OpenOCD JTAG Flashing (When in `DEBUG_USJ` or ROM Mode)**:
+   - Used for JTAG programming and step debugging when the USB-Serial-JTAG interface is active:
+     ```bash
+     ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter speed 5000" -c "program_esp_bins build flasher_args.json verify reset exit"
+     ```
+
 
 

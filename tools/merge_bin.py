@@ -41,7 +41,6 @@ def merge_firmware(build_dir="build", output_path=None):
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
 
-    pad_arg = "--fill-flash-size"
     cmd = [
         sys.executable, "-m", "esptool",
         "--chip", chip,
@@ -50,7 +49,6 @@ def merge_firmware(build_dir="build", output_path=None):
         "--flash_mode", flash_mode,
         "--flash_freq", flash_freq,
         "--flash_size", flash_size,
-        pad_arg, flash_size,
     ]
 
     flash_files = cfg.get("flash_files", {})

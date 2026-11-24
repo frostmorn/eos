@@ -158,6 +158,13 @@ static bool eos_dev_is_same_device(eos_dev_t *existing, eos_dev_t *dev) {
     return (p1 == p2);
   }
 
+  // Check bus/usb: distinguished by port
+  if (strcmp(dev->driver->scope, "bus") == 0 && strcmp(dev->driver->name, "usb") == 0) {
+    int p1 = eos_cfg_get_i(existing->cfg, "port", 0);
+    int p2 = eos_cfg_get_i(dev->cfg, "port", 0);
+    return (p1 == p2);
+  }
+
   // Check storage/sd: distinguished by cs pin on SPI
   if (strcmp(dev->driver->scope, "storage") == 0 && strcmp(dev->driver->name, "sd") == 0) {
     int32_t cs1 = eos_pin_get_no(existing->pins, "cs");

@@ -98,7 +98,8 @@ build:
 
 flash:
 	@echo "Flashing device..."
-	idf.py flash
+	idf.py build
+	python3 tools/flash.py $(PORT)
 
 todo:
 	@echo "===================================================="

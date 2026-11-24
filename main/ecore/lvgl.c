@@ -2804,20 +2804,15 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
 
 lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg) {
   if (!cfg) return NULL;
-  bool is_small = eos_screen_is_compact();
-
-  if (is_small || cfg->force_fullscreen) {
-    eos_menu_cfg_t small_cfg = *cfg;
-    if (is_small) {
-      small_cfg.headerless = true; // Headerless mode on small screens
-      small_cfg.width = 0;         // Full available area by width on small screens
-      if (small_cfg.height <= 0) {
-        small_cfg.height = 0;      // Full available area by height on small screens
-      }
+  eos_menu_cfg_t menu_cfg = *cfg;
+  if (eos_screen_is_compact()) {
+    menu_cfg.headerless = true; // Headerless mode on small screens
+    menu_cfg.width = 0;         // Full available area by width on small screens
+    if (menu_cfg.height <= 0) {
+      menu_cfg.height = 0;      // Full available area by height on small screens
     }
-    return eos_menu_create(&small_cfg);
   }
-  return eos_popup_menu_create(cfg);
+  return eos_menu_create(&menu_cfg);
 }
 
 void eos_menu_close(lv_obj_t *menu) {

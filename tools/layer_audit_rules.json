@@ -882,6 +882,59 @@
         "\\blv_list_create\\b"
       ],
       "rationale": "AGENTS.md §2 & §3: Graphical applications must use centralized eos_open_menu() / eos_menu_create() instead of direct LVGL menu/list widgets."
+    },
+    {
+      "id": "init_sh_lifecycle_ordering",
+      "name": "Hardware bus & storage lifecycle ordering in board init scripts (init.sh)",
+      "type": "init_sh_lifecycle",
+      "paths": [
+        "main/eboard"
+      ],
+      "rationale": "AGENTS.md §3: Hardware buses (SDIO/SPI/I2C) and primary storage drivers must be attached before filesystems are mounted with 'mount -a', and USB mass storage backing must be attached after filesystems are mounted."
+    },
+    {
+      "id": "gui_theme_unification",
+      "name": "GUI application theme unification and contrast standards",
+      "type": "gui_theme_unification",
+      "paths": [
+        "main/ebin"
+      ],
+      "app_prefix": "lvgl_",
+      "rationale": "AGENTS.md §2 & §7: GUI applications must strictly utilize centralized theme colors (EOS_THEME_* and EOS_COLOR_* from ecore/lvgl.h) rather than declaring ad-hoc color palettes, and must not use unreadable black/dark text on dark UI containers."
+    },
+    {
+      "id": "complex_lvgl_widgets_in_ebin",
+      "name": "Ban complex/fancy LVGL widgets and transforms unsuitable for small screens in ebin",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\blv_tabview_create\\b",
+        "\\blv_tileview_create\\b",
+        "\\blv_win_create\\b",
+        "\\blv_spinbox_create\\b",
+        "\\blv_roller_create\\b",
+        "\\blv_arc_create\\b",
+        "\\blv_chart_create\\b",
+        "\\blv_calendar_create\\b",
+        "\\blv_colorwheel_create\\b",
+        "\\blv_led_create\\b",
+        "\\blv_meter_create\\b",
+        "\\blv_spinner_create\\b",
+        "\\blv_dropdown_create\\b",
+        "\\blv_switch_create\\b",
+        "\\blv_slider_create\\b",
+        "\\blv_obj_set_flex_flow\\b",
+        "\\blv_obj_set_flex_align\\b",
+        "\\blv_btnmatrix_create\\b",
+        "\\blv_obj_set_style_transform_scale\\b"
+      ],
+      "rationale": "AGENTS.md §2 & §3: Complex/fancy LVGL widgets and scale transforms are unsuitable for compact handheld screens and keyboard-only navigation; use centralized eos_open_menu() and simple standard controls."
     }
   ]
 }

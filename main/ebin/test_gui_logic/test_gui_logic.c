@@ -7,6 +7,7 @@
 #include "ebin/lvgl_backlight/backlight_logic.h"
 #include "ebin/lvgl_term/term_logic.h"
 #include "ebin/lvgl_net/net_logic.h"
+#include "ebin/lvgl_usb/usb_logic.h"
 #include "ecore/bin.h"
 
 #include <stdio.h>
@@ -191,6 +192,53 @@ static void test_net_logic(test_ctx_t *ctx) {
   report_test(ctx, "net: toast expire ms is set", net.toast_expire_ms > 0);
 }
 
+static void test_usb_logic(test_ctx_t *ctx) {
+  printf("--- USB Logic Tests ---\n");
+  char buf[TEST_GUI_BUF_SZ];
+
+  // 1. Role string formatting
+  usb_logic_format_role(EOS_USB_ROLE_DEBUG_USJ, buf, sizeof(buf));
+  report_test(ctx, "usb: format role DEBUG_USJ", strcmp(buf, "DEBUG (JTAG+CDC)") == 0);
+  usb_logic_format_role(EOS_USB_ROLE_DEVICE_COMPOSITE, buf, sizeof(buf));
+  report_test(ctx, "usb: format role DEVICE", strcmp(buf, "DEVICE (Gadgets)") == 0);
+  usb_logic_format_role(EOS_USB_ROLE_HOST, buf, sizeof(buf));
+  report_test(ctx, "usb: format role HOST", strcmp(buf, "HOST (Master)") == 0);
+  usb_logic_format_role(EOS_USB_ROLE_OFF, buf, sizeof(buf));
+  report_test(ctx, "usb: format role OFF", strcmp(buf, "OFF") == 0);
+
+  // 2. Speed string formatting
+  usb_logic_format_speed(EOS_USB_SPEED_HIGH, buf, sizeof(buf));
+  report_test(ctx, "usb: format speed HIGH", strcmp(buf, "High Speed (480M)") == 0);
+  usb_logic_format_speed(EOS_USB_SPEED_FULL, buf, sizeof(buf));
+  report_test(ctx, "usb: format speed FULL", strcmp(buf, "Full Speed (12M)") == 0);
+  usb_logic_format_speed(EOS_USB_SPEED_LOW, buf, sizeof(buf));
+  report_test(ctx, "usb: format speed LOW", strcmp(buf, "Low Speed (1.5M)") == 0);
+
+  // 3. Status string formatting
+  usb_logic_ctx_t uctx;
+  memset(&uctx, 0, sizeof(uctx));
+  uctx.active_role = EOS_USB_ROLE_DEVICE_COMPOSITE;
+  uctx.status.speed = EOS_USB_SPEED_HIGH;
+  uctx.status.vbus_present = true;
+  usb_logic_format_status(&uctx, buf, sizeof(buf));
+  report_test(ctx, "usb: format status contains role", strstr(buf, "DEVICE (Gadgets)") != NULL);
+  report_test(ctx, "usb: format status contains speed", strstr(buf, "High Speed (480M)") != NULL);
+  report_test(ctx, "usb: format status contains VBUS", strstr(buf, "VBUS: OK") != NULL);
+
+  // 4. Lifecycle init / close & device cycling
+  int rc = usb_logic_init(&uctx);
+  if (rc == 0) {
+    report_test(ctx, "usb: init opened /dev/usb0", uctx.fd >= 0);
+    int crc = usb_logic_cycle_msc_device(&uctx);
+    report_test(ctx, "usb: cycle msc device succeeds", crc == 0);
+    report_test(ctx, "usb: cycle msc device has valid backing", uctx.msc_backing[0] != '\0');
+    usb_logic_close(&uctx);
+    report_test(ctx, "usb: close reset fd to -1", uctx.fd == -1);
+  } else {
+    report_test(ctx, "usb: init failed gracefully", uctx.fd == -1);
+  }
+}
+
 int test_gui_logic_main(int argc, char **argv) {
   (void)argc;
   (void)argv;
@@ -205,6 +253,7 @@ int test_gui_logic_main(int argc, char **argv) {
   test_backlight_logic(&ctx);
   test_term_logic(&ctx);
   test_net_logic(&ctx);
+  test_usb_logic(&ctx);
 
   printf("\nGUI Logic Tests: %d passed, %d failed\n", ctx.passed, ctx.failed);
   return ctx.failed == 0 ? 0 : 1;

@@ -1076,6 +1076,145 @@ def run_rule_symbols_documented(rule):
     return violations
 
 
+def run_rule_init_sh_lifecycle(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", ["main/eboard"])
+    exclude_dirs = rule.get("exclude_dirs")
+    exclude_files = rule.get("exclude_files")
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, (".sh",), exclude_dirs, exclude_files):
+        if not filepath.endswith("init.sh"):
+            continue
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+            continue
+
+        mount_lines = []
+        bus_lines = []
+        storage_lines = []
+        msc_lines = []
+
+        for idx, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if stripped.startswith("mount"):
+                mount_lines.append((idx, stripped))
+            elif stripped.startswith("devctl attach bus"):
+                bus_lines.append((idx, stripped))
+            elif stripped.startswith("devctl attach storage"):
+                storage_lines.append((idx, stripped))
+            elif stripped.startswith("devctl attach usb msc"):
+                msc_lines.append((idx, stripped))
+
+        if not mount_lines:
+            print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}")
+            print(f"    Missing 'mount -a' command in board startup script")
+            violations += 1
+            continue
+
+        first_mount_line, first_mount_cmd = mount_lines[0]
+
+        # 1. Hardware bus attachments must precede mount
+        for b_line, b_cmd in bus_lines:
+            if b_line > first_mount_line:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{b_line}")
+                print(f"    Hardware bus attached after mount at line {first_mount_line}: '{b_cmd}'")
+                violations += 1
+
+        # 2. Primary storage attachments must precede mount -a
+        for s_line, s_cmd in storage_lines:
+            if s_line > first_mount_line:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{s_line}")
+                print(f"    Storage attached after mount at line {first_mount_line}: '{s_cmd}'")
+                violations += 1
+
+        # 3. USB MSC attachment must follow mount -a
+        for m_line, m_cmd in msc_lines:
+            if m_line < first_mount_line:
+                print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{m_line}")
+                print(f"    USB mass storage attached before mount at line {first_mount_line}: '{m_cmd}'")
+                violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All board init.sh scripts adhere to bus -> storage -> mount -> usb_msc lifecycle order.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} init script lifecycle violation(s).")
+    return violations
+
+
+def run_rule_gui_theme_unification(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", ["main/ebin"])
+    prefix = rule.get("app_prefix", "lvgl_")
+    exclude_dirs = rule.get("exclude_dirs")
+    exclude_files = rule.get("exclude_files")
+
+    ad_hoc_color_re = re.compile(
+        r"^\s*#\s*define\s+([A-Za-z0-9_]*(?:COLOR|COL)[A-Za-z0-9_]*)\s+(0x[0-9a-fA-F]+|\d+)\b"
+    )
+    dark_text_color_re = re.compile(
+        r"lv_obj_set_style_text_color\([^,]+,\s*(?:lv_color_hex\((0x[0-9a-fA-F]+)\)|lv_color_black\(\))"
+    )
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+    for filepath in iter_target_files(paths, (".c", ".h"), exclude_dirs, exclude_files):
+        norm = filepath.replace("\\", "/")
+        if not any(f"/{prefix}" in norm or norm.startswith(f"main/ebin/{prefix}") for _ in [1]):
+            continue
+
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
+            continue
+
+        for idx, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("//", "/*", "*")):
+                continue
+
+            m_col = ad_hoc_color_re.match(stripped)
+            if m_col:
+                macro_name = m_col.group(1)
+                macro_val = m_col.group(2)
+                if not macro_name.endswith("_COLS") and not macro_name.endswith("_COUNT"):
+                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                    print(f"    Ad-hoc color macro '#define {macro_name} {macro_val}' violates theme unification; use EOS_THEME_* or EOS_COLOR_* from ecore/lvgl.h")
+                    violations += 1
+
+            m_dark = dark_text_color_re.search(stripped)
+            if m_dark:
+                hex_str = m_dark.group(1)
+                if hex_str:
+                    val = int(hex_str, 16)
+                    r = (val >> 16) & 0xFF
+                    g = (val >> 8) & 0xFF
+                    b = val & 0xFF
+                    brightness = 0.299 * r + 0.587 * g + 0.114 * b
+                    if brightness < 60:
+                        print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                        print(f"    Low contrast / dark text color ({hex_str}, brightness {brightness:.1f}) produces unreadable black text on dark surfaces")
+                        violations += 1
+                else:
+                    print(f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx}")
+                    print(f"    lv_color_black() text color produces unreadable black text on dark surfaces")
+                    violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] All GUI ({prefix}*) applications follow centralized theme and high-contrast text rules.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} GUI theme unification violation(s).")
+    return violations
+
+
 DISPATCHER = {
     "forbidden_patterns": run_rule_forbidden_patterns,
     "max_pattern_occurrences_per_file": run_rule_max_pattern_occurrences_per_file,
@@ -1096,6 +1235,8 @@ DISPATCHER = {
     "filesystem_structure": run_rule_filesystem_structure,
     "required_patterns": run_rule_required_patterns,
     "gui_logic_separation": run_rule_gui_logic_separation,
+    "init_sh_lifecycle": run_rule_init_sh_lifecycle,
+    "gui_theme_unification": run_rule_gui_theme_unification,
 }
 
 
