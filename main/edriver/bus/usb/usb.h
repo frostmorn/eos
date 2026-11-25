@@ -13,6 +13,7 @@
 #define EOS_USB_BUS_BUFFER_SIZE         2048
 #define EOS_USB_BUS_TIMEOUT_MS          1000
 #define EOS_USB_DEFAULT_PORT            0
+#define EOS_USB_DISCONNECT_SETTLE_MS    50
 #define EOS_USB_MAX_CHILDREN            8
 #define EOS_USB_DEFAULT_VID             0x303A
 #define EOS_USB_DEFAULT_PID             0x4001
@@ -37,7 +38,7 @@ typedef struct {
   uint32_t          child_count;
   uint8_t          *bulk_buf;
   size_t            bulk_buf_len;
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t bus_mutex;
   bool              hw_initialized;
   bool              tusb_initialized;
   void             *phy_handle;

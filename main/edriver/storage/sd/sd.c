@@ -29,6 +29,7 @@ typedef struct {
   spi_host_device_t host;
   eos_part_table_t part_table;
   off_t offset; // sector-based
+  SemaphoreHandle_t io_mutex; // serializes seek + sector I/O on card
 } sd_state_t;
 
 // ── Init / Shutdown ───────────────────────────────────────────
@@ -130,6 +131,12 @@ bool driver_storage_sd_init(eos_dev_t *dev) {
     return false;
   memset(state, 0, sizeof(sd_state_t));
   dev->state = state;
+  state->io_mutex = xSemaphoreCreateMutex();
+  if (!state->io_mutex) {
+    free(state);
+    dev->state = NULL;
+    return false;
+  }
 
   bool is_sdio = false;
   if (dev->parent && dev->parent->driver &&
@@ -192,6 +199,8 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
   // Cleanup
   if (state->io_buff)
     free(state->io_buff);
+  if (state->io_mutex)
+    vSemaphoreDelete(state->io_mutex);
 
   free(state);
   dev->state = NULL;
@@ -200,6 +209,7 @@ void driver_storage_sd_shutdown(eos_dev_t *dev) {
 // ── IO — raw block operations ─────────────────────────────────
 
 int driver_storage_sd_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
+  (void)fd;
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -214,14 +224,17 @@ int driver_storage_sd_read(eos_dev_t *dev, int fd, void *buf, size_t len) {
 
   size_t cntsectors = len / sector_size;
 
-  if (ESP_OK !=
-      sdmmc_read_sectors(&state->card, buf, state->offset, cntsectors))
+  if (state->io_mutex) xSemaphoreTake(state->io_mutex, portMAX_DELAY);
+  esp_err_t err = sdmmc_read_sectors(&state->card, buf, state->offset, cntsectors);
+  if (state->io_mutex) xSemaphoreGive(state->io_mutex);
+  if (err != ESP_OK)
     return -1;
 
   return len;
 }
 
 int driver_storage_sd_write(eos_dev_t *dev, int fd, const void *buf, size_t len) {
+  (void)fd;
   sd_state_t *state = dev->state;
   if (!state)
     return -1;
@@ -235,7 +248,9 @@ int driver_storage_sd_write(eos_dev_t *dev, int fd, const void *buf, size_t len)
 
   size_t cntsectors = len / sector_size;
 
+  if (state->io_mutex) xSemaphoreTake(state->io_mutex, portMAX_DELAY);
   esp_err_t err = sdmmc_write_sectors(&state->card, buf, state->offset, cntsectors);
+  if (state->io_mutex) xSemaphoreGive(state->io_mutex);
   if (err != ESP_OK) {
     EOS_LOGE("sd_write: sdmmc_write_sectors failed: %s (0x%x) offset=%lld, cnt=%zu",
              esp_err_to_name(err), err, (long long)state->offset, cntsectors);
@@ -246,6 +261,7 @@ int driver_storage_sd_write(eos_dev_t *dev, int fd, const void *buf, size_t len)
 }
 
 off_t driver_storage_sd_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
+  (void)fd;
   sd_state_t *state = dev->state;
 
   if (!state) {
@@ -253,91 +269,87 @@ off_t driver_storage_sd_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) 
     return BAD_OFFSET;
   }
 
+  if (state->io_mutex) xSemaphoreTake(state->io_mutex, portMAX_DELAY);
   off_t max_offset = (off_t)state->card.csd.capacity;
-
-//  EOS_LOGI("sd_lseek: offset=%lld whence=%d capacity=%lu sector_size=%lu "
-//           "max_offset=%lld",
-//           (long long)offset, whence, (unsigned long)state->card.csd.capacity,
-//           (unsigned long)state->card.csd.sector_size, (long long)max_offset);
+  off_t res = BAD_OFFSET;
 
   switch (whence) {
   case SEEK_SET: {
-    if (offset >= 0 && offset <= max_offset)
+    if (offset >= 0 && offset <= max_offset) {
       state->offset = offset;
-    else
-      // TODO: errno setup?
-      return BAD_OFFSET;
-
-    return state->offset;
-  }
-  case SEEK_CUR: {
-    off_t new_offset = state->offset + offset;
-
-    // Scroll back available, huh?
-    if (new_offset >= 0 && new_offset <= max_offset)
-      state->offset = new_offset;
-    else
-      // TODO: errno setup?
-      return BAD_OFFSET;
-
-    return state->offset;
-  }
-  case SEEK_END: {
-    off_t new_offset = max_offset + offset;
-
-    if (new_offset >= 0 && new_offset <= max_offset)
-      state->offset = new_offset;
-    else
-      return BAD_OFFSET;
-
-    return state->offset;
-  }
-
-  // Note: Other whences?
-  default: {
-    errno = EINVAL;
-    return BAD_OFFSET;
-  }
-  }
-}
-
-int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
-  sd_state_t *state = dev->state;
-
-  int ret = 0;
-
-  switch (cmd) {
-  case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE:{
-    uint32_t *sector_size = va_arg(args, uint32_t *);
-    *sector_size = state->card.csd.sector_size;
-    break;
-  }
-  case EOS_STORAGE_IOCTL_GET_CAPACITY:{
-    uint32_t *capacity = va_arg(args, uint32_t *);
-    *capacity = state->card.csd.capacity;
-    break;
-  }
-  case EOS_STORAGE_IOCTL_MOUNT:{
-    const char *path = va_arg(args, const char *);
-    (void)path;
-    bool *result = va_arg(args, bool *);
-    *result = false; // Not mountable
-    break;
-  }
-  case EOS_STORAGE_IOCTL_UMOUNT:{
-    bool *result = va_arg(args, bool *);
-    *result = false; // Nothing to unmount
-    break;
-  }
-  case EOS_STORAGE_IOCTL_GET_CARD:{
-    void **card_ptr = va_arg(args, void **);
-    if (card_ptr) {
-      *card_ptr = &state->card;
+      res = state->offset;
     }
     break;
   }
+  case SEEK_CUR: {
+    off_t new_offset = state->offset + offset;
+    if (new_offset >= 0 && new_offset <= max_offset) {
+      state->offset = new_offset;
+      res = state->offset;
+    }
+    break;
   }
-  return ret;
+  case SEEK_END: {
+    off_t new_offset = max_offset + offset;
+    if (new_offset >= 0 && new_offset <= max_offset) {
+      state->offset = new_offset;
+      res = state->offset;
+    }
+    break;
+  }
+  default:
+    errno = EINVAL;
+    break;
+  }
+  if (state->io_mutex) xSemaphoreGive(state->io_mutex);
+  return res;
+}
+
+int driver_storage_sd_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
+  (void)fd;
+  sd_state_t *state = dev ? dev->state : NULL;
+  if (!state) {
+    errno = EINVAL;
+    return -1;
+  }
+
+  switch (cmd) {
+  case EOS_STORAGE_IOCTL_GET_SECTOR_SIZE: {
+    uint32_t *sector_size = va_arg(args, uint32_t *);
+    if (!sector_size) { errno = EINVAL; return -1; }
+    *sector_size = state->card.csd.sector_size;
+    return 0;
+  }
+  case EOS_STORAGE_IOCTL_GET_CAPACITY: {
+    uint32_t *capacity = va_arg(args, uint32_t *);
+    if (!capacity) { errno = EINVAL; return -1; }
+    *capacity = state->card.csd.capacity;
+    return 0;
+  }
+  case EOS_STORAGE_IOCTL_MOUNT: {
+    const char *path = va_arg(args, const char *);
+    (void)path;
+    bool *result = va_arg(args, bool *);
+    if (!result) { errno = EINVAL; return -1; }
+    *result = false; // Not mountable
+    return 0;
+  }
+  case EOS_STORAGE_IOCTL_UMOUNT: {
+    bool *result = va_arg(args, bool *);
+    if (!result) { errno = EINVAL; return -1; }
+    *result = false; // Nothing to unmount
+    return 0;
+  }
+  case EOS_STORAGE_IOCTL_GET_CARD: {
+    void **card_ptr = va_arg(args, void **);
+    if (!card_ptr) { errno = EINVAL; return -1; }
+    *card_ptr = &state->card;
+    return 0;
+  }
+  default:
+    errno = ENOTTY;
+    return -1;
+  }
 }
 
 EOS_DRV_ATTR eos_drv_t driver_storage_sd = {

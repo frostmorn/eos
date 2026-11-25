@@ -28,7 +28,7 @@ static int subcmd_status(int argc, char **argv, int fd) {
   if (st.active_role == EOS_USB_ROLE_HOST) {
     role_str = "HOST (Master)";
   } else if (st.active_role == EOS_USB_ROLE_DEVICE_COMPOSITE) {
-    role_str = "DEVICE (Composite Gadgets)";
+    role_str = "Composite Device";
   } else if (st.active_role == EOS_USB_ROLE_DEBUG_USJ) {
     role_str = "DEBUG_USJ (JTAG+CDC Console)";
   } else if (st.active_role == EOS_USB_ROLE_OFF) {
@@ -50,7 +50,7 @@ static int subcmd_status(int argc, char **argv, int fd) {
   printf("  Speed:      %s\n", speed_str);
   printf("  VBUS:       %s\n", st.vbus_present ? "Present" : "Absent");
   printf("  Host Dev:   %s\n", st.host_device_connected ? "Connected" : "None");
-  printf("  Gadgets:    0x%02lx (SERIAL:%s, MODEM:%s, MSC:%s)\n",
+  printf("  Functions:  0x%02lx (SERIAL:%s, MODEM:%s, MSC:%s)\n",
          (unsigned long)st.gadget_funcs_enabled,
          (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_SERIAL) ? "ON" : "OFF",
          (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MODEM) ? "ON" : "OFF",
@@ -85,7 +85,7 @@ static int subcmd_role(int argc, char **argv, int fd) {
   } else if (strcmp(target, "off") == 0) {
     new_role = EOS_USB_ROLE_OFF;
   } else {
-    fprintf(stderr, "usbctl: unknown role '%s' (use debug, device, host, or off)\n", target);
+    fprintf(stderr, "usbctl: unknown role '%s' (use debug, composite, host, or off)\n", target);
     return 1;
   }
 
@@ -104,7 +104,7 @@ static int subcmd_funcs(int argc, char **argv, int fd) {
       perror("usbctl: ioctl GADGET_GET_FUNCS failed");
       return 1;
     }
-    printf("Gadget Functions Mask: 0x%02lx\n", (unsigned long)mask);
+    printf("USB Functions Mask: 0x%02lx\n", (unsigned long)mask);
     return 0;
   }
 

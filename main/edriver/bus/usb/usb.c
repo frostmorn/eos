@@ -44,6 +44,17 @@ static void usb_cdc_line_coding_cb(int itf, cdcacm_event_t *event) {
 static void usb_bus_teardown_hw(eos_usb_bus_state_t *st) {
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32P4)
   if (st->tusb_initialized) {
+    tud_disconnect();
+    vTaskDelay(pdMS_TO_TICKS(EOS_USB_DISCONNECT_SETTLE_MS));
+    eos_dev_t *msc_dev = eos_dev_find_by_name("usb_msc0");
+    if (msc_dev) {
+      char saved_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+      strncpy(saved_path, st->msc_backing_dev, sizeof(saved_path) - 1);
+      saved_path[sizeof(saved_path) - 1] = '\0';
+      eos_dev_ioctl(msc_dev, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, "");
+      strncpy(st->msc_backing_dev, saved_path, sizeof(st->msc_backing_dev) - 1);
+      st->msc_backing_dev[sizeof(st->msc_backing_dev) - 1] = '\0';
+    }
 #if CONFIG_TINYUSB_CDC_ENABLED
     if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0)) {
       tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_0);
@@ -71,7 +82,7 @@ static void usb_bus_teardown_hw(eos_usb_bus_state_t *st) {
 #endif
 }
 
-static void usb_bus_apply_host(eos_usb_bus_state_t *st) {
+static bool usb_bus_apply_host(eos_usb_bus_state_t *st) {
   st->vbus_present = true;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   st->speed = (st->port_id == 1) ? EOS_USB_SPEED_HIGH : EOS_USB_SPEED_FULL;
@@ -93,15 +104,72 @@ static void usb_bus_apply_host(eos_usb_bus_state_t *st) {
       .otg_io_conf = NULL,
   };
   usb_phy_handle_t h = NULL;
-  if (usb_new_phy(&phy_conf, &h) == ESP_OK) {
-    st->phy_handle = h;
-    st->hw_initialized = true;
+  esp_err_t err = usb_new_phy(&phy_conf, &h);
+  if (err != ESP_OK) {
+    EOS_LOGE("usb%u: host PHY init failed: %s (%d)",
+             (unsigned int)st->port_id, esp_err_to_name(err), (int)err);
+    st->vbus_present = false;
+    return false;
   }
+  st->phy_handle = h;
 #endif
-  EOS_LOGI("usb%u: switched to HOST mode", (unsigned int)st->port_id);
+  st->hw_initialized = true;
+  EOS_LOGI("usb%u: switched to HOST PHY mode", (unsigned int)st->port_id);
+  return true;
 }
 
-static void usb_bus_apply_composite(eos_usb_bus_state_t *st) {
+#if CONFIG_TINYUSB_CDC_ENABLED || CONFIG_TINYUSB_MSC_ENABLED
+static void usb_bus_init_tusb_classes(eos_usb_bus_state_t *st) {
+#if CONFIG_TINYUSB_CDC_ENABLED
+  const tinyusb_config_cdcacm_t acm_cfg = {
+      .cdc_port = TINYUSB_CDC_ACM_0,
+      .callback_rx = NULL,
+      .callback_rx_wanted_char = NULL,
+      .callback_line_state_changed = NULL,
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+      .callback_line_coding_changed = usb_cdc_line_coding_cb,
+#else
+      .callback_line_coding_changed = NULL,
+#endif
+  };
+  esp_err_t cdc_err = tinyusb_cdcacm_init(&acm_cfg);
+  if (cdc_err != ESP_OK) {
+    EOS_LOGW("usb%u: tinyusb_cdcacm_init(0) failed: %s", (unsigned int)st->port_id, esp_err_to_name(cdc_err));
+  }
+#if CONFIG_TINYUSB_CDC_COUNT > 1
+  const tinyusb_config_cdcacm_t acm1_cfg = {
+      .cdc_port = TINYUSB_CDC_ACM_1,
+      .callback_rx = NULL,
+      .callback_rx_wanted_char = NULL,
+      .callback_line_state_changed = NULL,
+      .callback_line_coding_changed = NULL,
+  };
+  cdc_err = tinyusb_cdcacm_init(&acm1_cfg);
+  if (cdc_err != ESP_OK) {
+    EOS_LOGW("usb%u: tinyusb_cdcacm_init(1) failed: %s", (unsigned int)st->port_id, esp_err_to_name(cdc_err));
+  }
+#endif
+#endif
+#if CONFIG_TINYUSB_MSC_ENABLED
+  const tinyusb_msc_driver_config_t msc_cfg = {
+      .user_flags = { .auto_mount_off = 1 },
+      .callback = NULL,
+      .callback_arg = NULL,
+  };
+  esp_err_t msc_err = tinyusb_msc_install_driver(&msc_cfg);
+  if (msc_err != ESP_OK) {
+    EOS_LOGW("usb%u: tinyusb_msc_install_driver failed: %s", (unsigned int)st->port_id, esp_err_to_name(msc_err));
+  } else {
+    eos_dev_t *msc_dev = eos_dev_find_by_name("usb_msc0");
+    if (msc_dev && st->msc_backing_dev[0] != '\0') {
+      eos_dev_ioctl(msc_dev, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, st->msc_backing_dev);
+    }
+  }
+#endif
+}
+#endif
+
+static bool usb_bus_apply_composite(eos_usb_bus_state_t *st) {
   st->vbus_present = true;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   st->speed = (st->port_id == 1) ? EOS_USB_SPEED_HIGH : EOS_USB_SPEED_FULL;
@@ -142,43 +210,16 @@ static void usb_bus_apply_composite(eos_usb_bus_state_t *st) {
     if (err == ESP_OK) {
       st->tusb_initialized = true;
       st->hw_initialized = true;
-#if CONFIG_TINYUSB_CDC_ENABLED
-      const tinyusb_config_cdcacm_t acm_cfg = {
-          .cdc_port = TINYUSB_CDC_ACM_0,
-          .callback_rx = NULL,
-          .callback_rx_wanted_char = NULL,
-          .callback_line_state_changed = NULL,
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-          .callback_line_coding_changed = usb_cdc_line_coding_cb,
-#else
-          .callback_line_coding_changed = NULL,
-#endif
-      };
-      tinyusb_cdcacm_init(&acm_cfg);
-#if CONFIG_TINYUSB_CDC_COUNT > 1
-      const tinyusb_config_cdcacm_t acm1_cfg = {
-          .cdc_port = TINYUSB_CDC_ACM_1,
-          .callback_rx = NULL,
-          .callback_rx_wanted_char = NULL,
-          .callback_line_state_changed = NULL,
-          .callback_line_coding_changed = NULL,
-      };
-      tinyusb_cdcacm_init(&acm1_cfg);
-#endif
-#endif
-#if CONFIG_TINYUSB_MSC_ENABLED
-      const tinyusb_msc_driver_config_t msc_cfg = {
-          .user_flags = { .auto_mount_off = 1 },
-          .callback = NULL,
-          .callback_arg = NULL,
-      };
-      tinyusb_msc_install_driver(&msc_cfg);
+#if CONFIG_TINYUSB_CDC_ENABLED || CONFIG_TINYUSB_MSC_ENABLED
+      usb_bus_init_tusb_classes(st);
 #endif
       EOS_LOGI("usb%u: TinyUSB composite device initialized on port %u",
                (unsigned int)st->port_id, (unsigned int)tusb_port);
     } else {
       EOS_LOGE("usb%u: tinyusb_driver_install failed: %s (%d)",
                (unsigned int)st->port_id, esp_err_to_name(err), (int)err);
+      st->vbus_present = false;
+      return false;
     }
   } else {
     usb_phy_config_t phy_conf = {
@@ -190,17 +231,25 @@ static void usb_bus_apply_composite(eos_usb_bus_state_t *st) {
         .otg_io_conf = NULL,
     };
     usb_phy_handle_t h = NULL;
-    if (usb_new_phy(&phy_conf, &h) == ESP_OK) {
-      st->phy_handle = h;
-      st->hw_initialized = true;
+    esp_err_t err = usb_new_phy(&phy_conf, &h);
+    if (err != ESP_OK) {
+      EOS_LOGE("usb%u: composite PHY init failed: %s (%d)",
+               (unsigned int)st->port_id, esp_err_to_name(err), (int)err);
+      st->vbus_present = false;
+      return false;
     }
+    st->phy_handle = h;
+    st->hw_initialized = true;
   }
+#else
+  st->hw_initialized = true;
 #endif
   EOS_LOGI("usb%u: switched to COMPOSITE GADGET mode (gadgets: 0x%lx)",
            (unsigned int)st->port_id, (unsigned long)st->gadget_funcs_enabled);
+  return true;
 }
 
-static void usb_bus_apply_debug(eos_usb_bus_state_t *st) {
+static bool usb_bus_apply_debug(eos_usb_bus_state_t *st) {
   st->vbus_present = true;
   st->speed = EOS_USB_SPEED_FULL;
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -213,36 +262,52 @@ static void usb_bus_apply_debug(eos_usb_bus_state_t *st) {
       .otg_io_conf = NULL,
   };
   usb_phy_handle_t h = NULL;
-  if (usb_new_phy(&phy_conf, &h) == ESP_OK) {
-    st->phy_handle = h;
-    st->hw_initialized = true;
+  esp_err_t err = usb_new_phy(&phy_conf, &h);
+  if (err != ESP_OK) {
+    EOS_LOGE("usb%u: debug PHY init failed: %s (%d)",
+             (unsigned int)st->port_id, esp_err_to_name(err), (int)err);
+    st->vbus_present = false;
+    return false;
   }
+  st->phy_handle = h;
 #endif
+  st->hw_initialized = true;
   EOS_LOGI("usb%u: switched to JTAG+CDC DEBUG mode (303a:1001)", (unsigned int)st->port_id);
+  return true;
 }
 
-static void usb_bus_apply_off(eos_usb_bus_state_t *st) {
+static bool usb_bus_apply_off(eos_usb_bus_state_t *st) {
   st->vbus_present = false;
   st->speed = EOS_USB_SPEED_UNKNOWN;
+  st->hw_initialized = true;
   EOS_LOGI("usb%u: switched to OFF mode", (unsigned int)st->port_id);
+  return true;
 }
 
-static void usb_bus_apply_role(eos_usb_bus_state_t *st, eos_usb_role_t new_role) {
+static bool usb_bus_apply_role(eos_usb_bus_state_t *st, eos_usb_role_t new_role) {
   if (st->role == new_role && st->hw_initialized) {
-    return;
+    return true;
   }
-  st->role = new_role;
+  eos_usb_role_t prev_role = st->role;
   usb_bus_teardown_hw(st);
+  st->role = new_role;
 
+  bool ok = false;
   if (st->role == EOS_USB_ROLE_HOST) {
-    usb_bus_apply_host(st);
+    ok = usb_bus_apply_host(st);
   } else if (st->role == EOS_USB_ROLE_DEVICE_COMPOSITE) {
-    usb_bus_apply_composite(st);
+    ok = usb_bus_apply_composite(st);
   } else if (st->role == EOS_USB_ROLE_DEBUG_USJ) {
-    usb_bus_apply_debug(st);
+    ok = usb_bus_apply_debug(st);
   } else {
-    usb_bus_apply_off(st);
+    ok = usb_bus_apply_off(st);
   }
+
+  if (!ok) {
+    st->role = prev_role;
+    st->hw_initialized = false;
+  }
+  return ok;
 }
 
 // ── Dev Operations ───────────────────────────────────────────
@@ -255,8 +320,8 @@ bool driver_bus_usb_init(eos_dev_t *dev) {
   memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->bus_mutex = xSemaphoreCreateRecursiveMutex();
+  if (!st->bus_mutex) {
     free(st);
     dev->state = NULL;
     return false;
@@ -301,36 +366,14 @@ void driver_bus_usb_shutdown(eos_dev_t *dev) {
     return;
   }
   eos_usb_bus_state_t *st = (eos_usb_bus_state_t *)dev->state;
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32P4)
-  if (st->tusb_initialized) {
-#if CONFIG_TINYUSB_CDC_ENABLED
-    if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0)) {
-      tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_0);
-    }
-#if CONFIG_TINYUSB_CDC_COUNT > 1
-    if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_1)) {
-      tinyusb_cdcacm_deinit(TINYUSB_CDC_ACM_1);
-    }
-#endif
-#endif
-#if CONFIG_TINYUSB_MSC_ENABLED
-    tinyusb_msc_uninstall_driver();
-#endif
-    tinyusb_driver_uninstall();
-    st->tusb_initialized = false;
-  }
-  if (st->phy_handle) {
-    usb_del_phy((usb_phy_handle_t)st->phy_handle);
-    st->phy_handle = NULL;
-  }
-#endif
+  usb_bus_teardown_hw(st);
   if (st->bulk_buf) {
     free(st->bulk_buf);
     st->bulk_buf = NULL;
   }
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->bus_mutex) {
+    vSemaphoreDelete(st->bus_mutex);
+    st->bus_mutex = NULL;
   }
   free(st);
   dev->state = NULL;
@@ -404,7 +447,7 @@ ssize_t driver_bus_usb_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
   eos_usb_bus_state_t *st = (eos_usb_bus_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
 
   size_t to_copy = (size < st->bulk_buf_len) ? size : st->bulk_buf_len;
   if (to_copy > 0 && st->bulk_buf) {
@@ -414,7 +457,7 @@ ssize_t driver_bus_usb_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     to_copy = 0;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGiveRecursive(st->bus_mutex);
   return (ssize_t)to_copy;
 }
 
@@ -425,7 +468,7 @@ ssize_t driver_bus_usb_write(eos_dev_t *dev, int fd, const void *data, size_t si
     return -1;
   }
   eos_usb_bus_state_t *st = (eos_usb_bus_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
 
   size_t to_copy = (size < st->bulk_buf_len) ? size : st->bulk_buf_len;
   if (to_copy > 0 && st->bulk_buf) {
@@ -435,7 +478,7 @@ ssize_t driver_bus_usb_write(eos_dev_t *dev, int fd, const void *data, size_t si
     to_copy = 0;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGiveRecursive(st->bus_mutex);
   return (ssize_t)to_copy;
 }
 
@@ -451,9 +494,13 @@ static int usb_bus_ioctl_role_status(eos_usb_bus_state_t *st, int cmd, va_list a
   }
   if (cmd == EOS_USB_IOCTL_SET_ROLE) {
     eos_usb_role_t new_role = (eos_usb_role_t)va_arg(args, int);
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
-    usb_bus_apply_role(st, new_role);
-    xSemaphoreGive(st->mutex);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
+    bool ok = usb_bus_apply_role(st, new_role);
+    xSemaphoreGiveRecursive(st->bus_mutex);
+    if (!ok) {
+      errno = EIO;
+      return -1;
+    }
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_GET_STATUS) {
@@ -462,7 +509,7 @@ static int usb_bus_ioctl_role_status(eos_usb_bus_state_t *st, int cmd, va_list a
       errno = EINVAL;
       return -1;
     }
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     out_st->port_id = st->port_id;
     out_st->active_role = st->role;
     out_st->speed = st->speed;
@@ -473,7 +520,7 @@ static int usb_bus_ioctl_role_status(eos_usb_bus_state_t *st, int cmd, va_list a
     out_st->msc_backing_dev[sizeof(out_st->msc_backing_dev) - 1] = '\0';
     out_st->rx_bytes = st->rx_bytes;
     out_st->tx_bytes = st->tx_bytes;
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   errno = ENOSYS;
@@ -483,9 +530,9 @@ static int usb_bus_ioctl_role_status(eos_usb_bus_state_t *st, int cmd, va_list a
 static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) {
   if (cmd == EOS_USB_IOCTL_GADGET_SET_FUNCS) {
     uint32_t funcs = va_arg(args, uint32_t);
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     st->gadget_funcs_enabled = funcs;
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_GADGET_GET_FUNCS) {
@@ -503,10 +550,17 @@ static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) 
       errno = EINVAL;
       return -1;
     }
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
+    bool changed = (strcmp(st->msc_backing_dev, msc_path) != 0);
     strncpy(st->msc_backing_dev, msc_path, sizeof(st->msc_backing_dev) - 1);
     st->msc_backing_dev[sizeof(st->msc_backing_dev) - 1] = '\0';
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
+    if (changed) {
+      eos_dev_t *msc_dev = eos_dev_find_by_name("usb_msc0");
+      if (msc_dev) {
+        eos_dev_ioctl(msc_dev, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, msc_path);
+      }
+    }
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_GADGET_GET_MSC_DEV) {
@@ -515,10 +569,10 @@ static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) 
       errno = EINVAL;
       return -1;
     }
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     strncpy(out_path, st->msc_backing_dev, EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1);
     out_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1] = '\0';
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   errno = ENOSYS;
@@ -527,7 +581,7 @@ static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) 
 
 static int usb_bus_ioctl_host(eos_usb_bus_state_t *st, int cmd, va_list args) {
   if (cmd == EOS_USB_IOCTL_HOST_ENUM) {
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     if (st->role == EOS_USB_ROLE_HOST) {
       st->host_device_connected = true;
       st->host_devs.count = 1;
@@ -537,13 +591,13 @@ static int usb_bus_ioctl_host(eos_usb_bus_state_t *st, int cmd, va_list args) {
       st->host_devs.devices[0].speed = EOS_USB_SPEED_FULL;
       strncpy(st->host_devs.devices[0].class_name, "storage", sizeof(st->host_devs.devices[0].class_name) - 1);
     }
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_HOST_RESET_PORT) {
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     st->host_port_resets++;
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_HOST_GET_DEV_LIST) {
@@ -552,9 +606,9 @@ static int usb_bus_ioctl_host(eos_usb_bus_state_t *st, int cmd, va_list args) {
       errno = EINVAL;
       return -1;
     }
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+    xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     memcpy(out_list, &st->host_devs, sizeof(eos_usb_host_dev_list_t));
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   errno = ENOSYS;

@@ -7,11 +7,11 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 enum {
-  ACT_PORT = 1,
-  ACT_ROLE,
+  ACT_ROLE = 1,
   ACT_GADGETS,
   ACT_MSC_CYCLE,
   ACT_DIAG,
@@ -32,6 +32,9 @@ enum {
 typedef struct {
   usb_logic_ctx_t logic;
   usb_menu_page_t page;
+  usb_menu_page_t last_page;
+  int port_focus;
+  int root_focus;
   lv_obj_t *menu;
   eos_menu_item_t items[EOS_LVGL_USB_MAX_ITEMS];
   char details[EOS_LVGL_USB_MAX_ITEMS][EOS_LINE_STR_LEN];
@@ -47,7 +50,7 @@ static const char *role_label(eos_usb_role_t role) {
   case EOS_USB_ROLE_DEBUG_USJ:
     return "JTAG + CDC";
   case EOS_USB_ROLE_DEVICE_COMPOSITE:
-    return "Gadgets";
+    return "Composite";
   case EOS_USB_ROLE_HOST:
     return "Host";
   default:
@@ -80,8 +83,11 @@ static void menu_cancel_cb(eos_menu_t *menu, void *user_data) {
   (void)menu;
   usb_ui_t *ui = (usb_ui_t *)user_data;
   if (!ui) return;
-  if (ui->page == USB_MENU_ROOT) {
+  if (ui->page == USB_MENU_PORT || (ui->page == USB_MENU_ROOT && !ui->has_port1)) {
     ui->quit = true;
+  } else if (ui->page == USB_MENU_ROOT) {
+    ui->page = USB_MENU_PORT;
+    ui->rebuild_pending = true;
   } else {
     ui->page = USB_MENU_ROOT;
     ui->rebuild_pending = true;
@@ -89,11 +95,21 @@ static void menu_cancel_cb(eos_menu_t *menu, void *user_data) {
 }
 
 static void handle_root_select(usb_ui_t *ui, int id) {
-  if (id == ACT_PORT) ui->page = USB_MENU_PORT;
-  else if (id == ACT_ROLE) ui->page = USB_MENU_ROLE;
+  if (id == ACT_ROLE) ui->page = USB_MENU_ROLE;
   else if (id == ACT_GADGETS) ui->page = USB_MENU_GADGETS;
   else if (id == ACT_MSC_CYCLE) usb_logic_cycle_msc_device(&ui->logic);
   else if (id == ACT_DIAG) ui->page = USB_MENU_DIAG;
+  ui->rebuild_pending = true;
+}
+
+static void handle_port_select(usb_ui_t *ui, int id) {
+  if (id == ACT_SET_PORT0) {
+    usb_logic_select_dev(&ui->logic, "/dev/usb0");
+  } else if (id == ACT_SET_PORT1) {
+    usb_logic_select_dev(&ui->logic, "/dev/usb1");
+  }
+  ui->page = USB_MENU_ROOT;
+  ui->root_focus = 0;
   ui->rebuild_pending = true;
 }
 
@@ -111,13 +127,9 @@ static void handle_sub_select(usb_ui_t *ui, int id) {
   } else if (id == ACT_TOGGLE_MSC) {
     bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) == 0;
     usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_MSC, en);
-  } else if (id == ACT_SET_PORT0) usb_logic_select_dev(&ui->logic, "/dev/usb0");
-  else if (id == ACT_SET_PORT1) usb_logic_select_dev(&ui->logic, "/dev/usb1");
-  else if (id == ACT_TEST_CDC) {
-    ui->logic.last_test_modem_valid = false;
+  } else if (id == ACT_TEST_CDC) {
     usb_logic_run_serial_echo(&ui->logic);
   } else if (id == ACT_TEST_MODEM) {
-    ui->logic.last_test_serial_valid = false;
     usb_logic_run_modem_ping(&ui->logic, "ATI");
   } else if (id == ACT_REFRESH) {
     usb_logic_refresh(&ui->logic);
@@ -129,7 +141,9 @@ static void menu_select_cb(eos_menu_t *menu, int item_id, void *user_data) {
   (void)menu;
   usb_ui_t *ui = (usb_ui_t *)user_data;
   if (!ui) return;
-  if (ui->page == USB_MENU_ROOT) {
+  if (ui->page == USB_MENU_PORT) {
+    handle_port_select(ui, item_id);
+  } else if (ui->page == USB_MENU_ROOT) {
     handle_root_select(ui, item_id);
   } else {
     handle_sub_select(ui, item_id);
@@ -140,12 +154,8 @@ static size_t build_root_items(usb_ui_t *ui) {
   size_t n = 0;
   char gbuf[EOS_LINE_STR_LEN];
   format_gadget_summary(&ui->logic, gbuf, sizeof(gbuf));
-  if (ui->has_port1) {
-    const char *p = (strcmp(ui->logic.dev_path, "/dev/usb1") == 0) ? "usb1 (HS)" : "usb0 (FS)";
-    add_item(ui, &n, ACT_PORT, LV_SYMBOL_USB, "Controller", p);
-  }
   add_item(ui, &n, ACT_ROLE, LV_SYMBOL_SETTINGS, "USB Role", role_label(ui->logic.active_role));
-  add_item(ui, &n, ACT_GADGETS, LV_SYMBOL_LIST, "Gadgets", gbuf);
+  add_item(ui, &n, ACT_GADGETS, LV_SYMBOL_LIST, "Functions", gbuf);
   add_item(ui, &n, ACT_MSC_CYCLE, LV_SYMBOL_SD_CARD, "MSC Storage",
            ui->logic.msc_backing[0] ? ui->logic.msc_backing : "None");
   add_item(ui, &n, ACT_DIAG, LV_SYMBOL_REFRESH, "Diagnostics", "Run tests");
@@ -158,14 +168,14 @@ static size_t build_sub_items(usb_ui_t *ui, const char **title) {
     *title = "USB Role";
     add_item(ui, &n, ACT_SET_ROLE_DEBUG, LV_SYMBOL_SETTINGS, "JTAG + CDC",
              ui->logic.active_role == EOS_USB_ROLE_DEBUG_USJ ? "Active" : "");
-    add_item(ui, &n, ACT_SET_ROLE_COMP, LV_SYMBOL_USB, "Gadgets",
+    add_item(ui, &n, ACT_SET_ROLE_COMP, LV_SYMBOL_USB, "Composite Device",
              ui->logic.active_role == EOS_USB_ROLE_DEVICE_COMPOSITE ? "Active" : "");
     add_item(ui, &n, ACT_SET_ROLE_HOST, LV_SYMBOL_DRIVE, "USB Host",
              ui->logic.active_role == EOS_USB_ROLE_HOST ? "Active" : "");
     add_item(ui, &n, ACT_SET_ROLE_OFF, LV_SYMBOL_POWER, "Off",
              ui->logic.active_role == EOS_USB_ROLE_OFF ? "Active" : "");
   } else if (ui->page == USB_MENU_GADGETS) {
-    *title = "Gadget Functions";
+    *title = "USB Functions";
     add_item(ui, &n, ACT_TOGGLE_SERIAL, LV_SYMBOL_CALL, "CDC Serial",
              (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) ? "ON" : "OFF");
     add_item(ui, &n, ACT_TOGGLE_MODEM, LV_SYMBOL_WIFI, "CDC Modem",
@@ -173,10 +183,9 @@ static size_t build_sub_items(usb_ui_t *ui, const char **title) {
     add_item(ui, &n, ACT_TOGGLE_MSC, LV_SYMBOL_SD_CARD, "Mass Storage",
              (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) ? "ON" : "OFF");
   } else if (ui->page == USB_MENU_PORT) {
-    *title = "USB Controller";
-    bool p0 = (strcmp(ui->logic.dev_path, "/dev/usb0") == 0);
-    add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)", p0 ? "Active" : "");
-    add_item(ui, &n, ACT_SET_PORT1, LV_SYMBOL_USB, "usb1 (High Speed)", !p0 ? "Active" : "");
+    *title = "USB Controllers";
+    add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)", "Debug / FS");
+    add_item(ui, &n, ACT_SET_PORT1, LV_SYMBOL_USB, "usb1 (High Speed)", "OTG 2.0 HS");
   } else {
     *title = "Diagnostics";
     const char *sres = !ui->logic.last_test_serial_valid ? "Tap/A to run"
@@ -192,12 +201,27 @@ static size_t build_sub_items(usb_ui_t *ui, const char **title) {
 
 static void usb_ui_rebuild(usb_ui_t *ui) {
   int prev_focus = ui->menu ? eos_menu_get_focused_index(ui->menu) : 0;
+  int target_focus = 0;
   if (ui->menu) {
+    if (ui->page == ui->last_page) {
+      target_focus = prev_focus;
+    } else if (ui->last_page == USB_MENU_PORT && ui->page == USB_MENU_ROOT) {
+      ui->port_focus = prev_focus;
+      target_focus = ui->root_focus;
+    } else if (ui->last_page == USB_MENU_ROOT && ui->page == USB_MENU_PORT) {
+      target_focus = ui->port_focus;
+    } else if (ui->last_page == USB_MENU_ROOT && ui->page != USB_MENU_ROOT) {
+      ui->root_focus = prev_focus;
+      target_focus = 0;
+    } else if (ui->page == USB_MENU_ROOT) {
+      target_focus = ui->root_focus;
+    }
     eos_menu_close(ui->menu);
     ui->menu = NULL;
   }
+  ui->last_page = ui->page;
 
-  const char *title = "USB Settings";
+  const char *title = (strcmp(ui->logic.dev_path, "/dev/usb1") == 0) ? "USB: usb1 (HS)" : "USB Settings";
   size_t count = (ui->page == USB_MENU_ROOT) ? build_root_items(ui)
                                              : build_sub_items(ui, &title);
 
@@ -211,8 +235,8 @@ static void usb_ui_rebuild(usb_ui_t *ui) {
       .user_data = ui,
   };
   ui->menu = eos_open_menu(&cfg);
-  if (ui->menu && prev_focus >= 0 && (size_t)prev_focus < count) {
-    eos_menu_focus_index(ui->menu, prev_focus);
+  if (ui->menu && target_focus >= 0 && (size_t)target_focus < count) {
+    eos_menu_focus_index(ui->menu, target_focus);
   }
 }
 
@@ -229,10 +253,15 @@ int lvgl_usb_main(int argc, char **argv) {
   memset(&ui, 0, sizeof(ui));
   int p1_fd = open("/dev/usb1", O_RDWR);
   if (p1_fd >= 0) {
-    ui.has_port1 = true;
+    eos_usb_bus_status_t p1_st;
+    if (ioctl(p1_fd, EOS_USB_IOCTL_GET_STATUS, &p1_st) == 0) {
+      ui.has_port1 = true;
+    }
     close(p1_fd);
   }
   usb_logic_init(&ui.logic);
+  ui.page = ui.has_port1 ? USB_MENU_PORT : USB_MENU_ROOT;
+  ui.last_page = ui.page;
 
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);

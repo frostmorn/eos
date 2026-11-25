@@ -2,6 +2,7 @@
 #include "ecore/ioctl.h"
 #include "ecore/usb.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -15,7 +16,7 @@ void usb_logic_format_role(eos_usb_role_t role, char *buf, size_t buflen) {
   if (role == EOS_USB_ROLE_DEBUG_USJ) {
     snprintf(buf, buflen, "DEBUG (JTAG+CDC)");
   } else if (role == EOS_USB_ROLE_DEVICE_COMPOSITE) {
-    snprintf(buf, buflen, "DEVICE (Gadgets)");
+    snprintf(buf, buflen, "Composite Device");
   } else if (role == EOS_USB_ROLE_HOST) {
     snprintf(buf, buflen, "HOST (Master)");
   } else if (role == EOS_USB_ROLE_OFF) {
@@ -84,6 +85,9 @@ int usb_logic_init(usb_logic_ctx_t *ctx) {
   if (!ctx) return -1;
   memset(ctx, 0, sizeof(*ctx));
   ctx->fd = -1;
+  if (usb_logic_select_dev(ctx, "/dev/usb1") == 0) {
+    return 0;
+  }
   return usb_logic_select_dev(ctx, EOS_USB_LOGIC_DEF_DEV);
 }
 
@@ -128,20 +132,48 @@ int usb_logic_set_msc_backing(usb_logic_ctx_t *ctx, const char *path) {
 
 int usb_logic_cycle_msc_device(usb_logic_ctx_t *ctx) {
   if (!ctx) return -1;
-  static const char *devices[EOS_USB_LOGIC_MSC_DEV_COUNT] = {
-      "/dev/sd0",
-      "/dev/flash0",
-      "/dev/part0",
-      "/tmp/virtual.img",
-  };
+  char devices[EOS_USB_LOGIC_MAX_MSC_DEVS][EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+  int count = 0;
+
+  DIR *dir = opendir("/dev");
+  if (dir) {
+    struct dirent *ent;
+    while ((ent = readdir(dir)) != NULL && count < EOS_USB_LOGIC_MAX_MSC_DEVS) {
+      if (ent->d_name[0] == '.' || strncmp(ent->d_name, "usb", 3) == 0 ||
+          strlen(ent->d_name) + sizeof("/dev/") > sizeof(devices[0])) {
+        continue;
+      }
+      char path[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+      memcpy(path, "/dev/", sizeof("/dev/") - 1);
+      strlcpy(path + sizeof("/dev/") - 1, ent->d_name, sizeof(path) - (sizeof("/dev/") - 1));
+      int dfd = open(path, O_RDONLY);
+      if (dfd >= 0) {
+        uint32_t cap = 0;
+        uint32_t sec_sz = 0;
+        if (ioctl(dfd, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE, &sec_sz) == 0 && sec_sz > 0 &&
+            ioctl(dfd, EOS_STORAGE_IOCTL_GET_CAPACITY, &cap) == 0 && cap > 0) {
+          strncpy(devices[count], path, EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1);
+          devices[count][EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1] = '\0';
+          count++;
+        }
+        close(dfd);
+      }
+    }
+    closedir(dir);
+  }
+
+  if (count == 0) {
+    return -1;
+  }
+
   int cur_idx = -1;
-  for (int i = 0; i < EOS_USB_LOGIC_MSC_DEV_COUNT; i++) {
+  for (int i = 0; i < count; i++) {
     if (strcmp(ctx->msc_backing, devices[i]) == 0) {
       cur_idx = i;
       break;
     }
   }
-  int next_idx = (cur_idx + 1) % EOS_USB_LOGIC_MSC_DEV_COUNT;
+  int next_idx = (cur_idx + 1) % count;
   return usb_logic_set_msc_backing(ctx, devices[next_idx]);
 }
 
@@ -156,11 +188,22 @@ int usb_logic_run_serial_echo(usb_logic_ctx_t *ctx) {
 
   const char msg[] = "PING\n";
   ssize_t nw = write(sfd, msg, strlen(msg));
+  char rx[EOS_USB_LOGIC_MAX_RESP];
+  ssize_t nr = -1;
+  if (nw == (ssize_t)strlen(msg)) {
+    for (int attempt = 0; attempt < EOS_USB_LOGIC_SERIAL_POLL_TRIES; attempt++) {
+      nr = read(sfd, rx, sizeof(rx) - 1);
+      if (nr >= 0) {
+        break;
+      }
+      usleep(EOS_USB_LOGIC_SERIAL_POLL_US);
+    }
+  }
   close(sfd);
 
   ctx->last_test_serial_valid = true;
-  ctx->serial_test_passed = (nw >= 0);
-  return (nw >= 0) ? 0 : -1;
+  ctx->serial_test_passed = (nw == (ssize_t)strlen(msg) && nr >= 0);
+  return ctx->serial_test_passed ? 0 : -1;
 }
 
 int usb_logic_run_modem_ping(usb_logic_ctx_t *ctx, const char *cmd) {
@@ -172,10 +215,21 @@ int usb_logic_run_modem_ping(usb_logic_ctx_t *ctx, const char *cmd) {
     return -1;
   }
 
-  const char *to_send = (cmd && cmd[0]) ? cmd : "ATI\r\n";
+  const char *to_send = (cmd && cmd[0]) ? cmd : "ATI";
+  size_t slen = strlen(to_send);
   char cmd_buf[EOS_USB_LOGIC_MAX_RESP];
-  snprintf(cmd_buf, sizeof(cmd_buf), "%s\r\n", to_send);
-  write(mfd, cmd_buf, strlen(cmd_buf));
+  if (slen > 0 && to_send[slen - 1] == '\n') {
+    snprintf(cmd_buf, sizeof(cmd_buf), "%s", to_send);
+  } else {
+    snprintf(cmd_buf, sizeof(cmd_buf), "%s\r\n", to_send);
+  }
+  ssize_t nw = write(mfd, cmd_buf, strlen(cmd_buf));
+  if (nw < 0) {
+    close(mfd);
+    ctx->last_test_modem_valid = true;
+    snprintf(ctx->modem_test_response, sizeof(ctx->modem_test_response), "ERR: WRITE_FAIL");
+    return -1;
+  }
 
   memset(ctx->modem_test_response, 0, sizeof(ctx->modem_test_response));
   ssize_t n = read(mfd, ctx->modem_test_response, sizeof(ctx->modem_test_response) - 1);

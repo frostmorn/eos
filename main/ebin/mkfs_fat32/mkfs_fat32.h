@@ -1,0 +1,28 @@
+#pragma once
+
+#include "ecore/bin.h"
+
+#define EOS_MKFS_FAT32_SECTOR_SZ        512U
+#define EOS_MKFS_FAT32_RSVD_SECS        32U
+#define EOS_MKFS_FAT32_NUM_FATS         2U
+#define EOS_MKFS_FAT32_ZERO_CHUNK_SECS  16U
+#define EOS_MKFS_FAT32_VOL_LABEL_LEN    11U
+#define EOS_MKFS_FAT32_MIN_CLUSTERS     65525U
+#define EOS_MKFS_FAT32_FSINFO_SEC       1U
+#define EOS_MKFS_FAT32_BACKUP_BOOT_SEC  6U
+#define EOS_MKFS_FAT32_BACKUP_FSINFO    7U
+#define EOS_MKFS_FAT32_SIG_OFFSET       510U
+#define EOS_MKFS_FAT32_SIG_0            0x55U
+#define EOS_MKFS_FAT32_SIG_1            0xAAU
+#define EOS_MKFS_FAT32_VOL_ID           0x454F5332U
+
+#define EOS_MKFS_FAT32_MEDIA_FIXED      0xF8U
+#define EOS_MKFS_FAT32_DRV_NUM_HDD      0x80U
+#define EOS_MKFS_FAT32_EXT_BOOT_SIG     0x29U
+#define EOS_MKFS_FAT32_SECS_PER_TRK     63U
+#define EOS_MKFS_FAT32_NUM_HEADS        255U
+#define EOS_MKFS_FAT32_OFF_FSINFO       48U
+#define EOS_MKFS_FAT32_OFF_BKBOOT       50U
+#define EOS_MKFS_FAT32_OFF_DRVNUM       64U
+
+int mkfs_fat32_main(int argc, char **argv);

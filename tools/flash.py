@@ -1,113 +1,79 @@
 #!/usr/bin/env python3
 """
 EOS Automated Flashing Helper
-Supports seamless flashing even when the target is running in TinyUSB Device mode (303a:4001)
-by issuing a 1200-baud CDC touch to enter ESP-ROM Download Mode, then flashing via esptool
-with watchdog-reset to avoid GPIO0 strapping lockups.
+Supports seamless flashing in TinyUSB Device mode (303a:4001-4003) via 1200-baud CDC touch,
+USB-Serial-JTAG mode (303a:1001), and ROM Download mode (303a:0009).
 """
 
-import glob
 import os
 import subprocess
 import sys
 import time
 
-try:
-    import serial
-except ImportError:
-    serial = None
-
-
-def get_usb_ids(port):
-    try:
-        tty_name = os.path.basename(port)
-        usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
-        vid = open(os.path.join(usb_dir, "idVendor")).read().strip().lower()
-        pid = open(os.path.join(usb_dir, "idProduct")).read().strip().lower()
-        return vid, pid
-    except Exception:
-        return None, None
-
-
-def find_espressif_port():
-    for port in sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*")):
-        vid, pid = get_usb_ids(port)
-        if vid == "303a":
-            return port, pid
-    return None, None
-
-
-def get_target_chip():
-    if os.path.exists("sdkconfig"):
-        with open("sdkconfig") as f:
-            data = f.read()
-            if 'CONFIG_IDF_TARGET="esp32s3"' in data:
-                return "esp32s3"
-            if 'CONFIG_IDF_TARGET="esp32p4"' in data:
-                return "esp32p4"
-    return "esp32s3"
-
-
-def trigger_1200_bootloader(port):
-    if serial is None:
-        subprocess.run(["stty", "-F", port, "1200"], check=False)
-        return
-    try:
-        s = serial.Serial()
-        s.port = port
-        s.baudrate = 1200
-        s.timeout = 0.2
-        s.write_timeout = 0.5
-        s.dtr = False
-        s.rts = False
-        s.open()
-        s.close()
-    except Exception:
-        pass
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_detect
 
 
 def main():
+    chip = board_detect.get_target_chip()
     port = sys.argv[1] if len(sys.argv) > 1 else None
     pid = None
+
     if port:
-        _, pid = get_usb_ids(port)
+        _, pid = board_detect.get_usb_ids(port)
     else:
-        port, pid = find_espressif_port()
+        devs = [d for d in board_detect.enumerate_espressif_usb()
+                if d["tty_ports"] and (d["chip"] == chip or d["chip"] is None)]
+        for preferred in ("rom_download", "tinyusb_gadget", "debug_jtag"):
+            for d in devs:
+                if d["role"] == preferred:
+                    port = d["tty_ports"][0]
+                    pid = d["pid"]
+                    break
+            if port:
+                break
 
     if not port:
         print("No Espressif USB port found. Falling back to idf.py flash...")
         sys.exit(subprocess.call(["idf.py", "flash"]))
 
-    if pid in ("4001", "4002", "4003"):
+    if pid in board_detect.TINYUSB_PIDS:
         print(f"Target on {port} is in TinyUSB mode (PID {pid}); triggering 1200-baud bootloader reset...")
-        trigger_1200_bootloader(port)
+        if not board_detect.trigger_1200_bootloader(port):
+            print(f"Error: 1200-baud bootloader touch failed on {port}")
+            sys.exit(1)
+        entered_rom = False
         deadline = time.time() + 5.0
         while time.time() < deadline:
             time.sleep(0.25)
-            new_port, new_pid = find_espressif_port()
-            if new_port and new_pid in ("1001", "0009"):
-                port = new_port
-                pid = new_pid
+            for d in board_detect.enumerate_espressif_usb():
+                if d["pid"] == board_detect.ROM_DOWNLOAD_PID and d["tty_ports"]:
+                    port = d["tty_ports"][0]
+                    pid = d["pid"]
+                    entered_rom = True
+                    break
+            if entered_rom:
                 break
-        if pid not in ("1001", "0009"):
-            print("Warning: Target did not re-enumerate in ROM download mode yet; attempting flash anyway...")
+        if not entered_rom:
+            print("Error: Target did not re-enumerate in ROM download mode (303a:0009) within 5s.")
+            sys.exit(1)
 
-    chip = get_target_chip()
     build_dir = os.path.abspath("build")
     if not os.path.exists(os.path.join(build_dir, "flash_args")):
         print("Error: build/flash_args not found. Run 'make build' first.")
         sys.exit(1)
 
+    before_mode = "no-reset" if pid == board_detect.ROM_DOWNLOAD_PID else "default-reset"
     cmd = [
         sys.executable, "-m", "esptool",
         "--chip", chip,
         "-p", port,
         "-b", "460800",
-        "--before", "no-reset",
+        "--before", before_mode,
         "--after", "watchdog-reset",
-        "write-flash", "@flash_args"
+        "write-flash", "@flash_args",
     ]
-    print(f"Flashing {chip} on {port}...")
+    print(f"Flashing {chip} on {port} (before={before_mode})...")
     rc = subprocess.call(cmd, cwd=build_dir)
     sys.exit(rc)
 

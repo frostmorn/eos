@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "ecore/dev.h"
 #include "ecore/usb.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -30,6 +31,9 @@
 #define EOS_USB_MSC_SCSI_TEST_UNIT      0x00
 #define EOS_USB_MSC_SCSI_REQ_SENSE      0x03
 #define EOS_USB_MSC_SCSI_MODE_SENSE_6   0x1A
+#define EOS_USB_MSC_SCSI_PREVENT_ALLOW  0x1E
+#define EOS_USB_MSC_SCSI_VERIFY_10      0x2F
+#define EOS_USB_MSC_SCSI_SYNC_CACHE_10  0x35
 
 // SCSI Command Block Wrapper (31 bytes)
 typedef struct __attribute__((packed)) {
@@ -51,9 +55,9 @@ typedef struct __attribute__((packed)) {
 } eos_usb_msc_csw_t;
 
 typedef struct {
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t io_mutex;
   char     backing_dev_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
-  int      backing_fd;
+  eos_dev_t *backing_dev;
   uint32_t sector_count;
   uint32_t sector_size;
   bool     read_only;
@@ -63,5 +67,4 @@ typedef struct {
   uint32_t last_scsi_cmd;
   uint32_t blocks_read;
   uint32_t blocks_written;
-  void    *tusb_storage;
 } eos_usb_msc_state_t;

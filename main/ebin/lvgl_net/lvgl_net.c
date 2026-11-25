@@ -35,6 +35,8 @@ enum {
 typedef struct {
   net_logic_t logic;
   net_page_t page;
+  net_page_t last_page;
+  int root_focus;
   lv_obj_t *menu;
   lv_obj_t *dialog_overlay;
   eos_menu_item_t items[NET_MENU_MAX_ITEMS];
@@ -283,10 +285,20 @@ static size_t build_ifaces_page(net_app_t *app) {
 
 static void net_rebuild_menu(net_app_t *app) {
   int prev_focus = app->menu ? eos_menu_get_focused_index(app->menu) : 0;
+  int target_focus = 0;
   if (app->menu) {
+    if (app->page == app->last_page) {
+      target_focus = prev_focus;
+    } else if (app->last_page == NET_PAGE_ROOT && app->page != NET_PAGE_ROOT) {
+      app->root_focus = prev_focus;
+      target_focus = 0;
+    } else if (app->page == NET_PAGE_ROOT) {
+      target_focus = app->root_focus;
+    }
     eos_menu_close(app->menu);
     app->menu = NULL;
   }
+  app->last_page = app->page;
 
   const char *title = "EOS Network";
   size_t count = 0;
@@ -327,8 +339,8 @@ static void net_rebuild_menu(net_app_t *app) {
       .user_data = app,
   };
   app->menu = eos_open_menu(&cfg);
-  if (app->menu && prev_focus >= 0 && (size_t)prev_focus < count) {
-    eos_menu_focus_index(app->menu, prev_focus);
+  if (app->menu && target_focus >= 0 && (size_t)target_focus < count) {
+    eos_menu_focus_index(app->menu, target_focus);
   }
 }
 

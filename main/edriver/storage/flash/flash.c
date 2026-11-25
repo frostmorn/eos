@@ -112,58 +112,40 @@ int driver_storage_flash_write(eos_dev_t *dev, int fd, const void *buf, size_t l
 }
 
 off_t driver_storage_flash_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
-
+  (void)fd;
   flash_state_t *state = dev->state;
 
-  if (!state) {
+  if (!state || state->sector_size == 0) {
     errno = EINVAL;
     return BAD_OFFSET;
   }
 
-  off_t max_offset = (off_t)state->size;
+  off_t max_sectors = (off_t)(state->size / state->sector_size);
+  off_t cur_sector = (off_t)(state->offset / state->sector_size);
+  off_t target_sector = 0;
 
   switch (whence) {
-  case SEEK_SET: {
-    if (offset >= 0 && offset <= max_offset)
-      state->offset = offset;
-    else {
-      errno = EINVAL;
-      return BAD_OFFSET;
-    }
-
-    return state->offset;
-  }
-
-  case SEEK_CUR: {
-    off_t new_offset = state->offset + offset;
-
-    if (new_offset >= 0 && new_offset <= max_offset)
-      state->offset = new_offset;
-    else {
-      errno = EINVAL;
-      return BAD_OFFSET;
-    }
-
-    return state->offset;
-  }
-
-  case SEEK_END: {
-    off_t new_offset = max_offset + offset;
-
-    if (new_offset >= 0 && new_offset <= max_offset)
-      state->offset = new_offset;
-    else {
-      errno = EINVAL;
-      return BAD_OFFSET;
-    }
-
-    return state->offset;
-  }
-
+  case SEEK_SET:
+    target_sector = offset;
+    break;
+  case SEEK_CUR:
+    target_sector = cur_sector + offset;
+    break;
+  case SEEK_END:
+    target_sector = max_sectors + offset;
+    break;
   default:
     errno = EINVAL;
     return BAD_OFFSET;
   }
+
+  if (target_sector < 0 || target_sector > max_sectors) {
+    errno = EINVAL;
+    return BAD_OFFSET;
+  }
+
+  state->offset = (size_t)target_sector * state->sector_size;
+  return target_sector;
 }
 
 // ── IOCTL ──────────────────────────────────────────────────────
@@ -196,7 +178,7 @@ int driver_storage_flash_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return -1;
     }
 
-    *capacity = state->size;
+    *capacity = (state->sector_size > 0) ? (uint32_t)(state->size / state->sector_size) : 0;
     break;
   }
 

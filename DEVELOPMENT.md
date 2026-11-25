@@ -18,7 +18,7 @@ Every GUI application directory must be split into at least two separate units:
 * **`<app>.c` / `<app>_ui.c` (Presentation Layer)**:
   - Consumes `<app>_logic.h` to render visual representations.
   - Listens to user inputs (keyboard, touch, navigation) and invokes logic functions.
-  - Uses unified EOS UI widgets (`eos_menu`, `eos_popup_menu`, `eos_toolbar`).
+  - Uses unified EOS UI widgets (`eos_menu`, `eos_toolbar`).
 
 ### 1.2 Mandatory Automated Testing
 * Every business logic module (`*_logic.c`) must be covered by automated headless unit tests in `tools/hardware_test.py`.
@@ -37,7 +37,7 @@ EOS supports diverse screen form factors ranging from compact handhelds (e.g. Li
     - Automatically opens `eos_menu` — a clean, dedicated full-screen or full-area responsive list.
     - **Headerless Mode**: Static headers are omitted on small screens by default to prevent wasting vertical pixels; navigation context is embedded directly in the first list item (e.g. `📁 .. [/bin]`) or in the toolbar.
   - **Large Screens (`width > 320` and `height > 240`)**:
-    - Automatically opens `eos_popup_menu` — a centered, compact modal overlay with zero padding/gap between buttons and a translucent backdrop.
+    - Opens `eos_menu` with a title header and touch back button (`eos_open_menu()` uses the same unified menu across all screen sizes).
 
 ---
 
@@ -133,7 +133,7 @@ On devices with a single physical USB controller (e.g. ESP32-S3 on Lilka v2.3), 
      python -m esptool --chip esp32s3 --before no-reset --after watchdog-reset write-flash "@build/flash_args"
      ```
 
-2. **Runtime Software Role Switch (`usbctl`)**:
+3. **Runtime Software Role Switch (`usbctl`)**:
    - If EOS is booted and running:
      ```bash
      usbctl role debug

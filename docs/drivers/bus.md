@@ -98,8 +98,8 @@ Exposed when opening individual GPIO pin nodes:
 | `EOS_USB_IOCTL_GADGET_GET_FUNCS` | `804` | `uint32_t *out_funcs_mask` | Queries enabled composite gadget functions bitmask. |
 | `EOS_USB_IOCTL_GADGET_SET_MSC_DEV` | `805` | `const char *dev_path` | Binds backing block device (e.g. `/dev/sd0`) to MSC gadget. |
 | `EOS_USB_IOCTL_GADGET_GET_MSC_DEV` | `806` | `char *out_dev_path` | Queries current backing block device path. |
-| `EOS_USB_IOCTL_SERIAL_SET_CODING` | `807` | `eos_usb_line_coding_t *coding` | Configures CDC Serial baud rate and line coding. |
-| `EOS_USB_IOCTL_SERIAL_GET_CODING` | `808` | `eos_usb_line_coding_t *coding` | Queries CDC Serial baud rate and line coding. |
+| `EOS_USB_IOCTL_JTAG_SET_FREQ` | `807` | `uint32_t freq_hz` | Configures USB JTAG clock frequency in Hz. |
+| `EOS_USB_IOCTL_JTAG_SCAN` | `808` | `eos_usb_jtag_pattern_t *pat` | Executes a synthetic JTAG TDI/TMS scan test pattern (`tdo = tdi ^ tms`). |
 | `EOS_USB_IOCTL_HOST_ENUM` | `809` | `none` | Triggers bus enumeration of downstream host devices. |
 | `EOS_USB_IOCTL_HOST_RESET_PORT` | `810` | `uint32_t port_no` | Drives hardware reset on downstream host port. |
 | `EOS_USB_IOCTL_HOST_GET_DEV_LIST` | `811` | `eos_usb_host_dev_list_t *out_list` | Queries enumerated downstream devices list. |

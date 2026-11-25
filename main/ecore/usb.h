@@ -94,3 +94,17 @@ typedef struct {
   uint32_t tdo;
   uint32_t bits;
 } eos_usb_jtag_pattern_t;
+
+// Generic USB MSC backend callbacks (implemented by edriver/usb/msc)
+typedef struct {
+  bool    (*test_unit_ready)(void *ctx, uint8_t lun);
+  void    (*capacity)(void *ctx, uint8_t lun, uint32_t *block_count, uint16_t *block_size);
+  int32_t (*read10)(void *ctx, uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize);
+  int32_t (*write10)(void *ctx, uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize);
+  void    (*inquiry)(void *ctx, uint8_t lun, uint8_t *vendor_id, uint8_t *product_id, uint8_t *product_rev);
+  bool    (*start_stop)(void *ctx, uint8_t lun, uint8_t power_condition, bool start, bool load_eject);
+  int32_t (*scsi)(void *ctx, uint8_t lun, uint8_t const *scsi_cmd, void *buffer, uint16_t bufsize);
+  void     *ctx;
+} eos_usb_msc_ops_t;
+
+void eos_usb_msc_register_ops(const eos_usb_msc_ops_t *ops);

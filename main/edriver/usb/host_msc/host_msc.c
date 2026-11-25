@@ -187,7 +187,7 @@ int driver_usb_host_msc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       errno = EINVAL;
       return -1;
     }
-    *cnt_ptr = st->sector_count * st->sector_size;
+    *cnt_ptr = st->sector_count;
     return 0;
   }
 

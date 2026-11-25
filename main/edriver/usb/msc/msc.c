@@ -15,78 +15,208 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-#if CONFIG_TINYUSB_MSC_ENABLED
-#include <tinyusb_msc.h>
-#endif
-
 // ── Private Helpers ──────────────────────────────────────────
+
+static bool msc_cb_test_unit_ready(void *ctx, uint8_t lun) {
+  (void)lun;
+  eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)ctx;
+  if (!st || !st->backing_dev || st->sector_count == 0 || st->sector_size == 0) {
+    return false;
+  }
+  return true;
+}
+
+static void msc_cb_capacity(void *ctx, uint8_t lun, uint32_t *block_count, uint16_t *block_size) {
+  (void)lun;
+  eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)ctx;
+  if (st && st->backing_dev && st->sector_count > 0 && st->sector_size > 0) {
+    *block_count = st->sector_count;
+    *block_size = (uint16_t)st->sector_size;
+  } else {
+    *block_count = 0;
+    *block_size = 0;
+  }
+}
+
+static int32_t msc_cb_read10(void *ctx, uint8_t lun, uint32_t lba, uint32_t offset, void *buffer, uint32_t bufsize) {
+  (void)lun;
+  eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)ctx;
+  if (!st || !buffer || bufsize == 0) {
+    return -1;
+  }
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+  int32_t result = -1;
+  if (!st->backing_dev || st->sector_size == 0 || st->sector_count == 0) {
+    xSemaphoreGive(st->io_mutex);
+    return -1;
+  }
+  uint64_t total_bytes = (uint64_t)st->sector_count * (uint64_t)st->sector_size;
+  uint64_t start_byte = (uint64_t)lba * (uint64_t)st->sector_size + (uint64_t)offset;
+  if (start_byte > total_bytes || (uint64_t)bufsize > total_bytes - start_byte) {
+    xSemaphoreGive(st->io_mutex);
+    return -1;
+  }
+  if (offset == 0 && (bufsize % st->sector_size) == 0) {
+    if (eos_dev_lseek(st->backing_dev, EOS_DRV_FD, (off_t)lba, SEEK_SET) >= 0) {
+      ssize_t n = eos_dev_read(st->backing_dev, EOS_DRV_FD, buffer, bufsize);
+      if (n == (ssize_t)bufsize) {
+        st->blocks_read += bufsize / st->sector_size;
+        result = (int32_t)bufsize;
+      }
+    }
+  } else if (offset + bufsize <= st->sector_size && st->sector_buf) {
+    if (eos_dev_lseek(st->backing_dev, EOS_DRV_FD, (off_t)lba, SEEK_SET) >= 0) {
+      ssize_t n = eos_dev_read(st->backing_dev, EOS_DRV_FD, st->sector_buf, st->sector_size);
+      if (n == (ssize_t)st->sector_size) {
+        memcpy(buffer, st->sector_buf + offset, bufsize);
+        st->blocks_read++;
+        result = (int32_t)bufsize;
+      }
+    }
+  }
+  xSemaphoreGive(st->io_mutex);
+  return result;
+}
+
+static int32_t msc_cb_write10(void *ctx, uint8_t lun, uint32_t lba, uint32_t offset, uint8_t *buffer, uint32_t bufsize) {
+  (void)lun;
+  eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)ctx;
+  if (!st || !buffer || bufsize == 0) {
+    return -1;
+  }
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+  int32_t result = -1;
+  if (!st->backing_dev || st->sector_size == 0 || st->sector_count == 0 || st->read_only) {
+    xSemaphoreGive(st->io_mutex);
+    return -1;
+  }
+  uint64_t total_bytes = (uint64_t)st->sector_count * (uint64_t)st->sector_size;
+  uint64_t start_byte = (uint64_t)lba * (uint64_t)st->sector_size + (uint64_t)offset;
+  if (start_byte > total_bytes || (uint64_t)bufsize > total_bytes - start_byte) {
+    xSemaphoreGive(st->io_mutex);
+    return -1;
+  }
+  if (offset == 0 && (bufsize % st->sector_size) == 0) {
+    if (eos_dev_lseek(st->backing_dev, EOS_DRV_FD, (off_t)lba, SEEK_SET) >= 0) {
+      ssize_t n = eos_dev_write(st->backing_dev, EOS_DRV_FD, buffer, bufsize);
+      if (n == (ssize_t)bufsize) {
+        st->blocks_written += bufsize / st->sector_size;
+        result = (int32_t)bufsize;
+      }
+    }
+  } else if (offset + bufsize <= st->sector_size && st->sector_buf) {
+    if (eos_dev_lseek(st->backing_dev, EOS_DRV_FD, (off_t)lba, SEEK_SET) >= 0) {
+      ssize_t n = eos_dev_read(st->backing_dev, EOS_DRV_FD, st->sector_buf, st->sector_size);
+      if (n == (ssize_t)st->sector_size) {
+        memcpy(st->sector_buf + offset, buffer, bufsize);
+        if (eos_dev_lseek(st->backing_dev, EOS_DRV_FD, (off_t)lba, SEEK_SET) >= 0) {
+          ssize_t wn = eos_dev_write(st->backing_dev, EOS_DRV_FD, st->sector_buf, st->sector_size);
+          if (wn == (ssize_t)st->sector_size) {
+            st->blocks_written++;
+            result = (int32_t)bufsize;
+          }
+        }
+      }
+    }
+  }
+  xSemaphoreGive(st->io_mutex);
+  return result;
+}
+
+static void msc_cb_inquiry(void *ctx, uint8_t lun, uint8_t *vendor_id, uint8_t *product_id, uint8_t *product_rev) {
+  (void)ctx;
+  (void)lun;
+  memcpy(vendor_id, "EOS-OS  ", sizeof("EOS-OS  ") - 1);
+  memcpy(product_id, "VIRTUAL MSC DISK", sizeof("VIRTUAL MSC DISK") - 1);
+  memcpy(product_rev, "1.00", sizeof("1.00") - 1);
+}
+
+static bool msc_cb_start_stop(void *ctx, uint8_t lun, uint8_t power_condition, bool start, bool load_eject) {
+  (void)ctx;
+  (void)lun;
+  (void)power_condition;
+  (void)start;
+  (void)load_eject;
+  return true;
+}
+
+static int32_t msc_cb_scsi(void *ctx, uint8_t lun, uint8_t const *scsi_cmd, void *buffer, uint16_t bufsize) {
+  (void)ctx;
+  (void)lun;
+  (void)buffer;
+  (void)bufsize;
+  if (!scsi_cmd) {
+    return -1;
+  }
+  switch (scsi_cmd[0]) {
+    case EOS_USB_MSC_SCSI_PREVENT_ALLOW:
+    case EOS_USB_MSC_SCSI_VERIFY_10:
+    case EOS_USB_MSC_SCSI_SYNC_CACHE_10:
+      return 0;
+    default:
+      return -1;
+  }
+}
 
 static void msc_open_backing(eos_usb_msc_state_t *st) {
   if (!st) return;
-  if (st->backing_fd >= 0) {
-    close(st->backing_fd);
-    st->backing_fd = -1;
-  }
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+  st->backing_dev = NULL;
+  st->sector_count = 0;
+  st->sector_size = EOS_USB_MSC_SECTOR_SIZE;
+  st->read_only = false;
   if (st->backing_dev_path[0] == '\0') {
+    xSemaphoreGive(st->io_mutex);
     return;
   }
 
-  st->backing_fd = open(st->backing_dev_path, O_RDWR);
-  if (st->backing_fd < 0) {
-    st->backing_fd = open(st->backing_dev_path, O_RDONLY);
-    if (st->backing_fd >= 0) {
-      st->read_only = true;
-    }
-  } else {
-    st->read_only = false;
+  const char *dev_name = st->backing_dev_path;
+  if (strncmp(dev_name, "/dev/", 5) == 0) {
+    dev_name += 5;
   }
+  st->backing_dev = eos_dev_find_by_name(dev_name);
 
-  if (st->backing_fd >= 0) {
+  if (st->backing_dev) {
     uint32_t sec_sz = 0;
     uint32_t cap = 0;
-    if (ioctl(st->backing_fd, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE, &sec_sz) == 0 && sec_sz > 0) {
+    if (eos_dev_ioctl_call(st->backing_dev, EOS_DRV_FD, EOS_STORAGE_IOCTL_GET_SECTOR_SIZE, &sec_sz) == 0 && sec_sz > 0) {
       st->sector_size = sec_sz;
     }
-    if (ioctl(st->backing_fd, EOS_STORAGE_IOCTL_GET_CAPACITY, &cap) == 0 && cap > 0) {
-      st->sector_count = cap / st->sector_size;
+    if (eos_dev_ioctl_call(st->backing_dev, EOS_DRV_FD, EOS_STORAGE_IOCTL_GET_CAPACITY, &cap) == 0 && cap > 0) {
+      st->sector_count = cap;
     } else {
-      off_t end = lseek(st->backing_fd, 0, SEEK_END);
+      off_t end = eos_dev_lseek(st->backing_dev, EOS_DRV_FD, 0, SEEK_END);
       if (end > 0) {
-        st->sector_count = (uint32_t)(end / st->sector_size);
-        lseek(st->backing_fd, 0, SEEK_SET);
+        st->sector_count = (uint32_t)end;
+        eos_dev_lseek(st->backing_dev, EOS_DRV_FD, 0, SEEK_SET);
       }
     }
-    EOS_LOGI("usb_msc: Bound to backing device '%s' (fd=%d, sector_size=%lu, sectors=%lu, ro=%d)",
-             st->backing_dev_path, st->backing_fd, (unsigned long)st->sector_size,
+    EOS_LOGI("usb_msc: Bound to backing device '%s' (sector_size=%lu, sectors=%lu, ro=%d)",
+             st->backing_dev_path, (unsigned long)st->sector_size,
              (unsigned long)st->sector_count, (int)st->read_only);
-#if CONFIG_TINYUSB_MSC_ENABLED && SOC_SDMMC_HOST_SUPPORTED
-    if (st->tusb_storage) {
-      tinyusb_msc_delete_storage((tinyusb_msc_storage_handle_t)st->tusb_storage);
-      st->tusb_storage = NULL;
+    // Unmount any local VFS partitions on this backing device for exclusive USB MSC ownership
+    bool umount_ok = false;
+    if (eos_dev_ioctl_call(st->backing_dev, EOS_DRV_FD, EOS_STORAGE_IOCTL_UMOUNT, &umount_ok) == 0 && umount_ok) {
+      EOS_LOGI("usb_msc: Unmounted '%s' for exclusive USB MSC access", st->backing_dev_path);
     }
-    void *card_ptr = NULL;
-    if (ioctl(st->backing_fd, EOS_STORAGE_IOCTL_GET_CARD, &card_ptr) == 0 && card_ptr) {
-      tinyusb_msc_storage_config_t tusb_msc_cfg = {
-          .medium = { .card = (sdmmc_card_t *)card_ptr },
-          .fat_fs = {
-              .base_path = NULL,
-              .config = { .max_files = 2, .allocation_unit_size = 0 },
-              .do_not_format = true,
-              .format_flags = 0,
-          },
-          .mount_point = TINYUSB_MSC_STORAGE_MOUNT_USB,
-      };
-      tinyusb_msc_storage_handle_t hdl = NULL;
-      if (tinyusb_msc_new_storage_sdmmc(&tusb_msc_cfg, &hdl) == ESP_OK) {
-        st->tusb_storage = hdl;
-        EOS_LOGI("usb_msc: TinyUSB MSC SDMMC storage registered");
+    for (int p = 0; p < 4; p++) {
+      char part_name[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+      snprintf(part_name, sizeof(part_name), "part%d", p);
+      eos_dev_t *pdev = eos_dev_find_by_name(part_name);
+      if (pdev) {
+        umount_ok = false;
+        if (eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_STORAGE_IOCTL_UMOUNT, &umount_ok) == 0 && umount_ok) {
+          EOS_LOGI("usb_msc: Unmounted '/dev/%s' for exclusive USB MSC access", part_name);
+        }
       }
     }
-#endif
+    if (st->sector_count == 0 || st->sector_size == 0) {
+      EOS_LOGW("usb_msc: '%s' has zero capacity; MSC unit not ready", st->backing_dev_path);
+    }
   } else {
-    EOS_LOGW("usb_msc: Backing device '%s' not accessible (errno=%d), fallback to virtual sim storage",
-             st->backing_dev_path, errno);
+    EOS_LOGW("usb_msc: Backing device '%s' not found", st->backing_dev_path);
   }
+  xSemaphoreGive(st->io_mutex);
 }
 
 static void msc_init_sim_storage(eos_usb_msc_state_t *st) {
@@ -122,8 +252,8 @@ bool driver_usb_msc_init(eos_dev_t *dev) {
   memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->io_mutex = xSemaphoreCreateMutex();
+  if (!st->io_mutex) {
     free(st);
     dev->state = NULL;
     return false;
@@ -133,7 +263,7 @@ bool driver_usb_msc_init(eos_dev_t *dev) {
   st->sector_count = EOS_USB_MSC_SIM_SECTOR_COUNT;
   st->sector_buf = eos_psram_malloc_prefer(st->sector_size);
   if (!st->sector_buf) {
-    vSemaphoreDelete(st->mutex);
+    vSemaphoreDelete(st->io_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -143,8 +273,20 @@ bool driver_usb_msc_init(eos_dev_t *dev) {
 
   const char *backing = eos_cfg_get_s(dev->cfg, "backing_dev", "/dev/sd0");
   strncpy(st->backing_dev_path, backing, sizeof(st->backing_dev_path) - 1);
-  st->backing_fd = -1;
+  st->backing_dev = NULL;
   msc_open_backing(st);
+
+  eos_usb_msc_ops_t msc_ops = {
+      .test_unit_ready = msc_cb_test_unit_ready,
+      .capacity = msc_cb_capacity,
+      .read10 = msc_cb_read10,
+      .write10 = msc_cb_write10,
+      .inquiry = msc_cb_inquiry,
+      .start_stop = msc_cb_start_stop,
+      .scsi = msc_cb_scsi,
+      .ctx = st,
+  };
+  eos_usb_msc_register_ops(&msc_ops);
 
   EOS_LOGI("usb_msc: Mass Storage Class driver initialized (backing=%s, sectors=%lu)",
            st->backing_dev_path, (unsigned long)st->sector_count);
@@ -156,15 +298,14 @@ void driver_usb_msc_shutdown(eos_dev_t *dev) {
     return;
   }
   eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)dev->state;
-#if CONFIG_TINYUSB_MSC_ENABLED
-  if (st->tusb_storage) {
-    tinyusb_msc_delete_storage((tinyusb_msc_storage_handle_t)st->tusb_storage);
-    st->tusb_storage = NULL;
-  }
-#endif
-  if (st->backing_fd >= 0) {
-    close(st->backing_fd);
-    st->backing_fd = -1;
+  eos_usb_msc_register_ops(NULL);
+  if (st->io_mutex) {
+    xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+    st->backing_dev = NULL;
+    st->sector_count = 0;
+    xSemaphoreGive(st->io_mutex);
+  } else {
+    st->backing_dev = NULL;
   }
   if (st->sim_storage) {
     free(st->sim_storage);
@@ -174,9 +315,9 @@ void driver_usb_msc_shutdown(eos_dev_t *dev) {
     free(st->sector_buf);
     st->sector_buf = NULL;
   }
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->io_mutex) {
+    vSemaphoreDelete(st->io_mutex);
+    st->io_mutex = NULL;
   }
   free(st);
   dev->state = NULL;
@@ -207,19 +348,23 @@ ssize_t driver_usb_msc_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
   eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
-  if (st->backing_fd < 0 && st->backing_dev_path[0] != '\0') {
-    msc_open_backing(st);
-  }
-
-  if (st->backing_fd >= 0) {
-    ssize_t ret = read(st->backing_fd, dst, size);
-    if (ret > 0) {
-      st->blocks_read += (ret / st->sector_size);
-      xSemaphoreGive(st->mutex);
-      return ret;
+  if (st->backing_dev_path[0] != '\0') {
+    if (!st->backing_dev) {
+      msc_open_backing(st);
     }
+    if (!st->backing_dev) {
+      xSemaphoreGive(st->io_mutex);
+      errno = ENODEV;
+      return -1;
+    }
+    ssize_t ret = eos_dev_read(st->backing_dev, EOS_DRV_FD, dst, size);
+    if (ret > 0) {
+      st->blocks_read += (uint32_t)(ret / st->sector_size);
+    }
+    xSemaphoreGive(st->io_mutex);
+    return ret;
   }
 
   size_t to_read = size;
@@ -228,12 +373,12 @@ ssize_t driver_usb_msc_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
       to_read = st->sim_storage_size;
     }
     memcpy(dst, st->sim_storage, to_read);
-    st->blocks_read += (to_read / st->sector_size);
+    st->blocks_read += (uint32_t)(to_read / st->sector_size);
   } else {
     memset(dst, 0, to_read);
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)to_read;
 }
 
@@ -244,52 +389,60 @@ ssize_t driver_usb_msc_write(eos_dev_t *dev, int fd, const void *data, size_t si
     return -1;
   }
   eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
-  // Parse SCSI Command Block Wrapper if data size matches CBW
-  if (size == sizeof(eos_usb_msc_cbw_t)) {
-    const eos_usb_msc_cbw_t *cbw = (const eos_usb_msc_cbw_t *)data;
-    if (cbw->signature == EOS_USB_MSC_CBW_SIGNATURE) {
-      st->last_scsi_cmd = cbw->cb[0];
-      if (cbw->cb[0] == EOS_USB_MSC_SCSI_INQUIRY && st->sector_buf) {
-        msc_fill_inquiry(st->sector_buf);
-      }
-      EOS_LOGI("usb_msc: SCSI opcode 0x%02lx received", (unsigned long)st->last_scsi_cmd);
-      xSemaphoreGive(st->mutex);
-      return (ssize_t)size;
+  if (st->backing_dev_path[0] != '\0') {
+    if (!st->backing_dev) {
+      msc_open_backing(st);
     }
-  }
-
-  if (st->backing_fd < 0 && st->backing_dev_path[0] != '\0') {
-    msc_open_backing(st);
-  }
-
-  if (st->backing_fd >= 0) {
+    if (!st->backing_dev) {
+      xSemaphoreGive(st->io_mutex);
+      errno = ENODEV;
+      return -1;
+    }
     if (st->read_only) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->io_mutex);
       errno = EROFS;
       return -1;
     }
-    ssize_t ret = write(st->backing_fd, data, size);
+    ssize_t ret = eos_dev_write(st->backing_dev, EOS_DRV_FD, data, size);
     if (ret > 0) {
-      st->blocks_written += (ret / st->sector_size);
-      xSemaphoreGive(st->mutex);
-      return ret;
+      st->blocks_written += (uint32_t)(ret / st->sector_size);
     }
+    xSemaphoreGive(st->io_mutex);
+    return ret;
   }
 
-  // Otherwise treat as direct sector block write to sim storage
+  // Virtual RAM storage only when no backing device is configured
   size_t to_write = size;
   if (st->sim_storage && st->sim_storage_size > 0) {
     if (to_write > st->sim_storage_size) {
       to_write = st->sim_storage_size;
     }
     memcpy(st->sim_storage, data, to_write);
-    st->blocks_written += (to_write / st->sector_size);
+    st->blocks_written += (uint32_t)(to_write / st->sector_size);
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)to_write;
+}
+
+off_t driver_usb_msc_lseek(eos_dev_t *dev, int fd, off_t offset, int whence) {
+  (void)fd;
+  if (!dev || !dev->state) {
+    errno = ENODEV;
+    return -1;
+  }
+  eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)dev->state;
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+  off_t res = -1;
+  if (st->backing_dev) {
+    res = eos_dev_lseek(st->backing_dev, EOS_DRV_FD, offset, whence);
+  } else {
+    errno = ENODEV;
+  }
+  xSemaphoreGive(st->io_mutex);
+  return res;
 }
 
 int driver_usb_msc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
@@ -307,11 +460,11 @@ int driver_usb_msc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->mutex, portMAX_DELAY);
+      xSemaphoreTake(st->io_mutex, portMAX_DELAY);
       strncpy(st->backing_dev_path, path, sizeof(st->backing_dev_path) - 1);
       st->backing_dev_path[sizeof(st->backing_dev_path) - 1] = '\0';
       msc_open_backing(st);
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->io_mutex);
       if (dev->parent) {
         eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, path);
       }
@@ -324,10 +477,10 @@ int driver_usb_msc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->mutex, portMAX_DELAY);
+      xSemaphoreTake(st->io_mutex, portMAX_DELAY);
       strncpy(out_path, st->backing_dev_path, EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1);
       out_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN - 1] = '\0';
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->io_mutex);
       return 0;
     }
 
@@ -347,12 +500,12 @@ int driver_usb_msc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->mutex, portMAX_DELAY);
-      if (st->backing_fd < 0 && st->backing_dev_path[0] != '\0') {
+      xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+      if (!st->backing_dev && st->backing_dev_path[0] != '\0') {
         msc_open_backing(st);
       }
-      *out_cnt = st->sector_count * st->sector_size;
-      xSemaphoreGive(st->mutex);
+      *out_cnt = st->sector_count;
+      xSemaphoreGive(st->io_mutex);
       return 0;
     }
 
@@ -373,6 +526,7 @@ EOS_DRV_ATTR eos_drv_t driver_usb_msc = {
     .close = driver_usb_msc_close,
     .read = driver_usb_msc_read,
     .write = driver_usb_msc_write,
+    .lseek = driver_usb_msc_lseek,
     .ioctl = driver_usb_msc_ioctl,
 };
 

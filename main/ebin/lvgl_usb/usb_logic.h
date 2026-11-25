@@ -10,7 +10,9 @@
 #define EOS_USB_LOGIC_DEF_DEV         "/dev/usb0"
 #define EOS_USB_LOGIC_SERIAL_DEV      "/dev/usb_serial0"
 #define EOS_USB_LOGIC_MODEM_DEV       "/dev/usb_modem0"
-#define EOS_USB_LOGIC_MSC_DEV_COUNT   4
+#define EOS_USB_LOGIC_MAX_MSC_DEVS    8
+#define EOS_USB_LOGIC_SERIAL_POLL_US  10000
+#define EOS_USB_LOGIC_SERIAL_POLL_TRIES 10
 
 typedef struct {
   int fd;

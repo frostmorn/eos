@@ -137,11 +137,16 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
 
 #if CONFIG_TINYUSB_CDC_ENABLED
   if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0)) {
-    tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, src, size);
-    tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, pdMS_TO_TICKS(10));
-    st->tx_total += (uint32_t)size;
+    size_t queued = tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, src, size);
+    esp_err_t flush_err = tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, pdMS_TO_TICKS(10));
+    if (queued == 0 && size > 0 && flush_err != ESP_OK) {
+      xSemaphoreGive(st->mutex);
+      errno = EIO;
+      return -1;
+    }
+    st->tx_total += (uint32_t)queued;
     xSemaphoreGive(st->mutex);
-    return (ssize_t)size;
+    return (ssize_t)queued;
   }
 #endif
 

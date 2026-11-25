@@ -200,7 +200,7 @@ static void test_usb_logic(test_ctx_t *ctx) {
   usb_logic_format_role(EOS_USB_ROLE_DEBUG_USJ, buf, sizeof(buf));
   report_test(ctx, "usb: format role DEBUG_USJ", strcmp(buf, "DEBUG (JTAG+CDC)") == 0);
   usb_logic_format_role(EOS_USB_ROLE_DEVICE_COMPOSITE, buf, sizeof(buf));
-  report_test(ctx, "usb: format role DEVICE", strcmp(buf, "DEVICE (Gadgets)") == 0);
+  report_test(ctx, "usb: format role DEVICE", strcmp(buf, "Composite Device") == 0);
   usb_logic_format_role(EOS_USB_ROLE_HOST, buf, sizeof(buf));
   report_test(ctx, "usb: format role HOST", strcmp(buf, "HOST (Master)") == 0);
   usb_logic_format_role(EOS_USB_ROLE_OFF, buf, sizeof(buf));
@@ -221,7 +221,7 @@ static void test_usb_logic(test_ctx_t *ctx) {
   uctx.status.speed = EOS_USB_SPEED_HIGH;
   uctx.status.vbus_present = true;
   usb_logic_format_status(&uctx, buf, sizeof(buf));
-  report_test(ctx, "usb: format status contains role", strstr(buf, "DEVICE (Gadgets)") != NULL);
+  report_test(ctx, "usb: format status contains role", strstr(buf, "Composite Device") != NULL);
   report_test(ctx, "usb: format status contains speed", strstr(buf, "High Speed (480M)") != NULL);
   report_test(ctx, "usb: format status contains VBUS", strstr(buf, "VBUS: OK") != NULL);
 
@@ -229,9 +229,14 @@ static void test_usb_logic(test_ctx_t *ctx) {
   int rc = usb_logic_init(&uctx);
   if (rc == 0) {
     report_test(ctx, "usb: init opened /dev/usb0", uctx.fd >= 0);
+    char orig_backing[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+    strlcpy(orig_backing, uctx.msc_backing, sizeof(orig_backing));
     int crc = usb_logic_cycle_msc_device(&uctx);
     report_test(ctx, "usb: cycle msc device succeeds", crc == 0);
     report_test(ctx, "usb: cycle msc device has valid backing", uctx.msc_backing[0] != '\0');
+    if (orig_backing[0] != '\0') {
+      usb_logic_set_msc_backing(&uctx, orig_backing);
+    }
     usb_logic_close(&uctx);
     report_test(ctx, "usb: close reset fd to -1", uctx.fd == -1);
   } else {

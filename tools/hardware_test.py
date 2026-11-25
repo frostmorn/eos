@@ -15,6 +15,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import board_detect
+
 try:
     import serial
 except ImportError:
@@ -32,39 +35,12 @@ class Colors:
 
 
 def get_target_chip():
-    if os.path.exists("sdkconfig"):
-        try:
-            with open("sdkconfig") as f:
-                content = f.read()
-                if 'CONFIG_IDF_TARGET="esp32s3"' in content:
-                    return "esp32s3"
-                if 'CONFIG_IDF_TARGET="esp32p4"' in content:
-                    return "esp32p4"
-        except Exception:
-            pass
-    return "esp32p4"
+    return board_detect.get_target_chip()
 
 
 def get_port_chip(port):
-    """Detects chip model ('esp32s3', 'esp32p4') from USB sysfs bcdDevice descriptor."""
-    try:
-        tty_name = os.path.basename(port)
-        usb_dir = os.path.realpath(f"/sys/class/tty/{tty_name}/device/..")
-        bcd_path = os.path.join(usb_dir, "bcdDevice")
-        pid_path = os.path.join(usb_dir, "idProduct")
-        if os.path.exists(bcd_path):
-            bcd = open(bcd_path).read().strip()
-            if bcd == "0101":
-                return "esp32s3"
-            elif bcd == "0102":
-                return "esp32p4"
-        if os.path.exists(pid_path):
-            pid = open(pid_path).read().strip()
-            if pid in ("4001", "4002", "4003"):
-                return get_target_chip()
-    except Exception:
-        pass
-    return None
+    """Detects chip model ('esp32s3', 'esp32p4') from USB sysfs descriptors."""
+    return board_detect.get_port_chip(port, default_chip=get_target_chip())
 
 
 def get_target_cfg():
@@ -79,39 +55,21 @@ def resolve_port(port, target_chip=None):
         return port
     if os.path.exists(port) and (port.startswith("/dev/pts") or port.startswith("/dev/pty")):
         return port
-    if not target_chip:
-        target_chip = get_target_chip()
-    candidates = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
-    for c in candidates:
-        if get_port_chip(c) == target_chip:
-            return c
+    chip = target_chip or get_target_chip()
+    detected = board_detect.find_console_port(chip)
+    if detected:
+        return detected
     if os.path.exists(port):
         return port
+    candidates = sorted(glob.glob("/dev/ttyACM*")) + sorted(glob.glob("/dev/ttyUSB*"))
     return candidates[0] if candidates else port
 
 
 def jtag_reset(port):
-    target_chip = get_port_chip(port) or get_target_chip()
-    try:
-        tty_name = os.path.basename(port)
-        pid_path = os.path.realpath(f"/sys/class/tty/{tty_name}/device/../idProduct")
-        if os.path.exists(pid_path) and open(pid_path).read().strip() in ("4001", "4002", "4003"):
-            # Device is running TinyUSB composite mode, JTAG PHY is disconnected
-            return
-    except Exception:
-        pass
-    cfg = "board/esp32s3-builtin.cfg" if target_chip == "esp32s3" else "board/esp32p4-builtin.cfg"
-    cmd = ["/home/ai/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd"]
-    if target_chip == "esp32s3":
-        cmd.extend(["-c", "set ESP_ONLYCPU 1"])
-    cmd.extend(["-f", cfg])
-    cmd.extend(["-c", "init; reset run; shutdown"])
-    print(f"{Colors.CYAN}Resetting target via OpenOCD JTAG ({target_chip})...{Colors.RESET}")
-    try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
-        time.sleep(3.0)
-    except Exception as e:
-        print(f"{Colors.YELLOW}Warning: OpenOCD reset failed: {e}{Colors.RESET}")
+    chip = get_port_chip(port) or get_target_chip()
+    print(f"{Colors.CYAN}Resetting target ({port}, {chip})...{Colors.RESET}")
+    if not board_detect.reset_target(port, chip):
+        print(f"{Colors.YELLOW}Warning: Target reset failed for {port}{Colors.RESET}")
 
 
 class TestFailFastException(Exception):
@@ -384,6 +342,21 @@ class EOSTestHarness:
             print(f"    Cmd output:\n{cmd_output}\n")
             self.record_fail(suite)
             return False, cmd_output
+
+    def check_host(self, suite, name, cond, detail=""):
+        if suite not in self.suite_counts:
+            self.suite_counts[suite] = {"pass": 0, "fail": 0}
+        if cond:
+            print(f"  [{Colors.GREEN}PASS{Colors.RESET}] {name}")
+            self.passed += 1
+            self.suite_counts[suite]["pass"] += 1
+            return True
+        else:
+            print(f"  [{Colors.RED}FAIL{Colors.RESET}] {name}")
+            if detail:
+                print(f"    Detail: {detail}")
+            self.record_fail(suite)
+            return False
 
     def test_procfs(self):
         suite = "procfs"
@@ -1459,22 +1432,60 @@ class EOSTestHarness:
 
     def test_usb(self):
         suite = "usb"
-        print(f"\n{Colors.BOLD}=== USB Subsystem & Composite Gadget Tests (Slave & Master) ==={Colors.RESET}")
+        print(f"\n{Colors.BOLD}=== USB Subsystem & Composite Gadget Tests (Target + Host) ==={Colors.RESET}")
         self.check(suite, "binfs exposes usbctl", "ls -l /bin/usbctl", r"usbctl", wait=1.0)
         self.check(suite, "binfs exposes lvgl_usb GUI utility", "ls -l /bin/lvgl_usb", r"lvgl_usb", wait=1.0)
-        self.check(suite, "/dev/usb0 device node exists", "ls /dev", r"usb0", wait=1.0)
+        _, devs_out = self.check(suite, "/dev/usb0 device node exists", "ls /dev", r"usb0", wait=1.0)
         self.check(suite, "/dev/usb_serial0 device node exists", "ls /dev", r"usb_serial0", wait=1.0)
         self.check(suite, "/dev/usb_modem0 device node exists", "ls /dev", r"usb_modem0", wait=1.0)
         self.check(suite, "/dev/usb_msc0 device node exists", "ls /dev", r"usb_msc0", wait=1.0)
 
+        has_usb1 = re.search(r"\busb1\b", devs_out) is not None
+        has_sd0 = re.search(r"\bsd0\b", devs_out) is not None
+        usb_dev = "/dev/usb1" if has_usb1 else "/dev/usb0"
+        if self.target_chip == "esp32p4":
+            self.check_host(suite, "/dev/usb1 HS OTG controller exists on esp32p4", has_usb1, devs_out)
+
         # 1. Composite Gadget Initial State & Port Inspection
-        self.check(suite, "usbctl status reports USB status", "usbctl status", r"Role:\s+(DEBUG_USJ|DEVICE)", wait=1.0)
-        self.check(suite, "usbctl role reports active role", "usbctl role", r"Active USB Role:\s+\d+\s+\(\w+\)", wait=1.0)
-        self.check(suite, "usbctl funcs reports default gadget mask", "usbctl funcs", r"Gadget Functions Mask:\s+0x07", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} status reports USB status", f"usbctl -d {usb_dev} status", r"Role:\s+Composite Device", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} role reports active role", f"usbctl -d {usb_dev} role", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} funcs reports default function mask", f"usbctl -d {usb_dev} funcs", r"USB Functions Mask:\s+0x07", wait=1.0)
         self.check(suite, "usbctl msc reports default backing dev", "usbctl msc", r"MSC Backing Device:\s+\S+", wait=1.0)
 
-        # 2. Virtual CDC-ACM Serial Loopback Test
-        self.check(suite, "usbctl serial executes CDC loopback test", "usbctl serial", r"Serial Echo:.*\(PASS\)", wait=1.0)
+        # 2. Virtual / Host CDC-ACM Serial Test
+        gadget = board_detect.find_gadget_device(self.target_chip)
+        if gadget and gadget["tty_ports"]:
+            def _same_port(a, b):
+                if not a or not b or a.startswith("socket://") or b.startswith("socket://"):
+                    return a == b
+                return os.path.realpath(a) == os.path.realpath(b)
+
+            if any(_same_port(p, self.port) for p in gadget["tty_ports"]):
+                self.check(suite, f"usbctl serial outputs EOS_USB_PING over active CDC console ({self.port})",
+                           "usbctl serial", r"EOS_USB_PING",
+                           not_pattern=r"failed to open|No data received", wait=1.0)
+            else:
+                host_cdc_port = gadget["tty_ports"][0]
+                cdc_ok = False
+                cdc_rx = b""
+                try:
+                    with serial.Serial(host_cdc_port, 115200, timeout=1.5) as hser:
+                        hser.reset_input_buffer()
+                        self.run_cmd("usbctl serial", wait=1.0)
+                        deadline = time.time() + 1.5
+                        while time.time() < deadline:
+                            chunk = hser.read(hser.in_waiting or 1)
+                            if chunk:
+                                cdc_rx += chunk
+                                if b"EOS_USB_PING" in cdc_rx:
+                                    cdc_ok = True
+                                    break
+                except Exception as e:
+                    cdc_rx = str(e).encode()
+                self.check_host(suite, f"host CDC ({host_cdc_port}) receives EOS_USB_PING from usbctl serial",
+                                cdc_ok, repr(cdc_rx))
+        else:
+            self.check(suite, "usbctl serial executes CDC loopback test", "usbctl serial", r"Serial Echo:.*\(PASS\)", wait=1.0)
 
         # 3. Virtual CDC-ACM Modem Hayes AT Command Protocol Suite
         self.check(suite, "usbctl modem AT ping responds OK", "usbctl modem AT", r"Modem Response:.*OK", wait=1.0)
@@ -1495,22 +1506,67 @@ class EOSTestHarness:
         self.check(suite, "usbctl msc restores /dev/sd0 backing dev", "usbctl msc /dev/sd0", r"Bound MSC backing device to '/dev/sd0'", wait=1.0)
 
         # 5. Dynamic Slave Gadget Mask Reconfiguration
-        self.check(suite, "usbctl funcs sets Serial+Modem mask (0x03)", "usbctl funcs 0x03", r"Updated gadget functions mask to 0x03", wait=1.0)
-        self.check(suite, "usbctl status verifies Serial+Modem active", "usbctl status", r"Gadgets:\s+0x03 \(SERIAL:ON, MODEM:ON, MSC:OFF\)", wait=1.0)
-        self.check(suite, "usbctl funcs sets Serial-only mask (0x01)", "usbctl funcs 0x01", r"Updated gadget functions mask to 0x01", wait=1.0)
-        self.check(suite, "usbctl status verifies Serial-only active", "usbctl status", r"Gadgets:\s+0x01 \(SERIAL:ON, MODEM:OFF, MSC:OFF\)", wait=1.0)
-        self.check(suite, "usbctl funcs restores all gadgets mask (0x07)", "usbctl funcs 0x07", r"Updated gadget functions mask to 0x07", wait=1.0)
-        self.check(suite, "usbctl status verifies all gadgets active", "usbctl status", r"Gadgets:\s+0x07 \(SERIAL:ON, MODEM:ON, MSC:ON\)", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial+Modem mask (0x03)", f"usbctl -d {usb_dev} funcs 0x03", r"Updated gadget functions mask to 0x03", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} status verifies Serial+Modem active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x03 \(SERIAL:ON, MODEM:ON, MSC:OFF\)", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial-only mask (0x01)", f"usbctl -d {usb_dev} funcs 0x01", r"Updated gadget functions mask to 0x01", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} status verifies Serial-only active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x01 \(SERIAL:ON, MODEM:OFF, MSC:OFF\)", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} funcs restores all functions mask (0x07)", f"usbctl -d {usb_dev} funcs 0x07", r"Updated gadget functions mask to 0x07", wait=1.0)
+        self.check(suite, f"usbctl -d {usb_dev} status verifies all functions active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x07 \(SERIAL:ON, MODEM:ON, MSC:ON\)", wait=1.0)
 
-        # 6. Role Switching & Restore to Device Mode
+        # 6. Host-Side USB Enumeration Verification (when target gadget USB port is wired to host)
+        if gadget:
+            self.check_host(suite, "host sees target TinyUSB composite device (303a)",
+                            gadget["vid"] == board_detect.ESPRESSIF_VID and gadget["manufacturer"] == "EOS",
+                            str(gadget))
+            self.check_host(suite, "host sees CDC-ACM ttyACM port(s) on composite gadget",
+                            len(gadget["tty_ports"]) >= 1, str(gadget["tty_ports"]))
+            msc_deadline = time.time() + 5.0
+            while not gadget["block_devices"] and time.time() < msc_deadline:
+                time.sleep(0.25)
+                refreshed = board_detect.find_gadget_device(self.target_chip)
+                if refreshed:
+                    gadget = refreshed
+            self.check_host(suite, "host sees MSC block device on composite gadget",
+                            len(gadget["block_devices"]) >= 1, str(gadget["block_devices"]))
+            if has_sd0 and gadget["block_devices"]:
+                self.check_host(suite, "host MSC block device reports non-zero SD capacity",
+                                gadget["block_devices"][0]["size_bytes"] > 0,
+                                str(gadget["block_devices"][0]))
+
+        # 7. USB Role Flippage (off -> host -> device) & Host Re-Enumeration Verification
         # On single-PHY ESP32-S3 over /dev/ttyACM*, switching USB role disconnects the test console itself.
         is_single_phy_usb = (self.target_chip == "esp32s3" and "/dev/ttyACM" in (self.port or ""))
         if not is_single_phy_usb:
-            self.check(suite, "usbctl role host switches to host mode", "usbctl role host", r"Switched USB role to 'host'", wait=1.0)
-            self.check(suite, "usbctl host enumerates downstream devices", "usbctl host", r"Host Downstream Devices", wait=1.0)
-            self.check(suite, "usbctl role device restores slave mode", "usbctl role device", r"Switched USB role to 'device'", wait=1.0)
-            self.check(suite, "usbctl role verifies restored slave mode", "usbctl role", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)", wait=1.0)
-            self.check(suite, "usbctl status verifies slave composite status", "usbctl status", r"Role:\s+DEVICE \(Composite Gadgets\)", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} role off disables USB gadget", f"usbctl -d {usb_dev} role off", r"Switched USB role to 'off'", wait=1.5)
+            self.check(suite, f"usbctl -d {usb_dev} role verifies OFF state", f"usbctl -d {usb_dev} role", r"Active USB Role:\s+0\s+\(OFF\)", wait=1.0)
+            if gadget:
+                gone = False
+                deadline = time.time() + 3.0
+                while time.time() < deadline:
+                    if board_detect.find_gadget_device(self.target_chip) is None:
+                        gone = True
+                        break
+                    time.sleep(0.2)
+                self.check_host(suite, "host confirms TinyUSB gadget disconnected in OFF role", gone)
+
+            self.check(suite, f"usbctl -d {usb_dev} role host switches to host mode", f"usbctl -d {usb_dev} role host", r"Switched USB role to 'host'", wait=1.5)
+            self.check(suite, f"usbctl -d {usb_dev} host enumerates downstream devices", f"usbctl -d {usb_dev} host", r"Host Downstream Devices", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} role composite restores composite mode", f"usbctl -d {usb_dev} role composite", r"Switched USB role to 'composite'", wait=2.0)
+            self.check(suite, f"usbctl -d {usb_dev} role verifies restored composite mode", f"usbctl -d {usb_dev} role", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} status verifies composite device status", f"usbctl -d {usb_dev} status", r"Role:\s+Composite Device", wait=1.0)
+
+            if gadget:
+                re_enum = None
+                deadline = time.time() + 5.0
+                while time.time() < deadline:
+                    cand = board_detect.find_gadget_device(self.target_chip)
+                    if cand and cand["tty_ports"] and cand["block_devices"]:
+                        if not has_sd0 or cand["block_devices"][0]["size_bytes"] > 0:
+                            re_enum = cand
+                            break
+                    time.sleep(0.25)
+                self.check_host(suite, "host confirms TinyUSB gadget re-enumerated (CDC + MSC) after role flip",
+                                re_enum is not None, str(re_enum))
 
     def print_summary(self):
         total = self.passed + self.failed

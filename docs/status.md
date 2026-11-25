@@ -46,7 +46,7 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | `bus` | `root` | **Partial** | devctl DevTree Lifecycle | Manual / Optional |
 | `bus` | `sdio` | **Implemented** | sdio (hardware_test.py) | jc4880p443c_i_w_y |
 | `bus` | `spi` | **Implemented** | devctl | lilka_v23 |
-| `bus` | `usb` | **Implemented** | devctl | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
+| `bus` | `usb` | **Partial** (Device CDC+MSC real; Host PHY-only / enum simulated) | devctl | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
 | `display` | `compositor` | **Implemented** | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
 | `display` | `mem_fb` | **Implemented** | devctl attach/detach | Manual / Optional |
 | `display` | `qemu_rgb` | **Implemented** | devctl, launcher | esp32s3_qemu |
@@ -63,12 +63,12 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | `storage` | `flash` | **Implemented** | devctl, coreutils | esp32s3_qemu, lilka_v23 |
 | `storage` | `partition` | **Implemented** | devctl | Manual / Optional |
 | `storage` | `sd` | **Implemented** | sdio (hardware_test.py) | jc4880p443c_i_w_y, lilka_v23 |
-| `usb` | `host_cdc` | **Implemented** | devctl attach/detach | Manual / Optional |
-| `usb` | `host_hid` | **Implemented** | devctl attach/detach | Manual / Optional |
-| `usb` | `host_msc` | **Implemented** | devctl attach/detach | Manual / Optional |
+| `usb` | `host_cdc` | **Partial** (RAM simulation) | devctl attach/detach | Manual / Optional |
+| `usb` | `host_hid` | **Partial** (RAM simulation) | devctl attach/detach | Manual / Optional |
+| `usb` | `host_msc` | **Partial** (RAM simulation) | devctl attach/detach | Manual / Optional |
 | `usb` | `serial` | **Implemented** | devctl, usbctl, lvgl_usb | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
-| `usb` | `modem` | **Implemented** | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
-| `usb` | `msc` | **Implemented** | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
+| `usb` | `modem` | **Partial** (Virtual AT emulator) | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
+| `usb` | `msc` | **Implemented** (SDMMC/SDSPI real; no-backing RAM sim) | devctl attach/detach | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
 
 
 ## 4. Core Kernel Subsystems & Features

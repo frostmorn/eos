@@ -935,6 +935,71 @@
         "\\blv_obj_set_style_transform_scale\\b"
       ],
       "rationale": "AGENTS.md §2 & §3: Complex/fancy LVGL widgets and scale transforms are unsuitable for compact handheld screens and keyboard-only navigation; use centralized eos_open_menu() and simple standard controls."
+    },
+    {
+      "id": "usb_no_storage_internals",
+      "name": "USB drivers must not couple to storage-specific hardware handles or SDMMC/SPI-flash APIs",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/edriver/usb",
+        "main/edriver/bus/usb"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\bEOS_STORAGE_IOCTL_GET_CARD\\b",
+        "\\btinyusb_msc_new_storage_sdmmc\\b",
+        "\\btinyusb_msc_new_storage_spiflash\\b",
+        "\\bsdmmc_card_t\\b",
+        "\\bwl_handle_t\\b",
+        "driver/sdmmc_host\\.h",
+        "driver/sdspi_host\\.h",
+        "sdmmc_cmd\\.h",
+        "wear_levelling\\.h"
+      ],
+      "rationale": "AGENTS.md §3: USB drivers must remain storage-hardware agnostic and use generic EOS VFS device operations (eos_dev_read/write/lseek and generic storage ioctls) via esp_blockdev_t rather than SDMMC, SPI flash, or raw card handles."
+    },
+    {
+      "id": "no_generic_lock_names",
+      "name": "Forbid generic lock/mutex/sem field names without scope",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ecore",
+        "main/edriver",
+        "main/efs"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "exclude_files": [
+        "main/ecore/display.c",
+        "main/ecore/proc.c",
+        "main/ecore/vfs.h",
+        "main/edriver/bus/adc/adc.c",
+        "main/edriver/bus/i2c/i2c.c",
+        "main/edriver/bus/sdio/sdio.c",
+        "main/edriver/display/qemu_rgb/qemu_rgb.c",
+        "main/edriver/display/st7701s/st7701s.c",
+        "main/edriver/display/st7789/st7789.c",
+        "main/edriver/input/gpio_keyboard/gpio_keyboard.c",
+        "main/edriver/net/wifi/wifi.c",
+        "main/edriver/power/battery/battery.c",
+        "main/edriver/sound/max98357/max98357.c",
+        "main/edriver/usb/host_cdc/host_cdc.h",
+        "main/edriver/usb/host_hid/host_hid.h",
+        "main/edriver/usb/host_msc/host_msc.h",
+        "main/edriver/usb/modem/modem.h",
+        "main/edriver/usb/serial/serial.h",
+        "main/efs/pipefs/pipefs.c",
+        "main/efs/tmpfs/tmpfs.c"
+      ],
+      "patterns": [
+        "(SemaphoreHandle_t|pthread_mutex_t|portMUX_TYPE)\\s+(lock|mutex|mtx|sem|sema|spinlock|rwlock)\\s*;"
+      ],
+      "rationale": "Lock and mutex fields must carry a descriptive scope-specific name (e.g., io_mutex, bus_mutex, state_mutex, ring_mutex) instead of generic 'lock'/'mutex'/'mtx'/'sem', so readers immediately know what invariant the lock protects."
     }
   ]
 }
