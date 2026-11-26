@@ -12,13 +12,6 @@
 #include <errno.h>
 #include <string.h>
 
-#if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32P4)
-#if CONFIG_TINYUSB_CDC_ENABLED
-#include <tinyusb.h>
-#include <tinyusb_cdc_acm.h>
-#endif
-#endif
-
 bool driver_usb_serial_init(eos_dev_t *dev) {
   eos_usb_serial_state_t *st = eos_psram_malloc_prefer(sizeof(eos_usb_serial_state_t));
   if (!st) {
@@ -96,22 +89,6 @@ ssize_t driver_usb_serial_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   eos_usb_serial_state_t *st = (eos_usb_serial_state_t *)dev->state;
   xSemaphoreTake(st->mutex, portMAX_DELAY);
 
-#if CONFIG_TINYUSB_CDC_ENABLED
-  if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0) && st->rx_count == 0) {
-    size_t rx_sz = 0;
-    if (tinyusb_cdcacm_read(TINYUSB_CDC_ACM_0, (uint8_t *)dst, size, &rx_sz) == ESP_OK && rx_sz > 0) {
-      st->rx_total += (uint32_t)rx_sz;
-      xSemaphoreGive(st->mutex);
-      return (ssize_t)rx_sz;
-    }
-    if (size > 0) {
-      xSemaphoreGive(st->mutex);
-      errno = EAGAIN;
-      return -1;
-    }
-  }
-#endif
-
   size_t to_copy = (size < st->rx_count) ? size : st->rx_count;
   for (size_t i = 0; i < to_copy; i++) {
     ((uint8_t *)dst)[i] = st->rx_buf[st->rx_tail];
@@ -135,20 +112,14 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
 
   const uint8_t *src = (const uint8_t *)data;
 
-#if CONFIG_TINYUSB_CDC_ENABLED
-  if (tinyusb_cdcacm_initialized(TINYUSB_CDC_ACM_0)) {
-    size_t queued = tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, src, size);
-    esp_err_t flush_err = tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, pdMS_TO_TICKS(10));
-    if (queued == 0 && size > 0 && flush_err != ESP_OK) {
+  if (dev->parent) {
+    size_t sent = 0;
+    if (eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_USB_IOCTL_CDC_SEND, (uint8_t)0, src, size, &sent) == 0 && sent > 0) {
+      st->tx_total += (uint32_t)sent;
       xSemaphoreGive(st->mutex);
-      errno = EIO;
-      return -1;
+      return (ssize_t)sent;
     }
-    st->tx_total += (uint32_t)queued;
-    xSemaphoreGive(st->mutex);
-    return (ssize_t)queued;
   }
-#endif
 
   size_t written = 0;
   for (size_t i = 0; i < size; i++) {
@@ -185,6 +156,25 @@ int driver_usb_serial_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       out_st->rx_bytes = st->rx_total;
       out_st->tx_bytes = st->tx_total;
       out_st->host_device_connected = st->connected;
+      xSemaphoreGive(st->mutex);
+      return 0;
+    }
+
+    case EOS_USB_IOCTL_CDC_PUSH_RX: {
+      const uint8_t *buf = va_arg(args, const uint8_t *);
+      size_t len = va_arg(args, size_t);
+      if (!buf) {
+        errno = EINVAL;
+        return -1;
+      }
+      xSemaphoreTake(st->mutex, portMAX_DELAY);
+      for (size_t i = 0; i < len; i++) {
+        if (st->rx_count < EOS_USB_SERIAL_RING_BUF_SIZE) {
+          st->rx_buf[st->rx_head] = buf[i];
+          st->rx_head = (st->rx_head + 1) % EOS_USB_SERIAL_RING_BUF_SIZE;
+          st->rx_count++;
+        }
+      }
       xSemaphoreGive(st->mutex);
       return 0;
     }

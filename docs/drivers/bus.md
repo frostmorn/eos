@@ -98,11 +98,16 @@ Exposed when opening individual GPIO pin nodes:
 | `EOS_USB_IOCTL_GADGET_GET_FUNCS` | `804` | `uint32_t *out_funcs_mask` | Queries enabled composite gadget functions bitmask. |
 | `EOS_USB_IOCTL_GADGET_SET_MSC_DEV` | `805` | `const char *dev_path` | Binds backing block device (e.g. `/dev/sd0`) to MSC gadget. |
 | `EOS_USB_IOCTL_GADGET_GET_MSC_DEV` | `806` | `char *out_dev_path` | Queries current backing block device path. |
-| `EOS_USB_IOCTL_JTAG_SET_FREQ` | `807` | `uint32_t freq_hz` | Configures USB JTAG clock frequency in Hz. |
-| `EOS_USB_IOCTL_JTAG_SCAN` | `808` | `eos_usb_jtag_pattern_t *pat` | Executes a synthetic JTAG TDI/TMS scan test pattern (`tdo = tdi ^ tms`). |
-| `EOS_USB_IOCTL_HOST_ENUM` | `809` | `none` | Triggers bus enumeration of downstream host devices. |
-| `EOS_USB_IOCTL_HOST_RESET_PORT` | `810` | `uint32_t port_no` | Drives hardware reset on downstream host port. |
-| `EOS_USB_IOCTL_HOST_GET_DEV_LIST` | `811` | `eos_usb_host_dev_list_t *out_list` | Queries enumerated downstream devices list. |
+| `EOS_USB_IOCTL_GADGET_SET_MTP_PATH` | `807` | `const char *base_path` | Configures VFS mount path exported by MTP (e.g. `/mnt/sd` or `/`). |
+| `EOS_USB_IOCTL_GADGET_GET_MTP_PATH` | `808` | `char *out_base_path` | Queries current VFS mount path exported by MTP. |
+| `EOS_USB_IOCTL_JTAG_SET_FREQ` | `809` | `uint32_t freq_hz` | Configures USB JTAG clock frequency in Hz. |
+| `EOS_USB_IOCTL_JTAG_SCAN` | `810` | `eos_usb_jtag_pattern_t *pat` | Executes a synthetic JTAG TDI/TMS scan test pattern (`tdo = tdi ^ tms`). |
+| `EOS_USB_IOCTL_HOST_ENUM` | `811` | `none` | Triggers bus enumeration of downstream host devices. |
+| `EOS_USB_IOCTL_HOST_RESET_PORT` | `812` | `uint32_t port_no` | Drives hardware reset on downstream host port. |
+| `EOS_USB_IOCTL_HOST_GET_DEV_LIST` | `813` | `eos_usb_host_dev_list_t *out_list` | Queries enumerated downstream devices list. |
+| `EOS_USB_IOCTL_CDC_SEND` | `814` | `uint8_t cdc_index, const void *buf, size_t len, size_t *out_sent` | Transmits data packet over CDC-ACM bulk IN endpoint. |
+| `EOS_USB_IOCTL_CDC_PUSH_RX` | `815` | `const void *buf, size_t len` | Delivers received CDC-ACM bulk OUT bytes to child serial/modem driver. |
+| `EOS_USB_IOCTL_MTP_ATTACH_BUS` | `816` | `uint8_t bus_id, uint8_t out_ep, uint8_t in_ep, uint8_t int_ep` | Registers MTP interface and endpoints with CherryUSB device stack. |
 
 ---
 

@@ -131,7 +131,11 @@ static int format_fat32_device(int fd, const char *dev_path, const char *label, 
   if (ioctl(fd, EOS_STORAGE_IOCTL_GET_CAPACITY, &total_secs) != 0 || total_secs == 0) {
     off_t end = lseek(fd, 0, SEEK_END);
     if (end > 0) {
-      total_secs = (uint32_t)end;
+      // If the underlying device or file reports byte offset on SEEK_END, convert bytes to sectors
+      total_secs = (uint32_t)(end / sec_sz);
+      if (total_secs == 0) {
+        total_secs = (uint32_t)end;
+      }
     }
   }
   if (total_secs <= EOS_MKFS_FAT32_RSVD_SECS) {

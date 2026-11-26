@@ -1027,9 +1027,15 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
       st->st_mode = S_IFDIR | 0555;
       return 0;
 
-    case PROCFS_NODE_STATIC_FILE:
+    case PROCFS_NODE_STATIC_FILE: {
       st->st_mode = S_IFREG | 0444;
+      char *content = procfs_gen_static_file(parsed.static_name);
+      if (content) {
+        st->st_size = (off_t)strlen(content);
+        free(content);
+      }
       return 0;
+    }
 
     case PROCFS_NODE_PID_DIR: {
       eos_proc_t p;
@@ -1055,16 +1061,7 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
     case PROCFS_NODE_PID_STAT:
     case PROCFS_NODE_PID_CMDLINE:
     case PROCFS_NODE_PID_CWD:
-    case PROCFS_NODE_PID_ENVIRON: {
-      eos_proc_t p;
-      if (!eos_proc_get_copy(parsed.pid, &p)) {
-        errno = ENOENT;
-        return -1;
-      }
-      st->st_mode = S_IFREG | 0444;
-      return 0;
-    }
-
+    case PROCFS_NODE_PID_ENVIRON:
     case PROCFS_NODE_PID_FD_ENTRY: {
       eos_proc_t p;
       if (!eos_proc_get_copy(parsed.pid, &p)) {
@@ -1072,6 +1069,11 @@ static int procfs_stat(void *ctx, const char *path, struct stat *st) {
         return -1;
       }
       st->st_mode = S_IFREG | 0444;
+      char *content = procfs_gen_proc_file(&parsed);
+      if (content) {
+        st->st_size = (off_t)strlen(content);
+        free(content);
+      }
       return 0;
     }
 

@@ -21,7 +21,7 @@ except ImportError:
     serial = None
 
 ESPRESSIF_VID = "303a"
-TINYUSB_PIDS = ("4001", "4002", "4003")
+TINYUSB_PIDS = tuple(f"40{i:02x}" for i in range(256))
 ROM_DOWNLOAD_PID = "0009"
 JTAG_PID = "1001"
 

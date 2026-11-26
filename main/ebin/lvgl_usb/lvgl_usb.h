@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include "ecore/lvgl.h"
 
-#define EOS_LVGL_USB_MAX_ITEMS 6
+#define EOS_LVGL_USB_MAX_ITEMS 8
 #define EOS_LVGL_USB_STEP_MS   10
 
 typedef enum {

@@ -484,11 +484,16 @@ typedef enum {
   EOS_USB_IOCTL_GADGET_GET_FUNCS,     // uint32_t *out_funcs_mask
   EOS_USB_IOCTL_GADGET_SET_MSC_DEV,   // const char *dev_path (e.g. "/dev/sd0")
   EOS_USB_IOCTL_GADGET_GET_MSC_DEV,   // char *out_dev_path
+  EOS_USB_IOCTL_GADGET_SET_MTP_PATH,  // const char *base_path (e.g. "/mnt/sd" or "/")
+  EOS_USB_IOCTL_GADGET_GET_MTP_PATH,  // char *out_base_path
   EOS_USB_IOCTL_JTAG_SET_FREQ,        // uint32_t freq_hz
   EOS_USB_IOCTL_JTAG_SCAN,            // eos_usb_jtag_pattern_t *pattern
   EOS_USB_IOCTL_HOST_ENUM,            // no args
   EOS_USB_IOCTL_HOST_RESET_PORT,      // uint32_t port_no
   EOS_USB_IOCTL_HOST_GET_DEV_LIST,    // eos_usb_host_dev_list_t *out_list
+  EOS_USB_IOCTL_CDC_SEND,             // uint8_t cdc_index, const void *buf, size_t len, size_t *out_sent
+  EOS_USB_IOCTL_CDC_PUSH_RX,          // const void *buf, size_t len
+  EOS_USB_IOCTL_MTP_ATTACH_BUS,       // uint8_t bus_id, uint8_t out_ep, uint8_t in_ep, uint8_t int_ep
 } eos_ioctl_t;
 
 // (^__^)==\~

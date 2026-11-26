@@ -60,6 +60,8 @@ int usb_logic_refresh(usb_logic_ctx_t *ctx) {
     ctx->gadget_mask = ctx->status.gadget_funcs_enabled;
     strncpy(ctx->msc_backing, ctx->status.msc_backing_dev, sizeof(ctx->msc_backing) - 1);
     ctx->msc_backing[sizeof(ctx->msc_backing) - 1] = '\0';
+    strncpy(ctx->mtp_path, ctx->status.mtp_base_path, sizeof(ctx->mtp_path) - 1);
+    ctx->mtp_path[sizeof(ctx->mtp_path) - 1] = '\0';
     return 0;
   }
   return -1;
@@ -125,6 +127,30 @@ int usb_logic_toggle_gadget(usb_logic_ctx_t *ctx, uint32_t func_bit, bool enable
 int usb_logic_set_msc_backing(usb_logic_ctx_t *ctx, const char *path) {
   if (!ctx || ctx->fd < 0 || !path) return -1;
   if (ioctl(ctx->fd, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, path) < 0) {
+    return -1;
+  }
+  return usb_logic_refresh(ctx);
+}
+
+int usb_logic_set_mtp_path(usb_logic_ctx_t *ctx, const char *path) {
+  if (!ctx || ctx->fd < 0 || !path) return -1;
+  if (ioctl(ctx->fd, EOS_USB_IOCTL_GADGET_SET_MTP_PATH, path) < 0) {
+    return -1;
+  }
+  return usb_logic_refresh(ctx);
+}
+
+int usb_logic_set_storage_mode(usb_logic_ctx_t *ctx, bool mtp_mode) {
+  if (!ctx || ctx->fd < 0) return -1;
+  uint32_t mask = ctx->gadget_mask;
+  if (mtp_mode) {
+    mask &= ~EOS_USB_GADGET_FUNC_MSC;
+    mask |= EOS_USB_GADGET_FUNC_MTP;
+  } else {
+    mask &= ~EOS_USB_GADGET_FUNC_MTP;
+    mask |= EOS_USB_GADGET_FUNC_MSC;
+  }
+  if (ioctl(ctx->fd, EOS_USB_IOCTL_GADGET_SET_FUNCS, mask) < 0) {
     return -1;
   }
   return usb_logic_refresh(ctx);

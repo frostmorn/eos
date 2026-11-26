@@ -13,7 +13,9 @@
 enum {
   ACT_ROLE = 1,
   ACT_GADGETS,
+  ACT_STORAGE_MODE,
   ACT_MSC_CYCLE,
+  ACT_MTP_PATH_CYCLE,
   ACT_DIAG,
   ACT_SET_ROLE_DEBUG,
   ACT_SET_ROLE_COMP,
@@ -22,6 +24,7 @@ enum {
   ACT_TOGGLE_SERIAL,
   ACT_TOGGLE_MODEM,
   ACT_TOGGLE_MSC,
+  ACT_TOGGLE_MTP,
   ACT_SET_PORT0,
   ACT_SET_PORT1,
   ACT_TEST_CDC,
@@ -62,7 +65,8 @@ static void format_gadget_summary(const usb_logic_ctx_t *l, char *buf, size_t sz
   buf[0] = '\0';
   if (l->gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) strlcat(buf, "CDC ", sz);
   if (l->gadget_mask & EOS_USB_GADGET_FUNC_MODEM) strlcat(buf, "Modem ", sz);
-  if (l->gadget_mask & EOS_USB_GADGET_FUNC_MSC) strlcat(buf, "MSC", sz);
+  if (l->gadget_mask & EOS_USB_GADGET_FUNC_MSC) strlcat(buf, "MSC ", sz);
+  if (l->gadget_mask & EOS_USB_GADGET_FUNC_MTP) strlcat(buf, "MTP", sz);
   if (!buf[0]) strlcpy(buf, "None", sz);
 }
 
@@ -97,7 +101,15 @@ static void menu_cancel_cb(eos_menu_t *menu, void *user_data) {
 static void handle_root_select(usb_ui_t *ui, int id) {
   if (id == ACT_ROLE) ui->page = USB_MENU_ROLE;
   else if (id == ACT_GADGETS) ui->page = USB_MENU_GADGETS;
+  else if (id == ACT_STORAGE_MODE) {
+    bool is_mtp = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP) != 0;
+    usb_logic_set_storage_mode(&ui->logic, !is_mtp);
+  }
   else if (id == ACT_MSC_CYCLE) usb_logic_cycle_msc_device(&ui->logic);
+  else if (id == ACT_MTP_PATH_CYCLE) {
+    const char *next_path = (strcmp(ui->logic.mtp_path, "/") == 0) ? "/mnt/sd" : "/";
+    usb_logic_set_mtp_path(&ui->logic, next_path);
+  }
   else if (id == ACT_DIAG) ui->page = USB_MENU_DIAG;
   ui->rebuild_pending = true;
 }
@@ -127,6 +139,9 @@ static void handle_sub_select(usb_ui_t *ui, int id) {
   } else if (id == ACT_TOGGLE_MSC) {
     bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) == 0;
     usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_MSC, en);
+  } else if (id == ACT_TOGGLE_MTP) {
+    bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP) == 0;
+    usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_MTP, en);
   } else if (id == ACT_TEST_CDC) {
     usb_logic_run_serial_echo(&ui->logic);
   } else if (id == ACT_TEST_MODEM) {
@@ -156,8 +171,17 @@ static size_t build_root_items(usb_ui_t *ui) {
   format_gadget_summary(&ui->logic, gbuf, sizeof(gbuf));
   add_item(ui, &n, ACT_ROLE, LV_SYMBOL_SETTINGS, "USB Role", role_label(ui->logic.active_role));
   add_item(ui, &n, ACT_GADGETS, LV_SYMBOL_LIST, "Functions", gbuf);
-  add_item(ui, &n, ACT_MSC_CYCLE, LV_SYMBOL_SD_CARD, "MSC Storage",
-           ui->logic.msc_backing[0] ? ui->logic.msc_backing : "None");
+  const char *storage_desc = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP)
+                                 ? "MTP (Shared)"
+                                 : ((ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) ? "MSC (Exclusive)" : "Off");
+  add_item(ui, &n, ACT_STORAGE_MODE, LV_SYMBOL_SD_CARD, "Storage Mode", storage_desc);
+  if (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) {
+    add_item(ui, &n, ACT_MSC_CYCLE, LV_SYMBOL_DRIVE, "MSC Device",
+             ui->logic.msc_backing[0] ? ui->logic.msc_backing : "None");
+  } else if (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP) {
+    add_item(ui, &n, ACT_MTP_PATH_CYCLE, LV_SYMBOL_DIRECTORY, "MTP Path",
+             ui->logic.mtp_path[0] ? ui->logic.mtp_path : "/mnt/sd");
+  }
   add_item(ui, &n, ACT_DIAG, LV_SYMBOL_REFRESH, "Diagnostics", "Run tests");
   return n;
 }
@@ -182,6 +206,8 @@ static size_t build_sub_items(usb_ui_t *ui, const char **title) {
              (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MODEM) ? "ON" : "OFF");
     add_item(ui, &n, ACT_TOGGLE_MSC, LV_SYMBOL_SD_CARD, "Mass Storage",
              (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MSC) ? "ON" : "OFF");
+    add_item(ui, &n, ACT_TOGGLE_MTP, LV_SYMBOL_DIRECTORY, "Media Transfer",
+             (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP) ? "ON" : "OFF");
   } else if (ui->page == USB_MENU_PORT) {
     *title = "USB Controllers";
     add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)", "Debug / FS");

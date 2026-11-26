@@ -61,14 +61,7 @@ Every linker-wrapped symbol (`-Wl,--wrap=<sym>`) configured in [`main/CMakeLists
 | `lwip_close` | `main/ewrap/socket.c` | Cancels exit cleanup hook on socket descriptor upon explicit closure. | Core lwIP socket close handler. | `tools/hardware_test.py --suite leaks` |
 | `esp_timer_create` | `main/ewrap/esp_timer.c` | Registers exit cleanup hook on high-resolution timer handle in process context. | ESP-IDF esp_timer instance initialization. | `tools/hardware_test.py --suite leaks` |
 | `esp_timer_delete` | `main/ewrap/esp_timer.c` | Cancels exit cleanup hook on high-resolution timer handle upon explicit deletion. | ESP-IDF esp_timer deletion handler. | `tools/hardware_test.py --suite leaks` |
-| `tud_msc_test_unit_ready_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC unit-ready query to generic EOS `usb_msc` driver ops. | TinyUSB MSC class `TEST UNIT READY`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_capacity_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC capacity query to generic EOS `usb_msc` driver ops. | TinyUSB MSC class `READ CAPACITY(10)`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_read10_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC block read to generic EOS VFS storage driver (`eos_dev_lseek`/`eos_dev_read`). | TinyUSB MSC class `READ(10)`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_write10_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC block write to generic EOS VFS storage driver (`eos_dev_lseek`/`eos_dev_write`). | TinyUSB MSC class `WRITE(10)`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_inquiry_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC SCSI inquiry response to generic EOS `usb_msc` driver ops. | TinyUSB MSC class `INQUIRY`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_start_stop_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC start/stop/eject command to generic EOS `usb_msc` driver ops. | TinyUSB MSC class `START STOP UNIT`. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_scsi_cb` | `main/ewrap/tinyusb_msc.c` | Routes TinyUSB MSC generic SCSI commands (e.g., `SYNCHRONIZE CACHE`, `PREVENT ALLOW MEDIUM REMOVAL`) to `usb_msc`. | TinyUSB MSC class SCSI command fallback. | `tools/hardware_test.py --suite usb` |
-| `tud_msc_get_maxlun_cb` | `main/ewrap/tinyusb_msc.c` | Returns LUN count (`1`) when generic EOS `usb_msc` ops are registered. | TinyUSB MSC class `GET MAX LUN`. | `tools/hardware_test.py --suite usb` |
+| `esp_vfs_fat_info` | `main/ewrap/esp_vfs_fat_info.c` | Provides filesystem capacity and free byte counts for MTP storage paths, synthesizing statistics for system root (`/`). | ESP-IDF VFS FatFs info query. | `tools/hardware_test.py --suite usb` |
 
 ---
 

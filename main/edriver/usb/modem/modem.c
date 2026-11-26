@@ -251,6 +251,25 @@ int driver_usb_modem_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       return 0;
     }
 
+    case EOS_USB_IOCTL_CDC_PUSH_RX: {
+      const uint8_t *buf = va_arg(args, const uint8_t *);
+      size_t len = va_arg(args, size_t);
+      if (!buf) {
+        errno = EINVAL;
+        return -1;
+      }
+      xSemaphoreTake(st->mutex, portMAX_DELAY);
+      for (size_t i = 0; i < len; i++) {
+        if (st->rx_count < st->rx_size) {
+          st->rx_buf[st->rx_head] = buf[i];
+          st->rx_head = (st->rx_head + 1) % st->rx_size;
+          st->rx_count++;
+        }
+      }
+      xSemaphoreGive(st->mutex);
+      return 0;
+    }
+
     default:
       errno = ENOSYS;
       return -1;

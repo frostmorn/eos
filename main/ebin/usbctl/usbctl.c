@@ -50,12 +50,14 @@ static int subcmd_status(int argc, char **argv, int fd) {
   printf("  Speed:      %s\n", speed_str);
   printf("  VBUS:       %s\n", st.vbus_present ? "Present" : "Absent");
   printf("  Host Dev:   %s\n", st.host_device_connected ? "Connected" : "None");
-  printf("  Functions:  0x%02lx (SERIAL:%s, MODEM:%s, MSC:%s)\n",
+  printf("  Functions:  0x%02lx (SERIAL:%s, MODEM:%s, MSC:%s, MTP:%s)\n",
          (unsigned long)st.gadget_funcs_enabled,
          (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_SERIAL) ? "ON" : "OFF",
          (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MODEM) ? "ON" : "OFF",
-         (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MSC) ? "ON" : "OFF");
+         (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MSC) ? "ON" : "OFF",
+         (st.gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) ? "ON" : "OFF");
   printf("  MSC Backing:%s\n", st.msc_backing_dev[0] ? st.msc_backing_dev : "None");
+  printf("  MTP Path:   %s\n", st.mtp_base_path[0] ? st.mtp_base_path : "None");
   printf("  RX/TX:      %lu / %lu bytes\n", (unsigned long)st.rx_bytes, (unsigned long)st.tx_bytes);
   return 0;
 }
@@ -136,6 +138,64 @@ static int subcmd_msc(int argc, char **argv, int fd) {
   }
   printf("Bound MSC backing device to '%s'\n", new_path);
   return 0;
+}
+
+static int subcmd_mtp(int argc, char **argv, int fd) {
+  if (argc < 3) {
+    char mtp_path[EOS_USBCTL_PATH_BUF_LEN];
+    memset(mtp_path, 0, sizeof(mtp_path));
+    if (ioctl(fd, EOS_USB_IOCTL_GADGET_GET_MTP_PATH, mtp_path) < 0) {
+      perror("usbctl: ioctl GADGET_GET_MTP_PATH failed");
+      return 1;
+    }
+    printf("MTP Export Path: %s\n", mtp_path[0] ? mtp_path : "None");
+    return 0;
+  }
+
+  const char *new_path = argv[2];
+  if (ioctl(fd, EOS_USB_IOCTL_GADGET_SET_MTP_PATH, new_path) < 0) {
+    perror("usbctl: ioctl GADGET_SET_MTP_PATH failed");
+    return 1;
+  }
+  printf("Configured MTP export path to '%s'\n", new_path);
+  return 0;
+}
+
+static int subcmd_storage(int argc, char **argv, int fd) {
+  if (argc < 3) {
+    printf("Usage: usbctl storage [mtp [path] | msc [dev]]\n");
+    return 1;
+  }
+  if (strcmp(argv[2], "mtp") == 0) {
+    const char *path = (argc >= 4) ? argv[3] : EOS_USB_DEFAULT_MTP_PATH;
+    (void)ioctl(fd, EOS_USB_IOCTL_GADGET_SET_MTP_PATH, path);
+    uint32_t mask = 0;
+    (void)ioctl(fd, EOS_USB_IOCTL_GADGET_GET_FUNCS, &mask);
+    mask &= ~EOS_USB_GADGET_FUNC_MSC;
+    mask |= EOS_USB_GADGET_FUNC_MTP;
+    if (ioctl(fd, EOS_USB_IOCTL_GADGET_SET_FUNCS, mask) < 0) {
+      perror("usbctl: failed to switch to MTP storage");
+      return 1;
+    }
+    printf("Switched USB storage to MTP (Shared VFS: %s)\n", path);
+    return 0;
+  }
+  if (strcmp(argv[2], "msc") == 0) {
+    const char *dev = (argc >= 4) ? argv[3] : EOS_USB_DEFAULT_MSC_BACKING;
+    (void)ioctl(fd, EOS_USB_IOCTL_GADGET_SET_MSC_DEV, dev);
+    uint32_t mask = 0;
+    (void)ioctl(fd, EOS_USB_IOCTL_GADGET_GET_FUNCS, &mask);
+    mask &= ~EOS_USB_GADGET_FUNC_MTP;
+    mask |= EOS_USB_GADGET_FUNC_MSC;
+    if (ioctl(fd, EOS_USB_IOCTL_GADGET_SET_FUNCS, mask) < 0) {
+      perror("usbctl: failed to switch to MSC storage");
+      return 1;
+    }
+    printf("Switched USB storage to MSC (Exclusive Block Dev: %s)\n", dev);
+    return 0;
+  }
+  printf("Unknown storage mode '%s'. Use 'mtp' or 'msc'.\n", argv[2]);
+  return 1;
 }
 
 static int subcmd_serial(int argc, char **argv, int fd) {
@@ -230,6 +290,8 @@ static const eos_usbctl_subcmd_t s_subcmds[] = {
     {"role",   "Get or set active role (debug, device, host, off)", subcmd_role},
     {"funcs",  "Get or set gadget function bitmask", subcmd_funcs},
     {"msc",    "Get or set MSC backing block device", subcmd_msc},
+    {"mtp",    "Get or set MTP VFS export path", subcmd_mtp},
+    {"storage","Select USB storage mode (mtp [path] | msc [dev])", subcmd_storage},
     {"serial", "Send test data to CDC-ACM serial and verify echo", subcmd_serial},
     {"modem",  "Send AT command to virtual CDC-ACM modem", subcmd_modem},
     {"host",   "Enumerate downstream host devices or reset port", subcmd_host},

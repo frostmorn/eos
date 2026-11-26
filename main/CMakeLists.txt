@@ -52,14 +52,7 @@ ${COMPONENT_LIB} INTERFACE
 "-Wl,--wrap=lwip_close"
 "-Wl,--wrap=esp_timer_create"
 "-Wl,--wrap=esp_timer_delete"
-"-Wl,--wrap=tud_msc_test_unit_ready_cb"
-"-Wl,--wrap=tud_msc_capacity_cb"
-"-Wl,--wrap=tud_msc_read10_cb"
-"-Wl,--wrap=tud_msc_write10_cb"
-"-Wl,--wrap=tud_msc_inquiry_cb"
-"-Wl,--wrap=tud_msc_start_stop_cb"
-"-Wl,--wrap=tud_msc_scsi_cb"
-"-Wl,--wrap=tud_msc_get_maxlun_cb"
+"-Wl,--wrap=esp_vfs_fat_info"
 )
 
 target_compile_options(${COMPONENT_LIB} PRIVATE

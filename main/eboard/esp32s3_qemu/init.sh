@@ -8,6 +8,7 @@ devctl attach usb modem usb0
 devctl attach storage flash root
 mount -a
 devctl attach usb msc usb0
+devctl attach usb mtp usb0 --cfg path=/
 devctl attach display qemu_rgb root
 devctl attach display compositor fb0 --cfg role=main,x=0,y=32,w=280,h=176,z=1
 devctl attach display compositor fb0 --cfg role=status,x=0,y=0,w=280,h=32,z=1

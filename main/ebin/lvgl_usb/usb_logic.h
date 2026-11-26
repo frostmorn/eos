@@ -21,6 +21,7 @@ typedef struct {
   eos_usb_role_t active_role;
   uint32_t gadget_mask;
   char msc_backing[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+  char mtp_path[EOS_USB_MTP_MAX_PATH_LEN];
   bool serial_test_passed;
   char modem_test_response[EOS_USB_LOGIC_MAX_RESP];
   bool last_test_serial_valid;
@@ -34,6 +35,8 @@ int usb_logic_refresh(usb_logic_ctx_t *ctx);
 int usb_logic_set_role(usb_logic_ctx_t *ctx, eos_usb_role_t role);
 int usb_logic_toggle_gadget(usb_logic_ctx_t *ctx, uint32_t func_bit, bool enable);
 int usb_logic_set_msc_backing(usb_logic_ctx_t *ctx, const char *path);
+int usb_logic_set_mtp_path(usb_logic_ctx_t *ctx, const char *path);
+int usb_logic_set_storage_mode(usb_logic_ctx_t *ctx, bool mtp_mode);
 int usb_logic_cycle_msc_device(usb_logic_ctx_t *ctx);
 int usb_logic_run_serial_echo(usb_logic_ctx_t *ctx);
 int usb_logic_run_modem_ping(usb_logic_ctx_t *ctx, const char *cmd);

@@ -1,3 +1,5 @@
 dependencies:
+  cherry-embedded/cherryusb:
+    version: "^1.6.1"
   espressif/esp_tinyusb:
     version: "^2.0.1~1"
