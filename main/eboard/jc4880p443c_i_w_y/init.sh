@@ -8,8 +8,8 @@ devctl attach bus i2c root --pin sda=7,scl=8 --cfg port=0,clk_speed=400000
 devctl attach input gt911 i2c0 --pin rst=-1,int=-1 --cfg clk_speed=400000,width=480,height=800,addr=0x5D
 devctl attach bus gpio root
 devctl attach input gpio_keyboard gpio --pin b=35 --cfg mode=1,pull=1
-devctl attach bus usb root --cfg port=0,role=debug
-devctl attach bus usb root --cfg port=1,role=device
+devctl attach bus usb root --cfg port=0,role=${1:-debug}
+devctl attach bus usb root --cfg port=1,role=${2:-device}
 devctl attach usb serial usb1
 devctl attach usb modem usb1
 devctl attach bus sdio root --pin clk=43,cmd=44,d0=39,d1=40,d2=41,d3=42 --cfg slot=0,width=4,freq_khz=40000,ldo_chan=4

@@ -30,7 +30,7 @@ typedef struct {
 
 // 12-point empirical 1S LiPo Open-Circuit Voltage (OCV) profile
 static const lipo_lut_t k_lipo_curve[] = {
-    {4180, 100},
+    {4180, EOS_PERCENT_MAX},
     {4100,  90},
     {4000,  80},
     {3900,  70},
@@ -64,7 +64,7 @@ typedef struct {
   eos_battery_status_t last_status;
   int32_t read_offset;
 
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t state_lock;
 } battery_state_t;
 
 // ── Non-linear SoC Calculation ────────────────────────────────
@@ -72,7 +72,7 @@ typedef struct {
 static int32_t battery_calculate_soc(uint32_t v_cell_mv, uint32_t v_empty,
                                      uint32_t v_full) {
   if (v_cell_mv >= v_full || v_cell_mv >= k_lipo_curve[0].mv) {
-    return 100;
+    return EOS_PERCENT_MAX;
   }
   if (v_cell_mv <= v_empty ||
       v_cell_mv <= k_lipo_curve[lipo_curve_points() - 1].mv) {
@@ -93,8 +93,8 @@ static int32_t battery_calculate_soc(uint32_t v_cell_mv, uint32_t v_empty,
       uint32_t delta_v = v_cell_mv - v_low;
       uint32_t span_soc = soc_high - soc_low;
       int32_t soc = (int32_t)(soc_low + (delta_v * span_soc) / span_v);
-      if (soc > 100)
-        soc = 100;
+      if (soc > EOS_PERCENT_MAX)
+        soc = EOS_PERCENT_MAX;
       if (soc < 0)
         soc = 0;
       return soc;
@@ -256,8 +256,8 @@ static bool driver_power_battery_init(eos_dev_t *dev) {
   if (!st)
     return false;
 
-  st->lock = xSemaphoreCreateMutex();
-  if (!st->lock) {
+  st->state_lock = xSemaphoreCreateMutex();
+  if (!st->state_lock) {
     free(st);
     return false;
   }
@@ -298,11 +298,11 @@ static void driver_power_battery_shutdown(eos_dev_t *dev) {
 
   battery_state_t *st = dev->state;
 
-  if (st->lock) {
-    xSemaphoreTake(st->lock, portMAX_DELAY);
-    xSemaphoreGive(st->lock);
-    vSemaphoreDelete(st->lock);
-    st->lock = NULL;
+  if (st->state_lock) {
+    xSemaphoreTake(st->state_lock, portMAX_DELAY);
+    xSemaphoreGive(st->state_lock);
+    vSemaphoreDelete(st->state_lock);
+    st->state_lock = NULL;
   }
 
   free(st);
@@ -355,13 +355,13 @@ static ssize_t driver_power_battery_read(eos_dev_t *dev, int fd, void *dst,
   }
 
   battery_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->state_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
 
   if (st->read_offset > 0) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->state_lock);
     return 0; // EOF for cat /dev/battery0
   }
 
@@ -369,7 +369,7 @@ static ssize_t driver_power_battery_read(eos_dev_t *dev, int fd, void *dst,
   bool ok = battery_update_info(dev, st, &info);
 
   if (!ok) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->state_lock);
     errno = EIO;
     return -1;
   }
@@ -388,14 +388,14 @@ static ssize_t driver_power_battery_read(eos_dev_t *dev, int fd, void *dst,
   }
 
   if (n <= 0) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->state_lock);
     return 0;
   }
 
   size_t to_copy = ((size_t)n < size) ? (size_t)n : size;
   memcpy(dst, buf, to_copy);
   st->read_offset += (int32_t)to_copy;
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->state_lock);
   return (ssize_t)to_copy;
 }
 
@@ -408,7 +408,7 @@ static int driver_power_battery_ioctl(eos_dev_t *dev, int fd, int cmd,
   }
 
   battery_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->state_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -434,7 +434,7 @@ static int driver_power_battery_ioctl(eos_dev_t *dev, int fd, int cmd,
     break;
   }
 
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->state_lock);
   return ret;
 }
 

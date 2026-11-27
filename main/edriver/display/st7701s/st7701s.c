@@ -39,7 +39,7 @@ typedef struct {
   bool bl_ledc_active;
   uint8_t brightness;
   char pwm_dev_name[EOS_SMALL_STR_LEN];
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t disp_lock;
 } st7701s_state_t;
 
 // JC4880P443C 4.3" 480x800 ST7701S initialization sequence
@@ -196,14 +196,14 @@ static void st7701s_power_phy_ldo(st7701s_state_t *state, int32_t ldo_chan, int3
 }
 
 static int st7701s_set_brightness(st7701s_state_t *st, uint32_t b) {
-  if (b > 100) b = 100;
+  if (b > EOS_PERCENT_MAX) b = EOS_PERCENT_MAX;
   st->brightness = (uint8_t)b;
   eos_dev_t *pdev = eos_dev_find_by_name(st->pwm_dev_name[0] ? st->pwm_dev_name : "pwm0");
   if (pdev) {
     eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_PWM_IOCTL_SET_DUTY, b);
   } else if (st->bl_pin >= 0) {
     if (st->bl_ledc_active) {
-      uint32_t hw = (b * 1023) / 100;
+      uint32_t hw = (b * 1023) / EOS_PERCENT_MAX;
       ledc_set_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0, hw);
       ledc_update_duty(LEDC_LOW_SPEED_MODE, LEDC_CHANNEL_0);
     } else {
@@ -219,14 +219,14 @@ static int st7701s_switch_format(eos_dev_t *dev, st7701s_state_t *st, uint32_t f
     errno = ENOTSUP;
     return -1;
   }
-  if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+  if (st->disp_lock) xSemaphoreTakeRecursive(st->disp_lock, portMAX_DELAY);
   if (st->panel) {
     esp_lcd_panel_disp_on_off(st->panel, false);
     esp_lcd_panel_del(st->panel);
     st->panel = NULL;
   }
   if (!st7701s_create_panel(dev, st, st->native_w, st->native_h, st->dpi_clk_mhz, st->rst_pin, fmt)) {
-    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
     errno = EIO;
     return -1;
   }
@@ -235,7 +235,7 @@ static int st7701s_switch_format(eos_dev_t *dev, st7701s_state_t *st, uint32_t f
   esp_lcd_panel_init(st->panel);
   esp_lcd_panel_disp_on_off(st->panel, true);
   st->format = fmt;
-  if (st->lock) xSemaphoreGiveRecursive(st->lock);
+  if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
   EOS_LOGI("st7701s: color format switched to %s", (fmt == EOS_DISPLAY_FMT_RGB888) ? "RGB888" : "RGB565");
   return 0;
 }
@@ -318,7 +318,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
 
   state->bl_pin = bl_pin;
   state->rst_pin = rst_pin;
-  state->brightness = 100;
+  state->brightness = EOS_PERCENT_MAX;
   char *pwm_s = eos_cfg_get_s(dev->cfg, "pwm", "");
   if (pwm_s) snprintf(state->pwm_dev_name, sizeof(state->pwm_dev_name), "%s", pwm_s);
   state->width = native_w;
@@ -402,7 +402,7 @@ bool driver_display_st7701s_init(eos_dev_t *dev) {
     EOS_LOGI("st7701s: backlight ON on GPIO %d (LEDC=%d)", (int)bl_pin, state->bl_ledc_active);
   }
 
-  state->lock = xSemaphoreCreateRecursiveMutex();
+  state->disp_lock = xSemaphoreCreateRecursiveMutex();
 
   return true;
 }
@@ -415,8 +415,8 @@ ssize_t driver_display_st7701s_write(eos_dev_t *dev, int fd, const void *buf, si
   }
 
   st7701s_state_t *state = dev->state;
-  if (state->lock) {
-    xSemaphoreTakeRecursive(state->lock, portMAX_DELAY);
+  if (state->disp_lock) {
+    xSemaphoreTakeRecursive(state->disp_lock, portMAX_DELAY);
   }
 
   eos_rect_t r;
@@ -424,23 +424,23 @@ ssize_t driver_display_st7701s_write(eos_dev_t *dev, int fd, const void *buf, si
 
   size_t bytes_per_pixel = eos_display_format_bytes_per_pixel(state->format);
   if ((len % bytes_per_pixel) != 0) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    if (state->disp_lock) xSemaphoreGiveRecursive(state->disp_lock);
     errno = EINVAL;
     return -1;
   }
   uint32_t total_rows = eos_rect_calc_rows(len, r.w, bytes_per_pixel, r.h);
   if (total_rows == 0) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    if (state->disp_lock) xSemaphoreGiveRecursive(state->disp_lock);
     errno = EINVAL;
     return -1;
   }
   size_t row_bytes = (size_t)r.w * bytes_per_pixel;
 
   if (esp_lcd_panel_draw_bitmap(state->panel, r.x, r.y, r.x + r.w, r.y + total_rows, buf) != ESP_OK) {
-    if (state->lock) xSemaphoreGiveRecursive(state->lock);
+    if (state->disp_lock) xSemaphoreGiveRecursive(state->disp_lock);
     return -1;
   }
-  if (state->lock) xSemaphoreGiveRecursive(state->lock);
+  if (state->disp_lock) xSemaphoreGiveRecursive(state->disp_lock);
   return (ssize_t)((size_t)total_rows * row_bytes);
 }
 
@@ -481,14 +481,14 @@ int driver_display_st7701s_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) 
     return 0;
   }
   case EOS_DISPLAY_IOCTL_LOCK:
-    if (st->lock) {
-      xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+    if (st->disp_lock) {
+      xSemaphoreTakeRecursive(st->disp_lock, portMAX_DELAY);
     }
     return 0;
 
   case EOS_DISPLAY_IOCTL_UNLOCK:
-    if (st->lock) {
-      xSemaphoreGiveRecursive(st->lock);
+    if (st->disp_lock) {
+      xSemaphoreGiveRecursive(st->disp_lock);
     }
     return 0;
 
@@ -534,9 +534,9 @@ void driver_display_st7701s_shutdown(eos_dev_t *dev) {
   if (!state)
     return;
 
-  if (state->lock) {
-    vSemaphoreDelete(state->lock);
-    state->lock = NULL;
+  if (state->disp_lock) {
+    vSemaphoreDelete(state->disp_lock);
+    state->disp_lock = NULL;
   }
 
   if (state->bl_pin >= 0) {

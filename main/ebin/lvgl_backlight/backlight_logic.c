@@ -9,7 +9,7 @@
 
 #include "ecore/ioctl.h"
 
-static const int s_presets[EOS_BACKLIGHT_PRESET_COUNT] = {10, 25, 50, 75, 100};
+static const int s_presets[EOS_BACKLIGHT_PRESET_COUNT] = {10, 25, 50, 75, EOS_PERCENT_MAX};
 
 const int *backlight_logic_get_presets(size_t *count) {
   if (count) *count = EOS_BACKLIGHT_PRESET_COUNT;
@@ -20,7 +20,7 @@ int backlight_logic_init(backlight_device_t *dev) {
   if (!dev) return -1;
   dev->dev_fd = -1;
   dev->is_pwm = false;
-  dev->cur_brightness = EOS_BACKLIGHT_MAX_DUTY;
+  dev->cur_brightness = EOS_PERCENT_MAX;
   dev->smooth_fade = false;
 
   const char *pwm_env = getenv("EOS_PWM");
@@ -35,7 +35,7 @@ int backlight_logic_init(backlight_device_t *dev) {
     if (n > 0) {
       buf[n] = '\0';
       int val = atoi(buf);
-      if (val >= 0 && val <= EOS_BACKLIGHT_MAX_DUTY) {
+      if (val >= 0 && val <= EOS_PERCENT_MAX) {
         dev->cur_brightness = val;
       }
     }
@@ -49,7 +49,7 @@ int backlight_logic_init(backlight_device_t *dev) {
   if (fd >= 0) {
     dev->dev_fd = fd;
     dev->is_pwm = false;
-    uint8_t b = 100;
+    uint8_t b = EOS_PERCENT_MAX;
     if (ioctl(fd, EOS_DISPLAY_IOCTL_GET_BRIGHTNESS, &b) == 0) {
       dev->cur_brightness = (int)b;
     }
@@ -69,7 +69,7 @@ void backlight_logic_close(backlight_device_t *dev) {
 int backlight_logic_apply(backlight_device_t *dev, int val) {
   if (!dev) return -1;
   if (val < 0) val = 0;
-  if (val > EOS_BACKLIGHT_MAX_DUTY) val = EOS_BACKLIGHT_MAX_DUTY;
+  if (val > EOS_PERCENT_MAX) val = EOS_PERCENT_MAX;
   dev->cur_brightness = val;
 
   if (dev->dev_fd < 0) return 0;
@@ -77,7 +77,7 @@ int backlight_logic_apply(backlight_device_t *dev, int val) {
   if (dev->is_pwm) {
     if (dev->smooth_fade) {
       eos_pwm_fade_t fade = {
-          .target_duty = (uint16_t)(((uint32_t)val * 65535U) / 100U),
+          .target_duty = (uint16_t)(((uint32_t)val * 65535U) / (uint32_t)EOS_PERCENT_MAX),
           .duration_ms = EOS_BACKLIGHT_FADE_MS,
       };
       return ioctl(dev->dev_fd, EOS_PWM_IOCTL_FADE, &fade);

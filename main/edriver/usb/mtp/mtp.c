@@ -19,6 +19,7 @@
 #include <sys/statvfs.h>
 #include <unistd.h>
 #include <esp_heap_caps.h>
+#include <esp_mac.h>
 
 #ifdef CONFIG_CHERRYUSB_DEVICE
 
@@ -121,20 +122,22 @@ static bool mtp_is_protected_path(const char *path) {
 }
 
 static eos_usb_mtp_obj_t *mtp_find_by_handle(eos_usb_mtp_state_t *st, uint32_t handle) {
-  if (!st || !st->handles || handle == EOS_USB_MTP_ROOT_HANDLE) return NULL;
-  for (size_t i = 0; i < st->handle_count; i++) {
-    if (st->handles[i].in_use && st->handles[i].handle == handle) {
-      return &st->handles[i];
+  if (!st || handle == EOS_USB_MTP_ROOT_HANDLE) return NULL;
+  for (size_t i = 0; i < kv_size(st->handles); i++) {
+    eos_usb_mtp_obj_t *obj = &kv_A(st->handles, i);
+    if (obj->in_use && obj->handle == handle) {
+      return obj;
     }
   }
   return NULL;
 }
 
 static eos_usb_mtp_obj_t *mtp_find_by_path(eos_usb_mtp_state_t *st, const char *path) {
-  if (!st || !st->handles || !path) return NULL;
-  for (size_t i = 0; i < st->handle_count; i++) {
-    if (st->handles[i].in_use && strcmp(st->handles[i].path, path) == 0) {
-      return &st->handles[i];
+  if (!st || !path) return NULL;
+  for (size_t i = 0; i < kv_size(st->handles); i++) {
+    eos_usb_mtp_obj_t *obj = &kv_A(st->handles, i);
+    if (obj->in_use && strcmp(obj->path, path) == 0) {
+      return obj;
     }
   }
   return NULL;
@@ -150,22 +153,23 @@ static eos_usb_mtp_obj_t *mtp_alloc_handle(eos_usb_mtp_state_t *st, uint32_t par
     existing->read_only = mtp_is_protected_path(full_path);
     return existing;
   }
-  if (st->handle_count >= EOS_USB_MTP_MAX_HANDLES) return NULL;
-  eos_usb_mtp_obj_t *obj = &st->handles[st->handle_count++];
-  memset(obj, 0, sizeof(*obj));
-  obj->handle = st->next_handle++;
-  obj->parent_handle = parent_handle;
-  obj->is_dir = is_dir;
-  obj->size = size;
-  obj->format = is_dir ? MTP_FORMAT_ASSOCIATION : MTP_FORMAT_UNDEFINED;
-  obj->read_only = mtp_is_protected_path(full_path);
-  obj->in_use = true;
-  strncpy(obj->path, full_path, sizeof(obj->path) - 1);
-  return obj;
+  eos_usb_mtp_obj_t obj;
+  memset(&obj, 0, sizeof(obj));
+  obj.handle = st->next_handle++;
+  obj.parent_handle = parent_handle;
+  obj.is_dir = is_dir;
+  obj.size = size;
+  obj.format = is_dir ? MTP_FORMAT_ASSOCIATION : MTP_FORMAT_UNDEFINED;
+  obj.read_only = mtp_is_protected_path(full_path);
+  obj.in_use = true;
+  strncpy(obj.path, full_path, sizeof(obj.path) - 1);
+  kv_push(eos_usb_mtp_obj_t, st->handles, obj);
+  return kv_size(st->handles) > 0 ? &kv_A(st->handles, kv_size(st->handles) - 1) : NULL;
 }
 
 static const char *mtp_get_parent_path(eos_usb_mtp_state_t *st, uint32_t parent_handle) {
-  if (parent_handle == EOS_USB_MTP_ROOT_HANDLE || parent_handle == EOS_USB_MTP_ALL_HANDLES) {
+  if (parent_handle == 0 || parent_handle == EOS_USB_MTP_ROOT_HANDLE ||
+      parent_handle == EOS_USB_MTP_ALL_HANDLES) {
     return st->path_spec[0] ? st->path_spec : EOS_USB_DEFAULT_MTP_PATH;
   }
   eos_usb_mtp_obj_t *obj = mtp_find_by_handle(st, parent_handle);
@@ -282,6 +286,7 @@ static void mtp_send_response(eos_usb_mtp_state_t *st, uint16_t resp_code, uint3
 }
 
 static bool mtp_wait_rx_packet(eos_usb_mtp_state_t *st, uint32_t *out_nbytes) {
+  xSemaphoreTake(st->rx_sem, 0);
   st->rx_nbytes = 0;
   usbd_ep_start_read(st->bus_id, st->out_ep, st->rx_buf, EOS_USB_MTP_BUF_SIZE);
   if (xSemaphoreTake(st->rx_sem, pdMS_TO_TICKS(EOS_USB_MTP_TX_TIMEOUT_MS)) != pdTRUE) {
@@ -298,10 +303,11 @@ static void mtp_op_get_device_info(eos_usb_mtp_state_t *st, uint32_t tx_id) {
       MTP_OPERATION_GET_DEVICE_INFO, MTP_OPERATION_OPEN_SESSION, MTP_OPERATION_CLOSE_SESSION,
       MTP_OPERATION_GET_STORAGE_IDS, MTP_OPERATION_GET_STORAGE_INFO, MTP_OPERATION_GET_NUM_OBJECTS,
       MTP_OPERATION_GET_OBJECT_HANDLES, MTP_OPERATION_GET_OBJECT_INFO, MTP_OPERATION_GET_OBJECT,
-      MTP_OPERATION_DELETE_OBJECT, MTP_OPERATION_SEND_OBJECT_INFO, MTP_OPERATION_SEND_OBJECT,
-      MTP_OPERATION_GET_DEVICE_PROP_DESC, MTP_OPERATION_GET_DEVICE_PROP_VALUE,
-      MTP_OPERATION_GET_OBJECT_PROPS_SUPPORTED, MTP_OPERATION_GET_OBJECT_PROP_VALUE,
-      MTP_OPERATION_GET_OBJECT_PROP_LIST, MTP_OPERATION_GET_OBJECT_REFERENCES
+      MTP_OPERATION_GET_PARTIAL_OBJECT, MTP_OPERATION_DELETE_OBJECT, MTP_OPERATION_SEND_OBJECT_INFO,
+      MTP_OPERATION_SEND_OBJECT, MTP_OPERATION_GET_DEVICE_PROP_DESC,
+      MTP_OPERATION_GET_DEVICE_PROP_VALUE, MTP_OPERATION_GET_OBJECT_PROPS_SUPPORTED,
+      MTP_OPERATION_GET_OBJECT_PROP_VALUE, MTP_OPERATION_GET_OBJECT_PROP_LIST,
+      MTP_OPERATION_GET_OBJECT_REFERENCES
   };
   static const uint16_t fmts[] = { MTP_FORMAT_UNDEFINED, MTP_FORMAT_ASSOCIATION, MTP_FORMAT_TEXT };
 
@@ -325,9 +331,9 @@ static void mtp_op_get_device_info(eos_usb_mtp_state_t *st, uint32_t tx_id) {
     pos = mtp_put_u16(p, pos, fmts[i]);
   }
   pos = mtp_put_str(p, pos, "EOS-OS");
-  pos = mtp_put_str(p, pos, "EOS Unified Storage");
+  pos = mtp_put_str(p, pos, st->model_str[0] ? st->model_str : "EOS " EOS_USB_MTP_BOARD_NAME);
   pos = mtp_put_str(p, pos, "1.0");
-  pos = mtp_put_str(p, pos, "EOS00000001");
+  pos = mtp_put_str(p, pos, st->serial_str[0] ? st->serial_str : "EOS00000001");
 
   mtp_send_data_packet(st, MTP_OPERATION_GET_DEVICE_INFO, tx_id, p, pos);
   mtp_send_response(st, MTP_RESPONSE_OK, tx_id, NULL, 0);
@@ -416,6 +422,38 @@ static void mtp_op_get_object_info(eos_usb_mtp_state_t *st, const eos_usb_mtp_cm
   mtp_send_response(st, MTP_RESPONSE_OK, cmd->tx_id, NULL, 0);
 }
 
+static uint32_t mtp_stream_file_data(eos_usb_mtp_state_t *st, int fd, uint16_t op_code,
+                                     uint32_t tx_id, uint32_t to_send) {
+  uint32_t total_len = EOS_USB_MTP_CONTAINER_HDR_LEN + to_send;
+  mtp_send_container_hdr(st->tx_buf, total_len, MTP_CONTAINER_TYPE_DATA, op_code, tx_id);
+
+  size_t first_cap = EOS_USB_MTP_BUF_SIZE - EOS_USB_MTP_CONTAINER_HDR_LEN;
+  size_t first_req = (to_send < first_cap) ? to_send : first_cap;
+  ssize_t n = (first_req > 0) ? read(fd, st->tx_buf + EOS_USB_MTP_CONTAINER_HDR_LEN, first_req) : 0;
+  uint32_t sent = (n > 0) ? (uint32_t)n : 0;
+  uint32_t first_len = EOS_USB_MTP_CONTAINER_HDR_LEN + sent;
+  if (usbd_ep_start_write(st->bus_id, st->in_ep, st->tx_buf, first_len) == 0) {
+    xSemaphoreTake(st->tx_sem, pdMS_TO_TICKS(EOS_USB_MTP_TX_TIMEOUT_MS));
+  }
+
+  while (sent < to_send) {
+    uint32_t rem = to_send - sent;
+    size_t req = (rem < EOS_USB_MTP_BUF_SIZE) ? rem : EOS_USB_MTP_BUF_SIZE;
+    n = read(fd, st->tx_buf, req);
+    if (n <= 0) break;
+    if (usbd_ep_start_write(st->bus_id, st->in_ep, st->tx_buf, (uint32_t)n) == 0) {
+      xSemaphoreTake(st->tx_sem, pdMS_TO_TICKS(EOS_USB_MTP_TX_TIMEOUT_MS));
+    }
+    sent += (uint32_t)n;
+  }
+
+  uint16_t mps = usbd_get_ep_mps(st->bus_id, st->in_ep);
+  if (mps > 0 && ((EOS_USB_MTP_CONTAINER_HDR_LEN + sent) % mps) == 0) {
+    mtp_ep_write_sync(st, NULL, 0);
+  }
+  return sent;
+}
+
 static void mtp_op_get_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t *cmd) {
   eos_usb_mtp_obj_t *obj = mtp_find_by_handle(st, cmd->params[0]);
   if (!obj || obj->is_dir) {
@@ -429,33 +467,46 @@ static void mtp_op_get_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t *
   }
   struct stat sb;
   uint32_t file_sz = (fstat(fd, &sb) == 0) ? (uint32_t)sb.st_size : obj->size;
-  uint32_t total_len = EOS_USB_MTP_CONTAINER_HDR_LEN + file_sz;
-
-  mtp_send_container_hdr(st->tx_buf, total_len, MTP_CONTAINER_TYPE_DATA,
-                         MTP_OPERATION_GET_OBJECT, cmd->tx_id);
-  ssize_t n = read(fd, st->tx_buf + EOS_USB_MTP_CONTAINER_HDR_LEN,
-                   EOS_USB_MTP_BUF_SIZE - EOS_USB_MTP_CONTAINER_HDR_LEN);
-  uint32_t first_len = EOS_USB_MTP_CONTAINER_HDR_LEN + (uint32_t)((n > 0) ? n : 0);
-  if (usbd_ep_start_write(st->bus_id, st->in_ep, st->tx_buf, first_len) == 0) {
-    xSemaphoreTake(st->tx_sem, pdMS_TO_TICKS(EOS_USB_MTP_TX_TIMEOUT_MS));
-  }
-
-  uint32_t sent = (uint32_t)((n > 0) ? n : 0);
-  while (sent < file_sz) {
-    n = read(fd, st->tx_buf, EOS_USB_MTP_BUF_SIZE);
-    if (n <= 0) break;
-    if (usbd_ep_start_write(st->bus_id, st->in_ep, st->tx_buf, (uint32_t)n) == 0) {
-      xSemaphoreTake(st->tx_sem, pdMS_TO_TICKS(EOS_USB_MTP_TX_TIMEOUT_MS));
-    }
-    sent += (uint32_t)n;
-  }
+  mtp_stream_file_data(st, fd, MTP_OPERATION_GET_OBJECT, cmd->tx_id, file_sz);
   close(fd);
-
-  uint16_t mps = usbd_get_ep_mps(st->bus_id, st->in_ep);
-  if (mps > 0 && (total_len % mps) == 0) {
-    mtp_ep_write_sync(st, NULL, 0);
-  }
   mtp_send_response(st, MTP_RESPONSE_OK, cmd->tx_id, NULL, 0);
+}
+
+static void mtp_op_get_partial_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t *cmd) {
+  eos_usb_mtp_obj_t *obj = mtp_find_by_handle(st, cmd->params[0]);
+  if (!obj || obj->is_dir) {
+    mtp_send_response(st, MTP_RESPONSE_INVALID_OBJECT_HANDLE, cmd->tx_id, NULL, 0);
+    return;
+  }
+  int fd = open(obj->path, O_RDONLY);
+  if (fd < 0) {
+    mtp_send_response(st, MTP_RESPONSE_ACCESS_DENIED, cmd->tx_id, NULL, 0);
+    return;
+  }
+  struct stat sb;
+  uint32_t file_sz = (fstat(fd, &sb) == 0) ? (uint32_t)sb.st_size : obj->size;
+  uint32_t offset = cmd->params[1];
+  uint32_t max_bytes = cmd->params[2];
+  uint32_t to_send = 0;
+  if (offset < file_sz) {
+    uint32_t avail = file_sz - offset;
+    to_send = (max_bytes < avail) ? max_bytes : avail;
+  }
+  if (to_send > 0 && offset > 0 && lseek(fd, (off_t)offset, SEEK_SET) < 0) {
+    uint32_t skip = offset;
+    while (skip > 0) {
+      size_t chunk = (skip < EOS_USB_MTP_BUF_SIZE) ? skip : EOS_USB_MTP_BUF_SIZE;
+      ssize_t r = read(fd, st->tx_buf, chunk);
+      if (r <= 0) {
+        to_send = 0;
+        break;
+      }
+      skip -= (uint32_t)r;
+    }
+  }
+  uint32_t sent = mtp_stream_file_data(st, fd, MTP_OPERATION_GET_PARTIAL_OBJECT, cmd->tx_id, to_send);
+  close(fd);
+  mtp_send_response(st, MTP_RESPONSE_OK, cmd->tx_id, &sent, 1);
 }
 
 static void mtp_op_delete_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t *cmd) {
@@ -484,6 +535,8 @@ static void mtp_op_send_object_info(eos_usb_mtp_state_t *st, const eos_usb_mtp_c
     mtp_send_response(st, MTP_RESPONSE_INVALID_PARENT_OBJECT, cmd->tx_id, NULL, 0);
     return;
   }
+  uint32_t norm_parent = (parent_handle == 0 || parent_handle == EOS_USB_MTP_ALL_HANDLES) ?
+                         EOS_USB_MTP_ROOT_HANDLE : parent_handle;
 
   uint32_t rx_len = 0;
   if (!mtp_wait_rx_packet(st, &rx_len) || rx_len <= EOS_USB_MTP_CONTAINER_HDR_LEN + 52) {
@@ -493,8 +546,12 @@ static void mtp_op_send_object_info(eos_usb_mtp_state_t *st, const eos_usb_mtp_c
   const uint8_t *p = st->rx_buf + EOS_USB_MTP_CONTAINER_HDR_LEN;
   uint16_t fmt = mtp_get_u16(p + 4);
   uint32_t obj_sz = mtp_get_u32(p + 8);
-  char fname[EOS_USB_MTP_STR_LEN + 1];
-  mtp_get_str(p + 52, rx_len - EOS_USB_MTP_CONTAINER_HDR_LEN - 52, fname, sizeof(fname));
+  char fname[EOS_USB_MTP_STR_LEN + 1] = {0};
+  if (mtp_get_str(p + 52, rx_len - EOS_USB_MTP_CONTAINER_HDR_LEN - 52, fname, sizeof(fname)) == 0 ||
+      fname[0] == '\0') {
+    mtp_send_response(st, MTP_RESPONSE_INCOMPLETE_TRANSFER, cmd->tx_id, NULL, 0);
+    return;
+  }
 
   char full_path[EOS_USB_MTP_MAX_PATH_LEN];
   mtp_join_path(full_path, sizeof(full_path), parent_path, fname);
@@ -506,11 +563,12 @@ static void mtp_op_send_object_info(eos_usb_mtp_state_t *st, const eos_usb_mtp_c
   bool is_dir = (fmt == MTP_FORMAT_ASSOCIATION);
   if (is_dir) {
     if (mkdir(full_path, EOS_USB_MTP_DIR_MODE) != 0 && errno != EEXIST) {
+      EOS_LOGW("usb_mtp: mkdir('%s') failed: errno=%d", full_path, errno);
       mtp_send_response(st, MTP_RESPONSE_ACCESS_DENIED, cmd->tx_id, NULL, 0);
       return;
     }
   }
-  eos_usb_mtp_obj_t *obj = mtp_alloc_handle(st, parent_handle, full_path, is_dir, obj_sz);
+  eos_usb_mtp_obj_t *obj = mtp_alloc_handle(st, norm_parent, full_path, is_dir, obj_sz);
   if (!obj) {
     mtp_send_response(st, MTP_RESPONSE_STORAGE_FULL, cmd->tx_id, NULL, 0);
     return;
@@ -519,7 +577,7 @@ static void mtp_op_send_object_info(eos_usb_mtp_state_t *st, const eos_usb_mtp_c
   st->pending_send_size = obj_sz;
   st->has_pending_send = !is_dir;
 
-  uint32_t resp_params[3] = { EOS_USB_MTP_STORAGE_ID, parent_handle, obj->handle };
+  uint32_t resp_params[3] = { EOS_USB_MTP_STORAGE_ID, norm_parent, obj->handle };
   mtp_send_response(st, MTP_RESPONSE_OK, cmd->tx_id, resp_params, 3);
 }
 
@@ -532,6 +590,7 @@ static void mtp_op_send_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t 
   st->has_pending_send = false;
   int fd = open(obj->path, O_CREAT | O_WRONLY | O_TRUNC, EOS_USB_MTP_FILE_MODE);
   if (fd < 0) {
+    EOS_LOGW("usb_mtp: open('%s') for write failed: errno=%d", obj->path, errno);
     mtp_send_response(st, MTP_RESPONSE_ACCESS_DENIED, cmd->tx_id, NULL, 0);
     return;
   }
@@ -539,23 +598,54 @@ static void mtp_op_send_object(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_t 
   uint32_t rx_len = 0;
   if (!mtp_wait_rx_packet(st, &rx_len) || rx_len < EOS_USB_MTP_CONTAINER_HDR_LEN) {
     close(fd);
+    unlink(obj->path);
     mtp_send_response(st, MTP_RESPONSE_INCOMPLETE_TRANSFER, cmd->tx_id, NULL, 0);
     return;
   }
   uint32_t total_container = mtp_get_u32(st->rx_buf);
-  uint32_t payload_total = (total_container > EOS_USB_MTP_CONTAINER_HDR_LEN) ?
-                           (total_container - EOS_USB_MTP_CONTAINER_HDR_LEN) : 0;
+  uint32_t payload_total = (total_container == UINT32_MAX) ? st->pending_send_size :
+                           ((total_container > EOS_USB_MTP_CONTAINER_HDR_LEN) ?
+                            (total_container - EOS_USB_MTP_CONTAINER_HDR_LEN) : 0);
   uint32_t first_payload = rx_len - EOS_USB_MTP_CONTAINER_HDR_LEN;
+  if (first_payload > payload_total) {
+    first_payload = payload_total;
+  }
+  bool write_ok = true;
   if (first_payload > 0) {
-    write(fd, st->rx_buf + EOS_USB_MTP_CONTAINER_HDR_LEN, first_payload);
+    ssize_t wr = write(fd, st->rx_buf + EOS_USB_MTP_CONTAINER_HDR_LEN, first_payload);
+    if (wr < 0 || (uint32_t)wr != first_payload) {
+      EOS_LOGW("usb_mtp: write('%s') failed: errno=%d", obj->path, errno);
+      write_ok = false;
+    }
   }
   uint32_t received = first_payload;
   while (received < payload_total) {
-    if (!mtp_wait_rx_packet(st, &rx_len) || rx_len == 0) break;
-    write(fd, st->rx_buf, rx_len);
-    received += rx_len;
+    if (!mtp_wait_rx_packet(st, &rx_len) || rx_len == 0) {
+      write_ok = false;
+      break;
+    }
+    uint32_t to_write = rx_len;
+    if (received + to_write > payload_total) {
+      to_write = payload_total - received;
+    }
+    if (write_ok && to_write > 0) {
+      ssize_t wr = write(fd, st->rx_buf, to_write);
+      if (wr < 0 || (uint32_t)wr != to_write) {
+        EOS_LOGW("usb_mtp: write('%s') failed: errno=%d", obj->path, errno);
+        write_ok = false;
+      }
+    }
+    received += to_write;
   }
+  fsync(fd);
   close(fd);
+  if (!write_ok || received != payload_total) {
+    unlink(obj->path);
+    mtp_send_response(st, (received != payload_total) ?
+                      MTP_RESPONSE_INCOMPLETE_TRANSFER : MTP_RESPONSE_STORAGE_FULL,
+                      cmd->tx_id, NULL, 0);
+    return;
+  }
   obj->size = received;
   mtp_send_response(st, MTP_RESPONSE_OK, cmd->tx_id, NULL, 0);
 }
@@ -732,6 +822,9 @@ static void mtp_dispatch_command(eos_usb_mtp_state_t *st, const eos_usb_mtp_cmd_
     case MTP_OPERATION_GET_OBJECT:
       mtp_op_get_object(st, cmd);
       break;
+    case MTP_OPERATION_GET_PARTIAL_OBJECT:
+      mtp_op_get_partial_object(st, cmd);
+      break;
     case MTP_OPERATION_DELETE_OBJECT:
       mtp_op_delete_object(st, cmd);
       break;
@@ -858,13 +951,19 @@ static int mtp_class_interface_req(uint8_t busid, struct usb_setup_packet *setup
 }
 
 static void mtp_notify_handler(uint8_t busid, uint8_t event, void *arg) {
-  (void)arg;
   eos_usb_mtp_state_t *st = mtp_get_state();
   if (!st) return;
   if (event == USBD_EVENT_CONFIGURED) {
     st->configured = true;
     st->rx_nbytes = 0;
     usbd_ep_start_read(busid, st->out_ep, st->rx_buf, EOS_USB_MTP_BUF_SIZE);
+  } else if (event == USBD_EVENT_SET_INTERFACE) {
+    const struct usb_interface_descriptor *if_desc =
+        (const struct usb_interface_descriptor *)arg;
+    if ((!if_desc || if_desc->bInterfaceClass == USB_DEVICE_CLASS_IMAGE) && st->configured) {
+      st->rx_nbytes = 0;
+      usbd_ep_start_read(busid, st->out_ep, st->rx_buf, EOS_USB_MTP_BUF_SIZE);
+    }
   } else if (event == USBD_EVENT_RESET || event == USBD_EVENT_DISCONNECTED) {
     st->configured = false;
     st->session_open = false;
@@ -884,15 +983,15 @@ bool driver_usb_mtp_init(eos_dev_t *dev) {
   st->io_mutex = xSemaphoreCreateMutex();
   st->rx_sem = xSemaphoreCreateBinary();
   st->tx_sem = xSemaphoreCreateBinary();
-  st->handles = eos_psram_malloc_prefer(sizeof(eos_usb_mtp_obj_t) * EOS_USB_MTP_MAX_HANDLES);
+  kv_init(st->handles);
   st->rx_buf = heap_caps_aligned_alloc(EOS_USB_MTP_DMA_ALIGN, EOS_USB_MTP_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
   st->tx_buf = heap_caps_aligned_alloc(EOS_USB_MTP_DMA_ALIGN, EOS_USB_MTP_BUF_SIZE, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA);
 
-  if (!st->io_mutex || !st->rx_sem || !st->tx_sem || !st->handles || !st->rx_buf || !st->tx_buf) {
+  if (!st->io_mutex || !st->rx_sem || !st->tx_sem || !st->rx_buf || !st->tx_buf) {
     if (st->io_mutex) vSemaphoreDelete(st->io_mutex);
     if (st->rx_sem) vSemaphoreDelete(st->rx_sem);
     if (st->tx_sem) vSemaphoreDelete(st->tx_sem);
-    if (st->handles) free(st->handles);
+    kv_destroy(st->handles);
     if (st->rx_buf) free(st->rx_buf);
     if (st->tx_buf) free(st->tx_buf);
     free(st);
@@ -901,14 +1000,30 @@ bool driver_usb_mtp_init(eos_dev_t *dev) {
   }
 
   st->next_handle = 1;
+  uint8_t mac[EOS_USB_MTP_MAC_LEN] = {0};
+  if (esp_efuse_mac_get_default(mac) == ESP_OK) {
+    snprintf(st->model_str, sizeof(st->model_str),
+             "EOS %s_%02X%02X%02X",
+             EOS_USB_MTP_BOARD_NAME, mac[3], mac[4], mac[5]);
+    snprintf(st->serial_str, sizeof(st->serial_str),
+             "EOS%02X%02X%02X%02X%02X%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  } else {
+    strncpy(st->model_str, "EOS " EOS_USB_MTP_BOARD_NAME, sizeof(st->model_str) - 1);
+    strncpy(st->serial_str, "EOS00000001", sizeof(st->serial_str) - 1);
+  }
   const char *path = eos_cfg_get_s(dev->cfg, "path", (char *)EOS_USB_DEFAULT_MTP_PATH);
   strncpy(st->path_spec, path, sizeof(st->path_spec) - 1);
 
 #ifdef CONFIG_CHERRYUSB_DEVICE
   st->task_running = true;
-  xTaskCreate(mtp_worker_task, "eos_mtp", EOS_USB_MTP_TASK_STACK, st,
-              EOS_USB_MTP_TASK_PRIO, &st->worker_task);
+  eos_ktask_create_psram(&st->worker_ktask, mtp_worker_task, "eos_mtp",
+                         EOS_USB_MTP_TASK_STACK, st, EOS_USB_MTP_TASK_PRIO);
 #endif
+
+  if (dev->parent) {
+    eos_dev_ioctl(dev->parent, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MTP_PATH, st->path_spec);
+  }
 
   EOS_LOGI("usb_mtp: Open-source POSIX MTP responder initialized (root=%s)", st->path_spec);
   return true;
@@ -919,14 +1034,14 @@ void driver_usb_mtp_shutdown(eos_dev_t *dev) {
   eos_usb_mtp_state_t *st = (eos_usb_mtp_state_t *)dev->state;
   st->task_running = false;
   if (st->rx_sem) xSemaphoreGive(st->rx_sem);
-  if (st->worker_task) {
+  if (st->worker_ktask.handle) {
     vTaskDelay(pdMS_TO_TICKS(EOS_USB_MTP_SHUTDOWN_WAIT_MS));
-    st->worker_task = NULL;
   }
+  eos_ktask_cleanup(&st->worker_ktask);
   if (st->io_mutex) vSemaphoreDelete(st->io_mutex);
   if (st->rx_sem) vSemaphoreDelete(st->rx_sem);
   if (st->tx_sem) vSemaphoreDelete(st->tx_sem);
-  if (st->handles) free(st->handles);
+  kv_destroy(st->handles);
   if (st->rx_buf) free(st->rx_buf);
   if (st->tx_buf) free(st->tx_buf);
   free(st);
@@ -969,7 +1084,7 @@ int driver_usb_mtp_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
       xSemaphoreTake(st->io_mutex, portMAX_DELAY);
       strncpy(st->path_spec, path, sizeof(st->path_spec) - 1);
       st->path_spec[sizeof(st->path_spec) - 1] = '\0';
-      st->handle_count = 0;
+      kv_size(st->handles) = 0;
       st->next_handle = 1;
       xSemaphoreGive(st->io_mutex);
       EOS_LOGI("usb_mtp: set root path=%s", st->path_spec);

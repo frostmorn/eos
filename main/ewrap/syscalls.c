@@ -63,16 +63,25 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
   char *p = (char *)*src_ptr;
   char *w = *arena_ptr;
 
-  if (*p == '?') {
-    p++;
-    eos_proc_t *proc = eos_proc_current();
-    int status = proc ? proc->last_exit_status : 0;
+  if (*p == '?' || *p == '#') {
+    char spec = *p++;
+    const char *val_str = NULL;
+    char status_buf[EOS_XSMALL_STR_LEN];
+    if (spec == '?') {
+      eos_proc_t *proc = eos_proc_current();
+      int status = proc ? proc->last_exit_status : 0;
+      snprintf(status_buf, sizeof(status_buf), "%d", status);
+      val_str = status_buf;
+    } else {
+      val_str = eos_proc_getenv("#");
+      if (!val_str) val_str = "0";
+    }
+    size_t vlen = strlen(val_str);
     size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
-    if (avail > 1) {
-      int len = snprintf(w, avail, "%d", status);
-      if (len > 0) {
-        w += ((size_t)len < avail) ? (size_t)len : (avail - 1);
-      }
+    if (vlen > avail) vlen = avail;
+    if (vlen > 0) {
+      memcpy(w, val_str, vlen);
+      w += vlen;
     }
     *src_ptr = p;
     *arena_ptr = w;
@@ -92,14 +101,21 @@ static void expand_env_vars(const char **src_ptr, char **arena_ptr,
     if (name_len < sizeof(name_buf)) {
       memcpy(name_buf, name_start, name_len);
       name_buf[name_len] = '\0';
+      char *def_sep = strstr(name_buf, ":-");
+      const char *def_val = NULL;
+      if (def_sep) {
+        *def_sep = '\0';
+        def_val = def_sep + 2;
+      }
       char *val = eos_proc_getenv(name_buf);
-      if (val) {
-        size_t vlen = strlen(val);
+      const char *out_str = (val && val[0] != '\0') ? val : def_val;
+      if (out_str) {
+        size_t vlen = strlen(out_str);
         size_t avail = (w < arena_end) ? (size_t)(arena_end - w) : 0;
         if (vlen > avail)
           vlen = avail;
         if (vlen > 0) {
-          memcpy(w, val, vlen);
+          memcpy(w, out_str, vlen);
           w += vlen;
         }
       }
@@ -1466,6 +1482,20 @@ static void free_ast(eos_ast_node_t *node) {
   free_ast(node->left);
   free_ast(node->right);
   free_ast_node_single(node);
+}
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#include "soc/rtc_cntl_reg.h"
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+#include "soc/lp_system_reg.h"
+#endif
+
+void eos_arch_force_download_boot(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
+#endif
 }
 
 int __wrap_system(const char *cmdline) {

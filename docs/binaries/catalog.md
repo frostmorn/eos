@@ -9,7 +9,7 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 ## Quick Navigation Index
 
 - [Core POSIX Utilities](#1-core-posix-utilities): `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `time`, `touch`, `tree`, `uptime`, `write`, plus the checksum and encoding tools `base64`, `cksum`, `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`
-- [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `umount`, `statusbar`, `toolbar`
+- [System & Shell](#2-system--shell): `ush`, `launcher`, `mount`, `reboot`, `umount`, `statusbar`, `toolbar`
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`, `usbctl`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
 - [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_backlight`, `lvgl_calc`, `lvgl_fm`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`, `lvgl_usb`
@@ -368,6 +368,19 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
   umount /dev/sd0
   ```
 
+### `reboot` — Restart Microcontroller or Enter Bootloader
+* **Syntax:** `reboot [-b|--bootloader] [-h|--help]`
+* **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
+* **Options:**
+  * `-b`, `--bootloader`: Sets `FORCE_DOWNLOAD_BOOT` (`eos_reboot(true)`) so the SoC restarts directly into ESP-ROM Download Mode for flashing.
+  * `-h`, `--help`: Display usage information.
+* **Function:** Flushes stdout and invokes `eos_reboot(bootloader)` in `ecore`.
+* **Examples:**
+  ```sh
+  reboot
+  reboot -b
+  ```
+
 ### `statusbar` — Native System Status Bar Daemon
 * **Syntax:** `statusbar`
 * **Flags:** `EOS_BIN_FLAG_GUI | EOS_BIN_FLAG_STACK_PSRAM | EOS_BIN_FLAG_ROLE_STATUS` | **Stack:** `EOS_BIN_GUI_STACK_SIZE` (16 KB PSRAM)
@@ -452,9 +465,11 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
   * `-c <0|1>`: Select controller port index (0 -> `/dev/usb0`, 1 -> `/dev/usb1`).
 * **Subcommands:**
   * `usbctl status`: Displays controller port, operating role (`debug`, `device`, `host`, `off`), negotiated speed, VBUS status, and enabled gadget functions.
-  * `usbctl role <debug|device|host|off>`: Switches the controller role between hardware JTAG+CDC (`debug`), programmable composite gadgets (`device`), USB host master (`host`), or powered down (`off`).
-  * `usbctl gadget <enable|disable> <serial|modem|msc>`: Dynamically toggles individual composite functions in device mode.
-  * `usbctl msc <block_device_path>`: Binds or queries the backing block device (e.g. `/dev/sd0`) for the Mass Storage gadget.
+  * `usbctl role <debug|composite|device|host|off>`: Switches the controller role between hardware JTAG+CDC (`debug`), programmable composite gadgets (`composite`/`device`), USB host master (`host`), or powered down (`off`).
+  * `usbctl funcs [mask]` / `usbctl gadget <enable|disable> <serial|modem|msc|mtp>`: Configures or toggles composite functions in device mode.
+  * `usbctl storage <msc <block_dev>|mtp [export_path]>`: Switches exclusive storage backend between MSC and MTP.
+  * `usbctl msc [block_device_path]`: Binds or queries the backing block device (e.g. `/dev/sd0`) for the Mass Storage gadget.
+  * `usbctl mtp [export_path]`: Configures or queries the VFS export path (e.g. `/` or `/tmp`) for the MTP responder.
   * `usbctl serial [message]`: Sends a test payload to CDC Serial (`/dev/usb_serial0`) and reads loopback response.
   * `usbctl modem [at_command]`: Sends an AT command to `/dev/usb_modem0` and displays the modem response (default: `ATI`).
 * **Capabilities:** USB bus and gadget ioctl calls, VFS device node read/write.

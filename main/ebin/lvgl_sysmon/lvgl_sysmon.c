@@ -96,7 +96,7 @@ int lvgl_sysmon_main(int argc, char **argv) {
 
   ui.bar_dram = lv_bar_create(scr);
   lv_obj_set_size(ui.bar_dram, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
-  lv_bar_set_range(ui.bar_dram, 0, 100);
+  lv_bar_set_range(ui.bar_dram, 0, EOS_PERCENT_MAX);
   lv_obj_align(ui.bar_dram, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_DRAM_Y);
 
   // PSRAM bar
@@ -106,7 +106,7 @@ int lvgl_sysmon_main(int argc, char **argv) {
 
   ui.bar_psram = lv_bar_create(scr);
   lv_obj_set_size(ui.bar_psram, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
-  lv_bar_set_range(ui.bar_psram, 0, 100);
+  lv_bar_set_range(ui.bar_psram, 0, EOS_PERCENT_MAX);
   lv_obj_align(ui.bar_psram, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_PSRAM_Y);
 
   // DMA bar
@@ -116,7 +116,7 @@ int lvgl_sysmon_main(int argc, char **argv) {
 
   ui.bar_dma = lv_bar_create(scr);
   lv_obj_set_size(ui.bar_dma, (int32_t)w - SYSMON_BAR_MARGIN, SYSMON_BAR_H);
-  lv_bar_set_range(ui.bar_dma, 0, 100);
+  lv_bar_set_range(ui.bar_dma, 0, EOS_PERCENT_MAX);
   lv_obj_align(ui.bar_dma, LV_ALIGN_TOP_MID, 0, SYSMON_BAR_DMA_Y);
 
   // LVGL stats box

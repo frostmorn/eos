@@ -394,6 +394,19 @@ int eos_dev_detach(eos_dev_t *dev) {
   return res;
 }
 
+void eos_dev_detach_all(void) {
+  eos_dev_t *root = eos_dev_find_by_name("root");
+  if (!root) return;
+  bool prev_kernel = eos_proc_enter_kernel();
+  eos_dev_t *child = root->child;
+  while (child != NULL) {
+    eos_dev_t *next = child->next;
+    (void)eos_dev_detach_internal(child);
+    child = next;
+  }
+  eos_proc_leave_kernel(prev_kernel);
+}
+
 eos_dev_t *eos_dev_find_by_name(const char *name){
   // Obviously invalid params
   if (!name || name[0] == '\0') return NULL;

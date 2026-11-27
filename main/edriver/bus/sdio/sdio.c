@@ -59,7 +59,7 @@ typedef struct {
   sdmmc_card_t card;
 #endif
   bool card_probed;
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t bus_mutex;
   int attached_count;
   off_t offset;
 } sdio_state_t;
@@ -78,7 +78,7 @@ static esp_err_t sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
   sdio_state_t *st = (sdio_state_t *)dev->state;
   if (!st->slot_initialized) return ESP_ERR_INVALID_STATE;
 
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     return ESP_ERR_TIMEOUT;
   }
 
@@ -91,7 +91,7 @@ static esp_err_t sdio_probe_card(eos_dev_t *dev, sdmmc_card_t *out_card) {
              st->card.is_sdio ? "SDIO" : (st->card.is_mmc ? "MMC" : "SD"),
              st->card.cid.name);
   }
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return err;
 }
 #endif
@@ -199,8 +199,8 @@ bool driver_bus_sdio_init(eos_dev_t *dev) {
   sdio_state_t *st = eos_psram_calloc_prefer(1, sizeof(sdio_state_t));
   if (!st) return false;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->bus_mutex = xSemaphoreCreateMutex();
+  if (!st->bus_mutex) {
     free(st);
     return false;
   }
@@ -265,8 +265,8 @@ void driver_bus_sdio_shutdown(eos_dev_t *dev) {
   if (st->wp_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->wp_pin, dev);
   if (st->rst_pin >= 0) eos_cap_release(EOS_CAPS_GPIO, st->rst_pin, dev);
 
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
+  if (st->bus_mutex) {
+    vSemaphoreDelete(st->bus_mutex);
   }
 
   free(st);
@@ -278,11 +278,11 @@ bool driver_bus_sdio_attach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (!dev || !dev->state) return false;
   sdio_state_t *st = (sdio_state_t *)dev->state;
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     return false;
   }
   st->attached_count++;
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return true;
 }
 
@@ -291,13 +291,13 @@ bool driver_bus_sdio_detach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (!dev || !dev->state) return false;
   sdio_state_t *st = (sdio_state_t *)dev->state;
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     return false;
   }
   if (st->attached_count > 0) {
     st->attached_count--;
   }
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return true;
 }
 

@@ -11,7 +11,7 @@ devctl attach input gpio_keyboard gpio --pin up=38,down=41,left=39,right=40,sele
 devctl attach sound max98357 root --pin bclk=42,ws=1,dout=2 --cfg rate=22050,bits=16,channels=1,vol=100,mult=10,delay=90
 devctl attach bus adc root
 devctl attach power battery adc0 --pin adc=3 --cfg r_top=33,r_bottom=100
-devctl attach bus usb root
+devctl attach bus usb root --cfg port=0,role=${1:-device}
 devctl attach usb serial usb0
 devctl attach usb modem usb0
 devctl attach net wifi root
@@ -29,4 +29,5 @@ devctl attach display compositor fb0 --cfg role=full,x=0,y=0,w=280,h=240,z=10
 statusbar &
 toolbar &
 launcher &
+ush -i < /dev/usb_serial0 > /dev/usb_serial0 2>&1 &
 ush

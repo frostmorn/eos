@@ -17,7 +17,7 @@ typedef struct {
   uint32_t orig_fmt;
   uint32_t active_fmt;
   char fb_path[EOS_MID_STR_LEN];
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t disp_lock;
 } eos_disp_state_t;
 
 static eos_disp_state_t s_disp = {
@@ -25,25 +25,25 @@ static eos_disp_state_t s_disp = {
     .orig_fmt = EOS_DISPLAY_FMT_RGB565,
     .active_fmt = EOS_DISPLAY_FMT_RGB565,
     .fb_path = "",
-    .lock = NULL,
+    .disp_lock = NULL,
 };
 
 static void eos_display_ensure_lock(void) {
-  if (!s_disp.lock) {
-    s_disp.lock = xSemaphoreCreateRecursiveMutex();
+  if (!s_disp.disp_lock) {
+    s_disp.disp_lock = xSemaphoreCreateRecursiveMutex();
   }
 }
 
 static inline void eos_disp_lock(void) {
   eos_display_ensure_lock();
-  if (s_disp.lock) {
-    xSemaphoreTakeRecursive(s_disp.lock, portMAX_DELAY);
+  if (s_disp.disp_lock) {
+    xSemaphoreTakeRecursive(s_disp.disp_lock, portMAX_DELAY);
   }
 }
 
 static inline void eos_disp_unlock(void) {
-  if (s_disp.lock) {
-    xSemaphoreGiveRecursive(s_disp.lock);
+  if (s_disp.disp_lock) {
+    xSemaphoreGiveRecursive(s_disp.disp_lock);
   }
 }
 

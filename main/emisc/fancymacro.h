@@ -7,13 +7,8 @@
 #  endif
 #endif
 
-#define EOS_MASCOT_L "(^_^)==\\~"
 #define EOS_MASCOT_R "~/==(^_^)"
-
-#define EOS_MASCOT_W_L "[O_o]==\\~"
 #define EOS_MASCOT_W_R "~/==[o_0]"
-
-#define EOS_MASCOT_E_L "[-_-]==|~"
 #define EOS_MASCOT_E_R "~|==[-_-]"
 
 #define EOS_STR_HELPER(x) #x
@@ -48,10 +43,11 @@
 #define EOS_EXTENDED_TIMEOUT_MS         5000
 #define EOS_HALF_SEC_TIMEOUT_MS          500
 #define EOS_PROBE_TIMEOUT_MS          200
-#define EOS_DISPLAY_REFRESH_INTERVAL_MS          60
+#define EOS_TENTH_SEC_MS              100
+#define EOS_PERCENT_MAX               100
+#define EOS_DECIMAL_BASE              10
 #define EOS_POLL_INTERVAL_MS          50
 #define EOS_HEX_BYTE_MSB            0x80
-#define EOS_HEX_COLOR_WHITE         0xFFFFFF
 #define EOS_TEST_MAGIC_STATUS        42
 #define EOS_TEST_MAGIC_ALT        33
 #define EOS_RGB565_RED_MAX          31

@@ -1,8 +1,11 @@
 #include "ebin/lvgl_usb/lvgl_usb.h"
 #include "ebin/lvgl_usb/usb_logic.h"
 #include "ecore/bin.h"
+#include "ecore/kcmd.h"
 #include "ecore/lvgl.h"
 #include "emisc/strlimits.h"
+
+#include <errno.h>
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -39,11 +42,14 @@ typedef struct {
   int port_focus;
   int root_focus;
   lv_obj_t *menu;
+  lv_obj_t *dialog;
   eos_menu_item_t items[EOS_LVGL_USB_MAX_ITEMS];
   char details[EOS_LVGL_USB_MAX_ITEMS][EOS_LINE_STR_LEN];
   bool has_port1;
   bool rebuild_pending;
   bool quit;
+  bool pending_reboot;
+  eos_usb_role_t pending_reboot_role;
 } usb_ui_t;
 
 static void usb_ui_rebuild(usb_ui_t *ui);
@@ -59,6 +65,29 @@ static const char *role_label(eos_usb_role_t role) {
   default:
     return "Off";
   }
+}
+
+static const char *role_to_kcmd(eos_usb_role_t role) {
+  switch (role) {
+  case EOS_USB_ROLE_HOST:
+    return "host";
+  case EOS_USB_ROLE_DEVICE_COMPOSITE:
+    return "device";
+  case EOS_USB_ROLE_DEBUG_USJ:
+    return "debug";
+  default:
+    return "off";
+  }
+}
+
+static eos_usb_role_t query_port_role(const char *dev_path, eos_usb_role_t fallback) {
+  int fd = open(dev_path, O_RDWR);
+  if (fd < 0) return fallback;
+  eos_usb_bus_status_t st;
+  memset(&st, 0, sizeof(st));
+  eos_usb_role_t r = (ioctl(fd, EOS_USB_IOCTL_GET_STATUS, &st) == 0) ? st.active_role : fallback;
+  close(fd);
+  return r;
 }
 
 static void format_gadget_summary(const usb_logic_ctx_t *l, char *buf, size_t sz) {
@@ -125,11 +154,41 @@ static void handle_port_select(usb_ui_t *ui, int id) {
   ui->rebuild_pending = true;
 }
 
+static void role_reboot_confirm_cb(bool confirmed, void *user_data) {
+  usb_ui_t *ui = (usb_ui_t *)user_data;
+  if (!confirmed || !ui) return;
+  ui->pending_reboot = true;
+  ui->quit = true;
+}
+
+static bool apply_role_or_prompt(usb_ui_t *ui, eos_usb_role_t role) {
+  if (role == ui->logic.active_role) {
+    return false;
+  }
+  if (ui->logic.status.port_id > 0) {
+    usb_logic_set_role(&ui->logic, role);
+    return false;
+  }
+  ui->pending_reboot_role = role;
+  eos_lvgl_confirm_dialog_cfg_t cfg = {
+      .title = "Reboot Required",
+      .message = "Changing the USB port role requires a reboot. Reboot now?",
+      .confirm_label = "Reboot",
+      .cancel_label = "Cancel",
+      .dangerous = false,
+      .cb = role_reboot_confirm_cb,
+      .user_data = ui,
+  };
+  ui->dialog = eos_lvgl_dialog_confirm(&cfg);
+  return true;
+}
+
 static void handle_sub_select(usb_ui_t *ui, int id) {
-  if (id == ACT_SET_ROLE_DEBUG) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_DEBUG_USJ);
-  else if (id == ACT_SET_ROLE_COMP) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_DEVICE_COMPOSITE);
-  else if (id == ACT_SET_ROLE_HOST) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_HOST);
-  else if (id == ACT_SET_ROLE_OFF) usb_logic_set_role(&ui->logic, EOS_USB_ROLE_OFF);
+  bool opened_dialog = false;
+  if (id == ACT_SET_ROLE_DEBUG) opened_dialog = apply_role_or_prompt(ui, EOS_USB_ROLE_DEBUG_USJ);
+  else if (id == ACT_SET_ROLE_COMP) opened_dialog = apply_role_or_prompt(ui, EOS_USB_ROLE_DEVICE_COMPOSITE);
+  else if (id == ACT_SET_ROLE_HOST) opened_dialog = apply_role_or_prompt(ui, EOS_USB_ROLE_HOST);
+  else if (id == ACT_SET_ROLE_OFF) opened_dialog = apply_role_or_prompt(ui, EOS_USB_ROLE_OFF);
   else if (id == ACT_TOGGLE_SERIAL) {
     bool en = (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_SERIAL) == 0;
     usb_logic_toggle_gadget(&ui->logic, EOS_USB_GADGET_FUNC_SERIAL, en);
@@ -149,7 +208,9 @@ static void handle_sub_select(usb_ui_t *ui, int id) {
   } else if (id == ACT_REFRESH) {
     usb_logic_refresh(&ui->logic);
   }
-  ui->rebuild_pending = true;
+  if (!opened_dialog) {
+    ui->rebuild_pending = true;
+  }
 }
 
 static void menu_select_cb(eos_menu_t *menu, int item_id, void *user_data) {
@@ -210,8 +271,10 @@ static size_t build_sub_items(usb_ui_t *ui, const char **title) {
              (ui->logic.gadget_mask & EOS_USB_GADGET_FUNC_MTP) ? "ON" : "OFF");
   } else if (ui->page == USB_MENU_PORT) {
     *title = "USB Controllers";
-    add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)", "Debug / FS");
-    add_item(ui, &n, ACT_SET_PORT1, LV_SYMBOL_USB, "usb1 (High Speed)", "OTG 2.0 HS");
+    add_item(ui, &n, ACT_SET_PORT0, LV_SYMBOL_USB, "usb0 (Full Speed)",
+             role_label(query_port_role("/dev/usb0", EOS_USB_ROLE_OFF)));
+    add_item(ui, &n, ACT_SET_PORT1, LV_SYMBOL_USB, "usb1 (High Speed)",
+             role_label(query_port_role("/dev/usb1", EOS_USB_ROLE_OFF)));
   } else {
     *title = "Diagnostics";
     const char *sres = !ui->logic.last_test_serial_valid ? "Tap/A to run"
@@ -247,7 +310,9 @@ static void usb_ui_rebuild(usb_ui_t *ui) {
   }
   ui->last_page = ui->page;
 
-  const char *title = (strcmp(ui->logic.dev_path, "/dev/usb1") == 0) ? "USB: usb1 (HS)" : "USB Settings";
+  const char *title = ui->has_port1
+                          ? ((strcmp(ui->logic.dev_path, "/dev/usb1") == 0) ? "USB: usb1 (HS)" : "USB: usb0 (FS)")
+                          : "USB Settings";
   size_t count = (ui->page == USB_MENU_ROOT) ? build_root_items(ui)
                                              : build_sub_items(ui, &title);
 
@@ -295,9 +360,15 @@ int lvgl_usb_main(int argc, char **argv) {
   usb_ui_rebuild(&ui);
 
   while (!ui.quit) {
+    if (ui.dialog && (!lv_obj_is_valid(ui.dialog) || lv_obj_has_flag(ui.dialog, LV_OBJ_FLAG_HIDDEN))) {
+      ui.dialog = NULL;
+      ui.rebuild_pending = true;
+    }
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
-      if (ui.menu) {
+      if (ui.dialog) {
+        eos_lvgl_dialog_handle_key(ui.dialog, key);
+      } else if (ui.menu) {
         eos_menu_handle_key(ui.menu, key);
       }
     }
@@ -312,8 +383,22 @@ int lvgl_usb_main(int argc, char **argv) {
     eos_menu_close(ui.menu);
     ui.menu = NULL;
   }
+  char kcmd_buf[EOS_LINE_STR_LEN] = {0};
+  if (ui.pending_reboot) {
+    if (ui.has_port1) {
+      bool is_p1 = (strcmp(ui.logic.dev_path, "/dev/usb1") == 0);
+      eos_usb_role_t r0 = is_p1 ? query_port_role("/dev/usb0", EOS_USB_ROLE_DEBUG_USJ) : ui.pending_reboot_role;
+      eos_usb_role_t r1 = is_p1 ? ui.pending_reboot_role : query_port_role("/dev/usb1", EOS_USB_ROLE_DEVICE_COMPOSITE);
+      snprintf(kcmd_buf, sizeof(kcmd_buf), "%s %s", role_to_kcmd(r0), role_to_kcmd(r1));
+    } else {
+      strlcpy(kcmd_buf, role_to_kcmd(ui.pending_reboot_role), sizeof(kcmd_buf));
+    }
+  }
   usb_logic_close(&ui.logic);
   eos_lvgl_deinit();
+  if (ui.pending_reboot) {
+    eos_reboot_with_kcmd(kcmd_buf);
+  }
   return 0;
 }
 

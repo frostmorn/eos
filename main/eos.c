@@ -2,6 +2,7 @@
 #include "ecore/dev.h"
 #include "ecore/elf.h"
 #include "ecore/fs.h"
+#include "ecore/kcmd.h"
 #include "ecore/log.h"
 #include "ecore/proc.h"
 #include "ecore/vfs.h"
@@ -24,9 +25,21 @@ void *eos_main(void *data) {
   eos_fs_init();
   eos_elf_init_symbols();
 
+  char kcmd_buf[EOS_KCMD_MAX_LEN] = {0};
+  bool use_kcmd = eos_kcmd_consume(kcmd_buf, sizeof(kcmd_buf));
+
   while (1) {
     // Run init script (falls back to ush if init fails)
-    if (system("init.sh") < 0) {
+    int rc = -1;
+    if (use_kcmd) {
+      char init_cmd[EOS_KCMD_MAX_LEN + EOS_SMALL_STR_LEN];
+      snprintf(init_cmd, sizeof(init_cmd), "init.sh %s", kcmd_buf);
+      use_kcmd = false;
+      rc = system(init_cmd);
+    } else {
+      rc = system("init.sh");
+    }
+    if (rc < 0) {
       system("ush");
     }
     usleep(EOS_US_PER_SEC);

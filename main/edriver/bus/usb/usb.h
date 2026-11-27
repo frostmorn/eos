@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "ecore/proc.h"
 #include "ecore/usb.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -19,18 +20,31 @@
 #endif
 
 #define EOS_USB_BUS_BUFFER_SIZE         2048
-#define EOS_USB_BUS_TIMEOUT_MS          1000
 #define EOS_USB_DEFAULT_PORT            0
-#define EOS_USB_DISCONNECT_SETTLE_MS    50
+#define EOS_USB_DISCONNECT_SETTLE_MS    100
 #define EOS_USB_MAX_CHILDREN            8
 #define EOS_USB_DEFAULT_VID             0x303A
 #define EOS_USB_DEFAULT_PID             0x4001
 #define EOS_USB_DESC_MANUFACTURER_STR   "EOS-OS"
-#define EOS_USB_DESC_PRODUCT_STR        "EOS Dual-Mode USB Device"
+#if defined(CONFIG_EOS_BOARD_JC4880P443C_I_W_Y)
+#define EOS_USB_BOARD_NAME              "JC4880P443C"
+#elif defined(CONFIG_EOS_BOARD_LILKA_V23)
+#define EOS_USB_BOARD_NAME              "Lilka"
+#elif defined(CONFIG_EOS_BOARD_ESP32S3_QEMU)
+#define EOS_USB_BOARD_NAME              "QEMU"
+#else
+#define EOS_USB_BOARD_NAME              "Device"
+#endif
+#define EOS_USB_DESC_PRODUCT_STR        "EOS " EOS_USB_BOARD_NAME
 #define EOS_USB_DESC_SERIAL_STR         "EOS00000001"
+#define EOS_USB_PRODUCT_STR_LEN         40
 #define EOS_USB_DEFAULT_MSC_BACKING     "/dev/sd0"
 #define EOS_USB_BOOTLOADER_BAUD         1200
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define EOS_USB_DEFAULT_GADGET_FUNCS    (EOS_USB_GADGET_FUNC_SERIAL | EOS_USB_GADGET_FUNC_MTP)
+#else
 #define EOS_USB_DEFAULT_GADGET_FUNCS    (EOS_USB_GADGET_FUNC_SERIAL | EOS_USB_GADGET_FUNC_MODEM | EOS_USB_GADGET_FUNC_MTP)
+#endif
 
 #define EOS_USB_EP_CDC0_IN              0x81
 #define EOS_USB_EP_CDC0_OUT             0x01
@@ -40,17 +54,19 @@
 #define EOS_USB_EP_CDC1_OUT             0x02
 #define EOS_USB_EP_CDC1_INT             0x84
 
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define EOS_USB_EP_STORAGE_IN           0x83
+#define EOS_USB_EP_STORAGE_OUT          0x02
+#define EOS_USB_EP_MTP_INT              0x84
+#else
 #define EOS_USB_EP_STORAGE_IN           0x85
 #define EOS_USB_EP_STORAGE_OUT          0x03
 #define EOS_USB_EP_MTP_INT              0x86
+#endif
 
-#define EOS_USB_EP_NOTIF_SIZE           8
 #define EOS_USB_EP_DATA_FS_SIZE         64
 #define EOS_USB_EP_DATA_HS_SIZE         512
-#define EOS_USB_EP_MTP_EVT_SIZE         64
-#define EOS_USB_MTP_EVT_INTERVAL        1
 
-#define EOS_USB_STRID_LANG              0
 #define EOS_USB_STRID_MFG               1
 #define EOS_USB_STRID_PRODUCT           2
 #define EOS_USB_STRID_SERIAL            3
@@ -60,8 +76,16 @@
 #define EOS_USB_STRID_MTP               7
 
 #define EOS_USB_MAX_CONFIG_DESC_SIZE    512
-#define EOS_USB_CDC_BUFFER_SIZE         2048
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#define EOS_USB_CDC_BUFFER_SIZE         256
+#define EOS_USB_CDC_RX_MSG_DATA_SIZE    EOS_USB_CDC_BUFFER_SIZE
+#else
+#define EOS_USB_CDC_BUFFER_SIZE         512
+#define EOS_USB_CDC_RX_MSG_DATA_SIZE    EOS_USB_CDC_BUFFER_SIZE
+#endif
 #define EOS_USB_STRING_DESC_COUNT       8
+#define EOS_USB_SERIAL_STR_LEN          24
+#define EOS_USB_MAC_LEN                 6
 #define EOS_USB_EP_QUALIFIER_SIZE       10
 #define EOS_USB_BCD_VERSION             0x0200
 #define EOS_USB_BCD_DEVICE              0x0100
@@ -75,7 +99,7 @@
 #define EOS_USB_WCID_DESC_LEN           40
 #define EOS_USB_MTP_ITF_NUM             4
 #define EOS_USB_DMA_ALIGN               64
-#define EOS_USB_CDC_RX_QUEUE_LEN        16
+#define EOS_USB_CDC_RX_QUEUE_LEN        8
 #define EOS_USB_RX_TASK_STACK           4096
 #define EOS_USB_RX_TASK_PRIO            6
 
@@ -84,7 +108,7 @@
 typedef struct {
   uint8_t  cdc_index;
   uint16_t len;
-  uint8_t  data[EOS_USB_EP_DATA_HS_SIZE];
+  uint8_t  data[EOS_USB_CDC_RX_MSG_DATA_SIZE];
 } eos_usb_cdc_rx_msg_t;
 
 typedef struct {
@@ -95,6 +119,8 @@ typedef struct {
   uint32_t          gadget_funcs_enabled;
   char              msc_backing_dev[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
   char              mtp_base_path[EOS_USB_MTP_MAX_PATH_LEN];
+  char              product_str[EOS_USB_PRODUCT_STR_LEN];
+  char              serial_str[EOS_USB_SERIAL_STR_LEN];
   bool              vbus_present;
   bool              host_device_connected;
   uint32_t          rx_bytes;
@@ -129,7 +155,7 @@ typedef struct {
   SemaphoreHandle_t     cdc0_tx_sem;
   SemaphoreHandle_t     cdc1_tx_sem;
   QueueHandle_t         cdc_rx_queue;
-  TaskHandle_t          cdc_rx_task;
+  eos_ktask_t           cdc_rx_ktask;
   volatile bool         cdc0_tx_busy;
   volatile bool         cdc1_tx_busy;
   volatile bool         usb_configured;

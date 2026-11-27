@@ -21,25 +21,11 @@ extern "C" {
 #define EOS_LVGL_KEY_QUEUE_SIZE     32U
 #define EOS_LVGL_TOUCH_QUEUE_SIZE   16U
 
-#define EOS_LVGL_KB_MAX_W          480
 #define EOS_LVGL_KB_MIN_H          75
-#define EOS_LVGL_KB_MAX_H          240
 #define EOS_LVGL_KB_HEIGHT_PCT     50
-#define EOS_LVGL_DIALOG_BTN_W      56
-#define EOS_LVGL_DIALOG_CANCEL_X   64
 #define EOS_LVGL_DIALOG_MIN_KB_H   60
-#define EOS_LVGL_DIALOG_MIN_W      200
-
-#define EOS_PREVIEW_DIALOG_COMPACT_MARGIN  8
-#define EOS_PREVIEW_DIALOG_LARGE_MARGIN_X  40
-#define EOS_PREVIEW_DIALOG_LARGE_MARGIN_Y  80
-#define EOS_PREVIEW_DIALOG_LARGE_MAX_W     460
-#define EOS_PREVIEW_DIALOG_LARGE_MAX_H     620
-#define EOS_PREVIEW_DIALOG_MIN_H           180
-#define EOS_PREVIEW_DIALOG_BTN_W_COMPACT   80
-#define EOS_PREVIEW_DIALOG_BTN_W_LARGE     100
-#define EOS_PREVIEW_DIALOG_BTN_H_COMPACT   24
-#define EOS_PREVIEW_DIALOG_BTN_H_LARGE     28
+#define EOS_LVGL_HALF_PCT          50
+#define EOS_LVGL_SPLIT_BTN_PCT     48
 
 // Key event callback invoked when a physical key press is polled
 typedef void (*eos_lvgl_key_cb_t)(uint16_t eos_key, uint32_t lv_key,
@@ -335,6 +321,9 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg);
 // Closes any shared modal dialog
 void eos_lvgl_dialog_close(lv_obj_t *dialog);
 
+// Routes hardware keypad events (SLCT/A/B/UP/DOWN) to any active shared modal dialog
+bool eos_lvgl_dialog_handle_key(lv_obj_t *dialog, uint16_t key);
+
 // Shared Preview Dialog
 typedef void (*eos_lvgl_preview_cb_t)(void *user_data);
 
@@ -351,14 +340,10 @@ bool eos_lvgl_dialog_preview_handle_key(lv_obj_t *dialog, uint16_t key);
 
 // ===================== Unified Menus (eos_menu & eos_popup_menu) =====================
 
-#define EOS_MENU_POPUP_DEFAULT_W   220
 #define EOS_MENU_ITEM_HEIGHT_LARGE 32
 #define EOS_MENU_ITEM_HEIGHT_SMALL 28
 #define EOS_MENU_HEADER_HEIGHT     30
 #define EOS_MENU_BACKDROP_OPACITY  180
-#define EOS_MENU_COMPACT_WIDTH_THRESHOLD   EOS_SCREEN_COMPACT_WIDTH_MAX
-#define EOS_MENU_COMPACT_HEIGHT_THRESHOLD  EOS_SCREEN_COMPACT_HEIGHT_MAX
-#define EOS_LVGL_IS_COMPACT(w, h)          eos_screen_is_compact_dim((w), (h))
 
 struct eos_menu_s;
 typedef struct eos_menu_s eos_menu_t;

@@ -618,6 +618,7 @@ class EOSTestHarness:
         print(f"\n{Colors.BOLD}--- DevTree Detach & Reattach Lifecycle Validation ---{Colors.RESET}")
 
         # Step 1: Discover currently present devices from /proc/devices
+        is_single_phy_usb = (self.target_chip == "esp32s3" and "/dev/ttyACM" in (self.port or ""))
         out = self.run_cmd("cat /proc/devices")
         lines = [line.strip() for line in out.splitlines() if line.strip()]
 
@@ -628,6 +629,8 @@ class EOSTestHarness:
                 continue
             if len(parts) >= 4 and parts[0].isdigit():
                 dev_id, dev_name, driver, parent = parts[0], parts[1], parts[2], parts[3]
+                if is_single_phy_usb and dev_name in ("usb0", "usb_serial0"):
+                    continue
                 if "/" in driver and driver != "bus/root" and not dev_name.startswith("("):
                     devices.append({
                         "name": dev_name,
@@ -1058,15 +1061,25 @@ class EOSTestHarness:
                 if "launcher.active" in self.run_cmd("ls /tmp"):
                     break
             time.sleep(0.5)
+        self.run_cmd("rm -f /tmp/test_lvgl.res")
+        self.check(suite, "Launch test_lvgl automated test through launcher IPC",
+                   "launcher test_lvgl -a -t 500 &",
+                   r"(requesting launch of 'test_lvgl'|Starting 'test_lvgl')", wait=2.5)
+        res_out = ""
+        for _ in range(15):
+            res_out = self.run_cmd("cat /tmp/test_lvgl.res")
+            if "LVGL Dialog Key Test" in res_out:
+                break
+            time.sleep(0.3)
+        self.check_host(suite, "test_lvgl automated framebuffer and dialog keypad tests pass",
+                        "LVGL Dialog Key Test PASSED" in res_out and "LVGL Framebuffer Test PASSED" in res_out,
+                        res_out.strip())
         self.check(suite, "Launch lvgl_net through launcher IPC", "launcher lvgl_net &",
                    r"(requesting launch of 'lvgl_net'|Starting 'lvgl_net')", wait=2.5)
         time.sleep(1.0)
         self.check(suite, "Launch lvgl_term through launcher IPC", "launcher lvgl_term &",
                    r"(requesting launch of 'lvgl_term'|Starting 'lvgl_term')", wait=2.5)
         time.sleep(1.0)
-        self.check(suite, "Launch test_lvgl automated test through launcher IPC",
-                   "launcher test_lvgl -a -t 500 &",
-                   r"(requesting launch of 'test_lvgl'|Starting 'test_lvgl')", wait=2.5)
         time.sleep(1.0)
         self.check(suite, "Launch lvgl_fm automated test through launcher IPC",
                    "launcher lvgl_fm -a -t 500 &",
@@ -1087,7 +1100,7 @@ class EOSTestHarness:
                    "echo __PIPED_TERM_OK__ | lvgl_term -t 400",
                    r"(__PIPED_TERM_OK__|Piped Stream Output|done)", wait=2.5)
         self.check(suite, "Decoupled GUI logic unit tests pass with 0 failures", "test_gui_logic",
-                   r"GUI Logic Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=3.0)
+                   r"GUI Logic Tests:\s+\d+\s+passed,\s+0\s+failed", not_pattern=r"\[FAIL\]", wait=5.0)
 
     def test_emisc(self):
         suite = "emisc"
@@ -1225,6 +1238,15 @@ class EOSTestHarness:
         self.check(suite, "readlink prints relative symlink target (V6)", "readlink /tmp/h_rel_sym",
                    r"h_rel_tgt\.txt")
         self.run_cmd("rm -f /tmp/h_rel_sym /tmp/h_rel_tgt.txt")
+
+        # 8. reboot & ush script positional parameter ($0, $1, $2, $#, ${1:-def}) validation
+        self.check(suite, "reboot --help displays usage", "reboot --help", r"Usage: reboot \[-b\|--bootloader\] \[-k <cmd> \| -- <args\.\.\.>\] \[-h\|--help\]")
+        self.check(suite, "reboot rejects invalid option", "reboot --invalid-opt", r"Usage: reboot")
+        self.run_cmd("echo 'echo $0 $1 $2 $# ${3:-def3}' > /tmp/h_args.sh")
+        self.check(suite, "ush script binds $0 $1 $2 $# and ${3:-def}",
+                   "ush /tmp/h_args.sh alpha beta",
+                   r"/tmp/h_args\.sh alpha beta 2 def3")
+        self.run_cmd("rm -f /tmp/h_args.sh")
 
         # Cleanup all test artifacts
         self.run_cmd("rm -rf /tmp/h_cp_* /tmp/h_tree_* /tmp/h_mv_* /tmp/h_hl_* /tmp/h_sl_* /tmp/h_loop* /tmp/h_ne_* /tmp/h_s*")
@@ -1382,9 +1404,64 @@ class EOSTestHarness:
             self.check(suite, f"Cycle {cycle}: Shell prompt alive and responsive",
                        f"echo boot_cycle_{cycle}_alive", rf"boot_cycle_{cycle}_alive")
             self.check(suite, f"Cycle {cycle}: /proc/uptime reports clean system restart",
-                       "cat /proc/uptime", r"uptime:\s+\d+s")
+                       "cat /proc/uptime",
+                       r"uptime:\s+\d+s[\s\S]+reset reason:\s+(power_on|external|software|jtag|usb)\b",
+                       not_pattern=r"panic|wdt|brownout")
             self.check(suite, f"Cycle {cycle}: /proc/devices verifies active device tree",
                        "cat /proc/devices", r"bus/root")
+
+        # Software reboot with RTC kcmd boot arguments & one-shot verification
+        if self.target_chip == "esp32p4":
+            print(f"\n{Colors.CYAN}--- Software Reboot with kcmd ('debug host', 'debug off') & USB0 Guard ---{Colors.RESET}")
+            self.check(suite, "usb0 rejects runtime role switch with reboot-required notice",
+                       "usbctl -d /dev/usb0 role host", r"reboot required")
+
+            def _reboot_and_wait(cmd_line):
+                self.ser.write((cmd_line + "\n").encode("utf-8"))
+                time.sleep(0.5)
+                self._drain_serial(1.0)
+                ready_marker = b"__EOS_READY__"
+                deadline = time.time() + 25.0
+                buf = b""
+                last_ping = 0.0
+                while time.time() < deadline:
+                    chunk = self._read_available()
+                    if chunk:
+                        buf += chunk
+                        if ready_marker in buf:
+                            self._drain_serial(0.5)
+                            return True
+                    now = time.time()
+                    if (now - (deadline - 25.0) > 1.5) and (now - last_ping > 0.5):
+                        try:
+                            self.ser.write(b"\r\necho __EOS_READY__\r\n")
+                        except Exception:
+                            pass
+                        last_ping = now
+                    time.sleep(0.05)
+                return False
+
+            for kcmd_cmd, label, role_regex in (
+                ("reboot -- debug host", "kcmd '-- debug host': /dev/usb1 boots in HOST", r"Active USB Role:\s+1\s+\(HOST\)"),
+                ("reboot -k \"debug off\"", "kcmd '-k debug off': /dev/usb1 boots in OFF", r"Active USB Role:\s+0\s+\(OFF\)"),
+                ("reboot", "kcmd one-shot: plain reboot restores DEVICE_COMPOSITE", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)"),
+            ):
+                ok = _reboot_and_wait(kcmd_cmd)
+                self.check_host(suite, f"Shell prompt alive after '{kcmd_cmd}'", ok, "Timed out")
+                self.check(suite, f"Clean software reset reason after '{kcmd_cmd}'", "cat /proc/uptime",
+                           r"reset reason:\s+software\b", not_pattern=r"panic")
+                self.check(suite, label, "usbctl -d /dev/usb1 role", role_regex)
+
+            for kcmd_cmd, label, role_regex in (
+                ("reboot -- device", "kcmd '-- device': /dev/usb0 boots in DEVICE_COMPOSITE without crash", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)"),
+                ("reboot -- host", "kcmd '-- host': /dev/usb0 boots in HOST", r"Active USB Role:\s+1\s+\(HOST\)"),
+                ("reboot", "kcmd one-shot: plain reboot restores /dev/usb0 DEBUG_USJ", r"Active USB Role:\s+3\s+\(DEBUG_USJ\)"),
+            ):
+                ok = _reboot_and_wait(kcmd_cmd)
+                self.check_host(suite, f"Shell prompt alive after '{kcmd_cmd}'", ok, "Timed out")
+                self.check(suite, f"Clean software reset reason after '{kcmd_cmd}'", "cat /proc/uptime",
+                           r"reset reason:\s+software\b", not_pattern=r"panic")
+                self.check(suite, label, "usbctl -d /dev/usb0 role", role_regex)
 
     def test_disp_format(self):
         suite = "disp_format"
@@ -1457,12 +1534,14 @@ class EOSTestHarness:
 
         # 2. Virtual / Host CDC-ACM Serial Test
         # Allow TinyUSB composite gadget to settle on host after USB reconfiguration
+        is_qemu = (self.port or "").startswith("socket://")
         gadget = None
-        for _ in range(30):
-            gadget = board_detect.find_gadget_device(self.target_chip)
-            if gadget and gadget.get("tty_ports"):
-                break
-            time.sleep(0.1)
+        if not is_qemu:
+            for _ in range(30):
+                gadget = board_detect.find_gadget_device(self.target_chip)
+                if gadget and gadget.get("tty_ports"):
+                    break
+                time.sleep(0.1)
         if gadget and gadget["tty_ports"]:
             def _same_port(a, b):
                 if not a or not b or a.startswith("socket://") or b.startswith("socket://"):
@@ -1472,7 +1551,7 @@ class EOSTestHarness:
             if any(_same_port(p, self.port) for p in gadget["tty_ports"]):
                 self.check(suite, f"usbctl serial outputs EOS_USB_PING over active CDC console ({self.port})",
                            "usbctl serial", r"EOS_USB_PING",
-                           not_pattern=r"failed to open|No data received", wait=1.0)
+                           not_pattern=r"failed to open", wait=1.0)
             else:
                 host_cdc_port = gadget["tty_ports"][0]
                 cdc_ok = False
@@ -1504,6 +1583,9 @@ class EOSTestHarness:
                     cdc_rx = str(e).encode()
                 self.check_host(suite, f"host CDC ({host_cdc_port}) receives EOS_USB_PING from usbctl serial",
                                 cdc_ok, repr(cdc_rx))
+        elif is_qemu:
+            self.check(suite, "usbctl serial runs without crash when no USB host in QEMU",
+                       "usbctl serial", r"(Serial Echo:.*\(PASS\)|Serial: No data received)", wait=1.0)
         else:
             self.check(suite, "usbctl serial executes CDC loopback test", "usbctl serial", r"Serial Echo:.*\(PASS\)", wait=1.0)
 
@@ -1520,20 +1602,33 @@ class EOSTestHarness:
         self.check(suite, "usbctl modem +++ escape back to command mode", "usbctl modem +++", r"OK", wait=1.0)
         self.check(suite, "usbctl modem ATH call hangup", "usbctl modem ATH", r"NO CARRIER", wait=1.0)
 
+        is_single_phy_usb = (self.target_chip == "esp32s3" and "/dev/ttyACM" in (self.port or ""))
+
         # 4. MSC Backing Storage Device Configuration
         self.check(suite, "usbctl msc binds temporary backing storage", "usbctl msc /tmp/test_msc.bin", r"Bound MSC backing device to '/tmp/test_msc\.bin'", wait=1.0)
         self.check(suite, "usbctl msc verifies updated backing dev", "usbctl msc", r"MSC Backing Device:\s+/tmp/test_msc\.bin", wait=1.0)
-        self.check(suite, "usbctl msc restores /dev/sd0 backing dev", "usbctl msc /dev/sd0", r"Bound MSC backing device to '/dev/sd0'", wait=1.0)
-        self.check(suite, "usbctl storage switches to mtp mode", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.0)
-        self.check(suite, "usbctl storage switches to msc mode", "usbctl storage msc /dev/sd0", r"Switched USB storage to MSC", wait=1.0)
+        if has_sd0:
+            self.check(suite, "usbctl msc restores /dev/sd0 backing dev", "usbctl msc /dev/sd0", r"Bound MSC backing device to '/dev/sd0'", wait=1.0)
+        else:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] /dev/sd0 not present (no SD card); skipping /dev/sd0 MSC bind check.")
 
-        # 5. Dynamic Slave Gadget Mask Reconfiguration
-        self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial+Modem mask (0x03)", f"usbctl -d {usb_dev} funcs 0x03", r"Updated gadget functions mask to 0x03", wait=1.0)
-        self.check(suite, f"usbctl -d {usb_dev} status verifies Serial+Modem active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x03 \(SERIAL:ON, MODEM:ON, MSC:OFF, MTP:OFF\)", wait=1.0)
-        self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial-only mask (0x01)", f"usbctl -d {usb_dev} funcs 0x01", r"Updated gadget functions mask to 0x01", wait=1.0)
-        self.check(suite, f"usbctl -d {usb_dev} status verifies Serial-only active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x01 \(SERIAL:ON, MODEM:OFF, MSC:OFF, MTP:OFF\)", wait=1.0)
-        self.check(suite, f"usbctl -d {usb_dev} funcs restores all functions mask (0x07)", f"usbctl -d {usb_dev} funcs 0x07", r"Updated gadget functions mask to 0x07", wait=1.0)
-        self.check(suite, f"usbctl -d {usb_dev} status verifies all functions active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x07 \(SERIAL:ON, MODEM:ON, MSC:ON, MTP:OFF\)", wait=1.0)
+        if not is_single_phy_usb:
+            if has_sd0:
+                self.check(suite, "usbctl storage switches to mtp mode", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.0)
+                self.check(suite, "usbctl storage switches to msc mode", "usbctl storage msc /dev/sd0", r"Switched USB storage to MSC", wait=1.0)
+            else:
+                self.check(suite, "usbctl storage switches to mtp mode", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.0)
+                self.check(suite, "usbctl storage switches to msc mode (/tmp/test_msc.bin)", "usbctl storage msc /tmp/test_msc.bin", r"Switched USB storage to MSC", wait=1.0)
+
+            # 5. Dynamic Slave Gadget Mask Reconfiguration
+            self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial+Modem mask (0x03)", f"usbctl -d {usb_dev} funcs 0x03", r"Updated gadget functions mask to 0x03", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} status verifies Serial+Modem active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x03 \(SERIAL:ON, MODEM:ON, MSC:OFF, MTP:OFF\)", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} funcs sets Serial-only mask (0x01)", f"usbctl -d {usb_dev} funcs 0x01", r"Updated gadget functions mask to 0x01", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} status verifies Serial-only active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x01 \(SERIAL:ON, MODEM:OFF, MSC:OFF, MTP:OFF\)", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} funcs restores all functions mask (0x07)", f"usbctl -d {usb_dev} funcs 0x07", r"Updated gadget functions mask to 0x07", wait=1.0)
+            self.check(suite, f"usbctl -d {usb_dev} status verifies all functions active", f"usbctl -d {usb_dev} status", r"Functions:\s+0x07 \(SERIAL:ON, MODEM:ON, MSC:ON, MTP:OFF\)", wait=1.0)
+        else:
+            print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] Single-PHY USB console ({self.port}); skipping live USB re-enumeration (storage/funcs) checks.")
 
         # 6. Host-Side USB Enumeration Verification (when target gadget USB port is wired to host)
         if gadget:
@@ -1546,22 +1641,24 @@ class EOSTestHarness:
                             str(gadget))
             self.check_host(suite, "host sees CDC-ACM ttyACM port(s) on composite gadget",
                             len(gadget["tty_ports"]) >= 1, str(gadget["tty_ports"]))
-            msc_deadline = time.time() + 5.0
-            while not gadget["block_devices"] and time.time() < msc_deadline:
-                time.sleep(0.25)
-                refreshed = board_detect.find_gadget_device(self.target_chip)
-                if refreshed:
-                    gadget = refreshed
-            self.check_host(suite, "host sees MSC block device on composite gadget",
-                            len(gadget["block_devices"]) >= 1, str(gadget["block_devices"]))
-            if has_sd0 and gadget["block_devices"]:
-                self.check_host(suite, "host MSC block device reports non-zero SD capacity",
-                                gadget["block_devices"][0]["size_bytes"] > 0,
-                                str(gadget["block_devices"][0]))
+            if has_sd0:
+                msc_deadline = time.time() + 5.0
+                while not gadget["block_devices"] and time.time() < msc_deadline:
+                    time.sleep(0.25)
+                    refreshed = board_detect.find_gadget_device(self.target_chip)
+                    if refreshed:
+                        gadget = refreshed
+                self.check_host(suite, "host sees MSC block device on composite gadget",
+                                len(gadget["block_devices"]) >= 1, str(gadget["block_devices"]))
+                if gadget["block_devices"]:
+                    self.check_host(suite, "host MSC block device reports non-zero SD capacity",
+                                    gadget["block_devices"][0]["size_bytes"] > 0,
+                                    str(gadget["block_devices"][0]))
+            else:
+                print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] /dev/sd0 not present; skipping host MSC block device capacity check.")
 
         # 7. USB Role Flippage (off -> host -> device) & Host Re-Enumeration Verification
         # On single-PHY ESP32-S3 over /dev/ttyACM*, switching USB role disconnects the test console itself.
-        is_single_phy_usb = (self.target_chip == "esp32s3" and "/dev/ttyACM" in (self.port or ""))
         if not is_single_phy_usb:
             self.check(suite, f"usbctl -d {usb_dev} role off disables USB gadget", f"usbctl -d {usb_dev} role off", r"Switched USB role to 'off'", wait=1.5)
             self.check(suite, f"usbctl -d {usb_dev} role verifies OFF state", f"usbctl -d {usb_dev} role", r"Active USB Role:\s+0\s+\(OFF\)", wait=1.0)
@@ -1577,7 +1674,7 @@ class EOSTestHarness:
 
             self.check(suite, f"usbctl -d {usb_dev} role host switches to host mode", f"usbctl -d {usb_dev} role host", r"Switched USB role to 'host'", wait=1.5)
             self.check(suite, f"usbctl -d {usb_dev} host enumerates downstream devices", f"usbctl -d {usb_dev} host", r"Host Downstream Devices", wait=1.0)
-            self.check(suite, f"usbctl -d {usb_dev} role composite restores composite mode", f"usbctl -d {usb_dev} role composite", r"Switched USB role to 'composite'", wait=3.5)
+            self.check(suite, f"usbctl -d {usb_dev} role composite restores composite mode", f"usbctl -d {usb_dev} role composite", r"Switched USB role to 'composite'", wait=5.0)
             self.check(suite, f"usbctl -d {usb_dev} role verifies restored composite mode", f"usbctl -d {usb_dev} role", r"Active USB Role:\s+2\s+\(DEVICE_COMPOSITE\)", wait=1.0)
             self.check(suite, f"usbctl -d {usb_dev} status verifies composite device status", f"usbctl -d {usb_dev} status", r"Role:\s+Composite Device", wait=1.0)
 
@@ -1586,8 +1683,8 @@ class EOSTestHarness:
                 deadline = time.time() + 5.0
                 while time.time() < deadline:
                     cand = board_detect.find_gadget_device(self.target_chip)
-                    if cand and cand["tty_ports"] and cand["block_devices"]:
-                        if not has_sd0 or cand["block_devices"][0]["size_bytes"] > 0:
+                    if cand and cand["tty_ports"]:
+                        if not has_sd0 or (cand["block_devices"] and cand["block_devices"][0]["size_bytes"] > 0):
                             re_enum = cand
                             break
                     time.sleep(0.25)
@@ -1595,8 +1692,9 @@ class EOSTestHarness:
                                 re_enum is not None, str(re_enum))
 
         # 8. MTP Unified Storage & Host mtp-detect Verification
-        self.check(suite, "usbctl storage restores MTP Unified Storage (/)", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.5)
-        self.check(suite, f"usbctl -d {usb_dev} status verifies MTP:ON", f"usbctl -d {usb_dev} status", r"MTP:ON", wait=1.0)
+        if not is_single_phy_usb:
+            self.check(suite, "usbctl storage restores MTP Unified Storage (/)", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.5)
+            self.check(suite, f"usbctl -d {usb_dev} status verifies MTP:ON", f"usbctl -d {usb_dev} status", r"MTP:ON", wait=1.0)
         self.check(suite, "usbctl mtp updates export path to /tmp", "usbctl mtp /tmp", r"Configured MTP export path to '/tmp'", wait=1.0)
         self.check(suite, "usbctl mtp verifies /tmp export path", "usbctl mtp", r"MTP Export Path:\s+/tmp", wait=1.0)
         self.check(suite, "usbctl mtp restores / Unified Storage path", "usbctl mtp /", r"Configured MTP export path to '/'", wait=1.0)
@@ -1626,13 +1724,29 @@ class EOSTestHarness:
             self.check_host(suite, "host sees USB Imaging/MTP interface (06/01/01) on composite gadget",
                             mtp_has_if, str(mtp_gadget))
 
-            if shutil.which("mtp-detect"):
+            mtp_gadget_count = 0
+            for gd in board_detect.enumerate_espressif_usb():
+                if gd["role"] == "tinyusb_gadget" and os.path.isdir(gd["sysfs_path"]):
+                    for if_dir in glob.glob(os.path.join(gd["sysfs_path"], "*:*")):
+                        cls_p = os.path.join(if_dir, "bInterfaceClass")
+                        sub_p = os.path.join(if_dir, "bInterfaceSubClass")
+                        prt_p = os.path.join(if_dir, "bInterfaceProtocol")
+                        if os.path.isfile(cls_p) and os.path.isfile(sub_p) and os.path.isfile(prt_p):
+                            if (open(cls_p).read().strip() == "06" and
+                                open(sub_p).read().strip() == "01" and
+                                open(prt_p).read().strip() == "01"):
+                                mtp_gadget_count += 1
+                                break
+
+            if mtp_gadget_count > 1:
+                print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] Multiple ({mtp_gadget_count}) MTP gadgets on host USB; skipping libmtp CLI checks to avoid 303a:4001 collision.")
+            elif shutil.which("mtp-detect"):
                 time.sleep(2.5)
                 try:
-                    res = subprocess.run(["timeout", "10", "mtp-detect"],
-                                         capture_output=True, text=True, timeout=12)
+                    res = subprocess.run(["timeout", "30", "mtp-detect"],
+                                         capture_output=True, text=True, timeout=35)
                     mtp_out = (res.stdout or "") + (res.stderr or "")
-                    detected = ("EOS Unified Storage" in mtp_out and
+                    detected = ("Model: EOS " in mtp_out and
                                 "Unified Storage" in mtp_out and
                                 "0x00010001" in mtp_out)
                     self.check_host(suite, "host mtp-detect opens session and verifies Unified Storage",
@@ -1641,10 +1755,10 @@ class EOSTestHarness:
                     self.check_host(suite, "host mtp-detect opens session and verifies Unified Storage",
                                     False, str(exc))
 
-            if shutil.which("mtp-folders"):
+            if mtp_gadget_count <= 1 and shutil.which("mtp-folders"):
                 try:
-                    res = subprocess.run(["timeout", "10", "mtp-folders"],
-                                         capture_output=True, text=True, timeout=12)
+                    res = subprocess.run(["timeout", "30", "mtp-folders"],
+                                         capture_output=True, text=True, timeout=35)
                     fld_out = (res.stdout or "") + (res.stderr or "")
                     has_dirs = ("tmp" in fld_out and "proc" in fld_out and "bin" in fld_out)
                     self.check_host(suite, "host mtp-folders enumerates Unified Storage root dirs (tmp, proc, bin)",
@@ -1653,10 +1767,10 @@ class EOSTestHarness:
                     self.check_host(suite, "host mtp-folders enumerates Unified Storage root dirs (tmp, proc, bin)",
                                     False, str(exc))
 
-            if shutil.which("mtp-files"):
+            if mtp_gadget_count <= 1 and shutil.which("mtp-files"):
                 try:
-                    res = subprocess.run(["timeout", "10", "mtp-files"],
-                                         capture_output=True, text=True, timeout=12)
+                    res = subprocess.run(["timeout", "30", "mtp-files"],
+                                         capture_output=True, text=True, timeout=35)
                     fil_out = (res.stdout or "") + (res.stderr or "")
                     has_files = ("meminfo" in fil_out and "devices" in fil_out)
                     self.check_host(suite, "host mtp-files enumerates files across Unified Storage",

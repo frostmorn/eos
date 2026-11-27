@@ -19,8 +19,8 @@ bool driver_usb_host_cdc_init(eos_dev_t *dev) {
   memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->io_mutex = xSemaphoreCreateMutex();
+  if (!st->io_mutex) {
     free(st);
     dev->state = NULL;
     return false;
@@ -28,7 +28,7 @@ bool driver_usb_host_cdc_init(eos_dev_t *dev) {
 
   st->rx_buf = eos_psram_malloc_prefer(EOS_USB_HOST_CDC_BUFFER_SIZE);
   if (!st->rx_buf) {
-    vSemaphoreDelete(st->mutex);
+    vSemaphoreDelete(st->io_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -49,9 +49,9 @@ void driver_usb_host_cdc_shutdown(eos_dev_t *dev) {
     free(st->rx_buf);
     st->rx_buf = NULL;
   }
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->io_mutex) {
+    vSemaphoreDelete(st->io_mutex);
+    st->io_mutex = NULL;
   }
   free(st);
   dev->state = NULL;
@@ -82,7 +82,7 @@ ssize_t driver_usb_host_cdc_read(eos_dev_t *dev, int fd, void *dst, size_t size)
     return -1;
   }
   eos_usb_host_cdc_state_t *st = (eos_usb_host_cdc_state_t *)dev->state;
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->io_mutex, portMAX_DELAY) != pdTRUE) {
     errno = EIO;
     return -1;
   }
@@ -95,7 +95,7 @@ ssize_t driver_usb_host_cdc_read(eos_dev_t *dev, int fd, void *dst, size_t size)
     st->rx_count--;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)count;
 }
 
@@ -106,7 +106,7 @@ ssize_t driver_usb_host_cdc_write(eos_dev_t *dev, int fd, const void *data, size
     return -1;
   }
   eos_usb_host_cdc_state_t *st = (eos_usb_host_cdc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
   const uint8_t *in = (const uint8_t *)data;
   size_t bytes_written = 0;
@@ -116,7 +116,7 @@ ssize_t driver_usb_host_cdc_write(eos_dev_t *dev, int fd, const void *data, size
     st->rx_count++;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)bytes_written;
 }
 

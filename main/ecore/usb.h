@@ -7,7 +7,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define EOS_USB_MSC_DEFAULT_SECTOR_SIZE   512
 #define EOS_USB_MSC_MAX_BACKING_DEV_LEN   32
 #define EOS_USB_DEFAULT_MSC_BACKING       "/dev/sd0"
 #define EOS_USB_MTP_MAX_PATH_LEN          64
@@ -15,9 +14,6 @@
 #define EOS_USB_MTP_FALLBACK_TOTAL_BYTES  (1024ULL * 1024ULL * 1024ULL)
 #define EOS_USB_MTP_FALLBACK_FREE_BYTES   (512ULL * 1024ULL * 1024ULL)
 #define EOS_USB_MAX_HOST_DEVICES          8
-#define EOS_USB_MODEM_LINE_BUF_LEN        128
-#define EOS_USB_SERIAL_BUF_LEN            256
-#define EOS_USB_JTAG_MAX_PATTERNS         64
 
 // USB Roles
 typedef enum {

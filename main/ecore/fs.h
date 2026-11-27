@@ -10,7 +10,6 @@
 #include "emisc/strlimits.h"
 
 // Filesystem capability flags
-#define EOS_FS_FLAG_NONE         0U
 #define EOS_FS_FLAG_PSEUDO       (1U << 0) // In-memory/pseudo filesystem (nodev in /proc/filesystems)
 #define EOS_FS_FLAG_NEEDS_BDEV   (1U << 1) // Backed by storage block device (requires /dev/* source)
 #define EOS_FS_FLAG_READONLY     (1U << 2) // Filesystem is inherently read-only
@@ -21,7 +20,6 @@
 
 // Configuration constants
 #define EOS_FS_DEFAULT_MOUNT_CAPACITY     8
-#define EOS_FS_PROC_BUF_INITIAL_SIZE      512
 #define EOS_FS_PROC_FILESYSTEMS_BUF_SIZE  EOS_LARGE_STR_LEN
 #define EOS_FS_PROC_MOUNTS_BUF_SIZE       EOS_LARGE_STR_LEN
 

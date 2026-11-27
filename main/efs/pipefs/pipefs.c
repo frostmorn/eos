@@ -36,7 +36,7 @@ typedef struct {
   int readers;
   int writers;
   bool ever_written;
-  pthread_mutex_t lock;
+  pthread_mutex_t node_lock;
   pthread_cond_t r_cond;
   pthread_cond_t w_cond;
 } pipe_node_t;
@@ -53,7 +53,7 @@ typedef struct {
 } pipe_dir_t;
 
 typedef struct {
-  pthread_mutex_t lock;
+  pthread_mutex_t table_lock;
   kvec_psram_t(pipe_node_t *) nodes;
   uint32_t auto_seq;
   bool initialized;
@@ -133,7 +133,7 @@ static int pipe_alloc_node_locked(const char *name) {
     errno = ENOMEM;
     return -1;
   }
-  pthread_mutex_init(&new_node->lock, NULL);
+  pthread_mutex_init(&new_node->node_lock, NULL);
   pthread_cond_init(&new_node->r_cond, NULL);
   pthread_cond_init(&new_node->w_cond, NULL);
   new_node->in_use = true;
@@ -203,13 +203,13 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode, eos_vfs
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
 
   int pipe_idx = -1;
   pipe_node_t *node = pipe_find_by_name_locked(path, &pipe_idx);
 
   if (node && (flags & O_CREAT) && (flags & O_EXCL)) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = EEXIST;
     return -1;
   }
@@ -220,12 +220,12 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode, eos_vfs
     if ((flags & O_CREAT) || acc == O_WRONLY || acc == O_RDWR) {
       pipe_idx = pipe_alloc_node_locked(path);
       if (pipe_idx < 0) {
-        pthread_mutex_unlock(&s_pipe_table->lock);
+        pthread_mutex_unlock(&s_pipe_table->table_lock);
         return -1;
       }
       node = kv_A(s_pipe_table->nodes, pipe_idx);
     } else {
-      pthread_mutex_unlock(&s_pipe_table->lock);
+      pthread_mutex_unlock(&s_pipe_table->table_lock);
       errno = ENOENT;
       return -1;
     }
@@ -234,13 +234,13 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode, eos_vfs
   pipe_file_t *file = eos_vfs_file_alloc(NULL, sizeof(pipe_file_t), flags);
   if (!file) {
     pipe_check_reclaim_locked(pipe_idx);
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = ENFILE;
     return -1;
   }
   file->pipe_idx = pipe_idx;
 
-  pthread_mutex_lock(&node->lock);
+  pthread_mutex_lock(&node->node_lock);
   int acc = flags & O_ACCMODE;
   if (acc == O_RDONLY) {
     node->readers++;
@@ -261,9 +261,9 @@ static int pipefs_open(void *ctx, const char *path, int flags, int mode, eos_vfs
 
   pthread_cond_broadcast(&node->r_cond);
   pthread_cond_broadcast(&node->w_cond);
-  pthread_mutex_unlock(&node->lock);
+  pthread_mutex_unlock(&node->node_lock);
 
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   *out_file = &file->base;
   return file->base.fd;
 }
@@ -278,12 +278,12 @@ static int pipefs_close(void *ctx, eos_vfs_file_t *file) {
   int pipe_idx = pf->pipe_idx;
   int flags = file->flags;
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
   if (node) {
-    pthread_mutex_lock(&node->lock);
+    pthread_mutex_lock(&node->node_lock);
 
     int acc = flags & O_ACCMODE;
     if (acc == O_RDONLY) {
@@ -301,11 +301,11 @@ static int pipefs_close(void *ctx, eos_vfs_file_t *file) {
 
     pthread_cond_broadcast(&node->r_cond);
     pthread_cond_broadcast(&node->w_cond);
-    pthread_mutex_unlock(&node->lock);
+    pthread_mutex_unlock(&node->node_lock);
   }
 
   pipe_check_reclaim_locked(pipe_idx);
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return 0;
 }
 
@@ -331,17 +331,17 @@ static ssize_t pipefs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t si
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
   if (!node) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = EBADF;
     return -1;
   }
-  pthread_mutex_lock(&node->lock);
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_lock(&node->node_lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
 
   uint8_t *out = (uint8_t *)dst;
   size_t total_read = 0;
@@ -364,22 +364,22 @@ static ssize_t pipefs_read(void *ctx, eos_vfs_file_t *file, void *dst, size_t si
     }
 
     if (flags & O_NONBLOCK) {
-      pthread_mutex_unlock(&node->lock);
+      pthread_mutex_unlock(&node->node_lock);
       errno = EAGAIN;
       return -1;
     }
 
     bool prev_w = eos_proc_enter_wait();
-    pthread_cond_wait(&node->r_cond, &node->lock);
+    pthread_cond_wait(&node->r_cond, &node->node_lock);
     eos_proc_leave_wait(prev_w);
   }
 
-  pthread_mutex_unlock(&node->lock);
+  pthread_mutex_unlock(&node->node_lock);
 
   if (total_read == 0) {
-    pthread_mutex_lock(&s_pipe_table->lock);
+    pthread_mutex_lock(&s_pipe_table->table_lock);
     pipe_check_reclaim_locked(pipe_idx);
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
   }
 
   return (ssize_t)total_read;
@@ -407,17 +407,17 @@ static ssize_t pipefs_write(void *ctx, eos_vfs_file_t *file, const void *data, s
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
   if (!node) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = EBADF;
     return -1;
   }
-  pthread_mutex_lock(&node->lock);
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_lock(&node->node_lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
 
   const uint8_t *src = (const uint8_t *)data;
   size_t total_written = 0;
@@ -425,7 +425,7 @@ static ssize_t pipefs_write(void *ctx, eos_vfs_file_t *file, const void *data, s
   while (total_written < size) {
     // If pipe was unlinked/anonymous and all readers closed, report EPIPE
     if (node->unlinked && node->readers == 0) {
-      pthread_mutex_unlock(&node->lock);
+      pthread_mutex_unlock(&node->node_lock);
       errno = EPIPE;
       return total_written > 0 ? (ssize_t)total_written : -1;
     }
@@ -446,7 +446,7 @@ static ssize_t pipefs_write(void *ctx, eos_vfs_file_t *file, const void *data, s
     // Buffer is full; if no readers are open and pipe is not anonymous,
     // wait for a reader unless O_NONBLOCK is set.
     if (flags & O_NONBLOCK) {
-      pthread_mutex_unlock(&node->lock);
+      pthread_mutex_unlock(&node->node_lock);
       if (total_written > 0)
         return (ssize_t)total_written;
       errno = EAGAIN;
@@ -454,11 +454,11 @@ static ssize_t pipefs_write(void *ctx, eos_vfs_file_t *file, const void *data, s
     }
 
     bool prev_w = eos_proc_enter_wait();
-    pthread_cond_wait(&node->w_cond, &node->lock);
+    pthread_cond_wait(&node->w_cond, &node->node_lock);
     eos_proc_leave_wait(prev_w);
   }
 
-  pthread_mutex_unlock(&node->lock);
+  pthread_mutex_unlock(&node->node_lock);
   return (ssize_t)total_written;
 }
 
@@ -472,19 +472,19 @@ static int pipefs_fstat(void *ctx, eos_vfs_file_t *file, struct stat *st) {
   pipe_file_t *pf = (pipe_file_t *)file;
   int pipe_idx = pf->pipe_idx;
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   pipe_node_t *node = (pipe_idx >= 0 && (size_t)pipe_idx < kv_size(s_pipe_table->nodes))
                           ? kv_A(s_pipe_table->nodes, pipe_idx)
                           : NULL;
   if (!node) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = EBADF;
     return -1;
   }
   memset(st, 0, sizeof(*st));
   st->st_mode = S_IFIFO | EOS_DEFAULT_DEV_MODE;
   st->st_size = (off_t)node->count;
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return 0;
 }
 
@@ -509,17 +509,17 @@ static int pipefs_stat(void *ctx, const char *path, struct stat *st) {
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   pipe_node_t *node = pipe_find_by_name_locked(path, NULL);
   if (!node) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = ENOENT;
     return -1;
   }
   memset(st, 0, sizeof(*st));
   st->st_mode = S_IFIFO | EOS_DEFAULT_DEV_MODE;
   st->st_size = (off_t)node->count;
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return 0;
 }
 
@@ -543,18 +543,18 @@ static int pipefs_unlink(void *ctx, const char *path) {
     return -1;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   int idx = -1;
   pipe_node_t *node = pipe_find_by_name_locked(path, &idx);
   if (!node) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     errno = ENOENT;
     return -1;
   }
 
   node->unlinked = true;
   pipe_check_reclaim_locked(idx);
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return 0;
 }
 
@@ -583,7 +583,7 @@ static struct dirent *pipefs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
     return NULL;
   }
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   while (dir->idx < kv_size(s_pipe_table->nodes)) {
     uint32_t i = dir->idx++;
     pipe_node_t *node = kv_A(s_pipe_table->nodes, i);
@@ -592,11 +592,11 @@ static struct dirent *pipefs_readdir(void *ctx, eos_vfs_dir_t *pdir) {
       dir->entry.d_ino = i;
       dir->entry.d_type = DT_FIFO;
       strlcpy(dir->entry.d_name, node->name, sizeof(dir->entry.d_name));
-      pthread_mutex_unlock(&s_pipe_table->lock);
+      pthread_mutex_unlock(&s_pipe_table->table_lock);
       return &dir->entry;
     }
   }
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return NULL;
 }
 
@@ -628,17 +628,17 @@ int eos_pipefs_create(char *path_out, size_t len) {
   if (!s_pipe_table)
     return -1;
 
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   int idx = pipe_alloc_node_locked(NULL);
   if (idx < 0) {
-    pthread_mutex_unlock(&s_pipe_table->lock);
+    pthread_mutex_unlock(&s_pipe_table->table_lock);
     return -1;
   }
   if (path_out && len > 0) {
     pipe_node_t *node = kv_A(s_pipe_table->nodes, idx);
     snprintf(path_out, len, EOS_PIPEFS_ROOT "/%s", node ? node->name : "");
   }
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
   return idx;
 }
 
@@ -668,13 +668,13 @@ int pipe(int pipefd[2]) {
 
   // Mark anonymous pipe unlinked so it is automatically reclaimed
   // as soon as both descriptors are closed.
-  pthread_mutex_lock(&s_pipe_table->lock);
+  pthread_mutex_lock(&s_pipe_table->table_lock);
   if (idx >= 0 && (size_t)idx < kv_size(s_pipe_table->nodes)) {
     pipe_node_t *node = kv_A(s_pipe_table->nodes, idx);
     if (node)
       node->unlinked = true;
   }
-  pthread_mutex_unlock(&s_pipe_table->lock);
+  pthread_mutex_unlock(&s_pipe_table->table_lock);
 
   pipefd[0] = rfd;
   pipefd[1] = wfd;
@@ -695,7 +695,7 @@ static int pipefs_fs_mount(const char *src, const char *tgt, uint32_t flags, con
     pthread_mutexattr_t attr;
     pthread_mutexattr_init(&attr);
     pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-    pthread_mutex_init(&s_pipe_table->lock, &attr);
+    pthread_mutex_init(&s_pipe_table->table_lock, &attr);
     pthread_mutexattr_destroy(&attr);
 
     kv_init(s_pipe_table->nodes);

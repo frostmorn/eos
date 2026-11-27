@@ -12,7 +12,7 @@
 #define EOS_USB_HOST_CDC_BUFFER_SIZE 1024
 
 typedef struct {
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t io_mutex;
   uint8_t *rx_buf;
   size_t   rx_size;
   size_t   rx_head;

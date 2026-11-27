@@ -73,6 +73,9 @@ int eos_dev_attach(eos_dev_t *dev, eos_dev_t *parent);
 // Detaches device and all it's childs from EOS device tree
 int eos_dev_detach(eos_dev_t *dev);
 
+// Detaches all peripheral devices from root (used during clean reboot)
+void eos_dev_detach_all(void);
+
 // Seek device in a tree
 eos_dev_t *eos_dev_find_by_name(const char *name);
 

@@ -104,7 +104,7 @@ void usb_logic_close(usb_logic_ctx_t *ctx) {
 int usb_logic_set_role(usb_logic_ctx_t *ctx, eos_usb_role_t role) {
   if (!ctx || ctx->fd < 0) return -1;
   if (ioctl(ctx->fd, EOS_USB_IOCTL_SET_ROLE, role) < 0) {
-    return -1;
+    return (errno == ENOTSUP) ? -ENOTSUP : -1;
   }
   return usb_logic_refresh(ctx);
 }

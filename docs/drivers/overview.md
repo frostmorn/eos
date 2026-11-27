@@ -135,3 +135,24 @@ int eos_dev_closedir(eos_dev_t *dev, DIR *pdir);
 | **`sound`** | `/dev/sound*` | [Sound Drivers](./sound.md) | `400–499` |
 | **`net`** | `/dev/wifi*`, `/dev/sta*`, `/dev/ap*`, `/dev/br*` | [Network Drivers](./network.md) | `500–599` |
 | **`power`** | `/dev/battery*` | [ADC & Power Drivers](./adc-and-power.md) | `600–699` |
+| **`usb`** | `/dev/usb_serial*`, `/dev/usb_modem*`, `/dev/usb_msc*`, `/dev/usb_mtp*` | [USB, MTP & MSC Drivers](./usb.md) | `800–899` |
+
+---
+
+## 6. Driver Component Dependencies & Versions
+
+| Dependency | Version | Scope / Drivers |
+| :--- | :---: | :--- |
+| **ESP-IDF** | `6.0.2` | Core OS, `bus/*`, `storage/*`, `display/*`, `sound/*`, `power/*` |
+| **`cherry-embedded/cherryusb`** | `1.6.1` | `bus/usb`, `usb/serial`, `usb/modem`, `usb/msc`, `usb/mtp` |
+| **`espressif/esp_hosted`** | `2.13.1` | `net/wifi` (ESP32-P4 SDIO co-processor link) |
+| **`espressif/esp_wifi_remote`** | `1.6.5` | `net/wifi`, `net/sta`, `net/ap` (ESP32-P4 remote Wi-Fi) |
+| **`espressif/eppp_link`** | `1.1.6` | `net/wifi` (ESP-Hosted transport link) |
+| **`espressif/esp_serial_slave_link`** | `1.1.2` | `bus/sdio` (SDIO slave communication) |
+| **`espressif/esp_lcd_st7701`** | `2.0.3` | `display/st7701s` (MIPI-DSI panel) |
+| **`espressif/esp_lcd_touch`** | `1.2.1` | `input/gt911` (Touch driver framework) |
+| **`espressif/esp_lcd_touch_gt911`** | `1.2.1` | `input/gt911` (Capacitive touch controller) |
+| **`espressif/elf_loader`** | `2.0.0` | `ecore/elf` (Dynamic ELF binary execution) |
+
+---
+*Last updated: 2026-11-27*

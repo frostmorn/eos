@@ -187,7 +187,7 @@ static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
     .item_count = sizeof(action_items) / sizeof(action_items[0]),
     .on_select = fm_action_menu_cb,
     .user_data = st,
-    .width = is_small ? 0 : FM_ACTIONS_MODAL_W,
+    .width = 0,
     .parent = st->scr,
   };
 
@@ -389,7 +389,7 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
 
   // Header container
   st->hdr = lv_obj_create(st->scr);
-  lv_obj_set_size(st->hdr, lv_pct(100), hdr_h);
+  lv_obj_set_size(st->hdr, lv_pct(EOS_PERCENT_MAX), hdr_h);
   lv_obj_align(st->hdr, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_color(st->hdr, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
   lv_obj_set_style_border_color(st->hdr, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
@@ -433,7 +433,7 @@ static void fm_setup_ui(fm_state_t *st, uint32_t w, uint32_t h) {
 
   // Quick Jump Bar
   st->quick_bar = lv_obj_create(st->scr);
-  lv_obj_set_size(st->quick_bar, lv_pct(100), FM_BAR_HEIGHT);
+  lv_obj_set_size(st->quick_bar, lv_pct(EOS_PERCENT_MAX), FM_BAR_HEIGHT);
   lv_obj_align(st->quick_bar, LV_ALIGN_TOP_MID, 0, hdr_h);
   lv_obj_set_style_bg_color(st->quick_bar, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
   lv_obj_set_style_border_color(st->quick_bar, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
@@ -476,10 +476,10 @@ static void fm_handle_key(fm_state_t *st, uint16_t key) {
   }
 
   if (st->dialog) {
-    if (eos_lvgl_dialog_preview_handle_key(st->dialog, key)) {
+    if (eos_lvgl_dialog_handle_key(st->dialog, key)) {
       return;
     }
-    if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE || key == KEY_A || key == KEY_ENTER) {
+    if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE || key == KEY_A) {
       fm_close_dialog(st);
     }
     return;

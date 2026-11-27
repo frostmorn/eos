@@ -42,13 +42,13 @@ typedef struct {
   uint32_t bclk_actual_hz; // Actual hardware BCLK frequency from I2S controller
   eos_sound_stats_t stats; // Runtime streaming statistics and time shift metrics
   bool enabled;
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t audio_lock;
 } max98357_state_t;
 
 // ── Fast Power-of-2 / Bit-Shift Helpers ────────────────────────
 
 static inline uint8_t max98357_calc_vol_shift(uint32_t volume, uint32_t mult) {
-  uint32_t eff = (volume * mult) / 100;
+  uint32_t eff = (volume * mult) / EOS_PERCENT_MAX;
   if (eff >= 90) return 0; // 100% full scale (0 dB)
   if (eff >= 45) return 1; // 50% (-6 dB)
   if (eff >= 22) return 2; // 25% (-12 dB)
@@ -268,19 +268,19 @@ static void max98357_parse_mult_delay(eos_dev_t *dev, max98357_state_t *st) {
   } else {
     int32_t ep = eos_cfg_get_i(dev->cfg, "earplugs", -1);
     if (ep == 0) {
-      mult = 100;
+      mult = EOS_PERCENT_MAX;
     } else {
       char *mode = eos_cfg_get_s(dev->cfg, "mode", NULL);
       if (mode && (strcasecmp(mode, "speaker") == 0 ||
                    strcasecmp(mode, "full") == 0 ||
                    strcasecmp(mode, "loud") == 0)) {
-        mult = 100;
+        mult = EOS_PERCENT_MAX;
       } else {
         mult = 10;
       }
     }
   }
-  if (mult > 100) mult = 100;
+  if (mult > EOS_PERCENT_MAX) mult = EOS_PERCENT_MAX;
   st->mult = mult;
 
   int32_t delay_ms = eos_cfg_get_i(dev->cfg, "delay", -1);
@@ -312,15 +312,15 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
     return false;
   dev->state = st;
 
-  st->lock = xSemaphoreCreateMutex();
-  if (!st->lock) {
+  st->audio_lock = xSemaphoreCreateMutex();
+  if (!st->audio_lock) {
     free(st);
     dev->state = NULL;
     return false;
   }
 
   if (!max98357_init_pins(dev, st)) {
-    vSemaphoreDelete(st->lock);
+    vSemaphoreDelete(st->audio_lock);
     free(st);
     dev->state = NULL;
     return false;
@@ -340,9 +340,9 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
   if (st->channels != 1 && st->channels != 2)
     st->channels = 1;
 
-  st->volume = (uint32_t)eos_cfg_get_i(dev->cfg, "vol", 100);
-  if (st->volume > 100)
-    st->volume = 100;
+  st->volume = (uint32_t)eos_cfg_get_i(dev->cfg, "vol", EOS_PERCENT_MAX);
+  if (st->volume > EOS_PERCENT_MAX)
+    st->volume = EOS_PERCENT_MAX;
 
   max98357_parse_mult_delay(dev, st);
 
@@ -350,7 +350,7 @@ static bool driver_sound_max98357_init(eos_dev_t *dev) {
     eos_cap_release(EOS_CAPS_GPIO, st->dout_pin, dev);
     eos_cap_release(EOS_CAPS_GPIO, st->ws_pin, dev);
     eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
-    vSemaphoreDelete(st->lock);
+    vSemaphoreDelete(st->audio_lock);
     free(st);
     dev->state = NULL;
     return false;
@@ -375,8 +375,8 @@ static void driver_sound_max98357_shutdown(eos_dev_t *dev) {
 
   max98357_state_t *st = dev->state;
 
-  if (st->lock) {
-    xSemaphoreTake(st->lock, portMAX_DELAY);
+  if (st->audio_lock) {
+    xSemaphoreTake(st->audio_lock, portMAX_DELAY);
   }
 
   if (st->tx_chan) {
@@ -398,10 +398,10 @@ static void driver_sound_max98357_shutdown(eos_dev_t *dev) {
     eos_cap_release(EOS_CAPS_GPIO, st->bclk_pin, dev);
   }
 
-  if (st->lock) {
-    xSemaphoreGive(st->lock);
-    vSemaphoreDelete(st->lock);
-    st->lock = NULL;
+  if (st->audio_lock) {
+    xSemaphoreGive(st->audio_lock);
+    vSemaphoreDelete(st->audio_lock);
+    st->audio_lock = NULL;
   }
 
   free(st);
@@ -416,7 +416,7 @@ static int driver_sound_max98357_close(eos_dev_t *dev, int fd) {
     return 0;
 
   max98357_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(100)) == pdTRUE) {
+  if (xSemaphoreTake(st->audio_lock, pdMS_TO_TICKS(EOS_TENTH_SEC_MS)) == pdTRUE) {
     if (st->stats.total_writes > 0) {
       int64_t stream_dur = st->stats.last_write_us - st->stats.stream_start_us;
       int64_t avg_wait = st->stats.total_writes ? (st->stats.total_i2s_wait_us / st->stats.total_writes) : 0;
@@ -428,7 +428,7 @@ static int driver_sound_max98357_close(eos_dev_t *dev, int fd) {
                avg_wait, st->stats.max_i2s_wait_us,
                avg_proc, st->stats.underruns);
     }
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->audio_lock);
   }
   return 0;
 }
@@ -569,14 +569,14 @@ static ssize_t driver_sound_max98357_write(eos_dev_t *dev, int fd,
 
   int64_t t0 = esp_timer_get_time();
   max98357_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->audio_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
 
   int64_t t_lock = esp_timer_get_time();
   if (!st->enabled || !st->tx_chan) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->audio_lock);
     errno = EIO;
     return -1;
   }
@@ -604,7 +604,7 @@ static ssize_t driver_sound_max98357_write(eos_dev_t *dev, int fd,
   int64_t lock_us = t_lock - t0;
   max98357_update_write_stats(st, total_written, lock_us, proc_us, i2s_wait_us, t_done, size);
 
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->audio_lock);
 
   if (err != ESP_OK && total_written == 0) {
     errno = EIO;
@@ -676,8 +676,8 @@ static int sound_ioctl_vol_delay(max98357_state_t *st, int cmd, va_list args) {
   switch (cmd) {
   case EOS_SOUND_IOCTL_SET_VOLUME: {
     uint32_t vol = va_arg(args, uint32_t);
-    if (vol > 100)
-      vol = 100;
+    if (vol > EOS_PERCENT_MAX)
+      vol = EOS_PERCENT_MAX;
     st->volume = vol;
     return 0;
   }
@@ -692,8 +692,8 @@ static int sound_ioctl_vol_delay(max98357_state_t *st, int cmd, va_list args) {
   }
   case EOS_SOUND_IOCTL_SET_MULT: {
     uint32_t m = va_arg(args, uint32_t);
-    if (m > 100)
-      m = 100;
+    if (m > EOS_PERCENT_MAX)
+      m = EOS_PERCENT_MAX;
     st->mult = m;
     return 0;
   }
@@ -777,7 +777,7 @@ static int sound_ioctl_state_stats(max98357_state_t *st, int cmd, va_list args) 
 }
 
 static int sound_ioctl_set_config(max98357_state_t *st, const eos_sound_config_t *cfg) {
-  if (!cfg || cfg->volume > 100 || cfg->mult > 100) {
+  if (!cfg || cfg->volume > EOS_PERCENT_MAX || cfg->mult > EOS_PERCENT_MAX) {
     errno = EINVAL;
     return -1;
   }
@@ -820,7 +820,7 @@ static int driver_sound_max98357_ioctl(eos_dev_t *dev, int fd, int cmd,
   }
 
   max98357_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->audio_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -874,7 +874,7 @@ static int driver_sound_max98357_ioctl(eos_dev_t *dev, int fd, int cmd,
     break;
   }
 
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->audio_lock);
   return ret;
 }
 

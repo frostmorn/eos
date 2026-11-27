@@ -17,11 +17,10 @@
 #define EOS_PWM_DEFAULT_FREQ_HZ       5000
 #define EOS_PWM_DEFAULT_DUTY_PCT      100
 #define EOS_PWM_DUTY_MAX_16BIT        65535
-#define EOS_PWM_PERCENT_MAX           100
+#include "emisc/fancymacro.h"
 #define EOS_PWM_RES_BITS_DEFAULT      10
 #define EOS_PWM_HW_DUTY_MAX_DEFAULT   1023
 #define EOS_PWM_READ_BUF_LEN          32
-#define EOS_PWM_DECIMAL_BASE          10
 
 typedef struct {
   int32_t pin;

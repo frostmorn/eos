@@ -37,7 +37,7 @@ typedef struct {
   int32_t claimed_pins[EOS_ADC_TOTAL_CHANNELS];
   int32_t default_pin;
   int32_t read_offset;
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t io_lock;
 } adc_bus_state_t;
 
 static inline int adc_get_flat_index(adc_unit_t unit_id, adc_channel_t channel) {
@@ -202,8 +202,8 @@ static bool driver_bus_adc_init(eos_dev_t *dev) {
   if (!st)
     return false;
 
-  st->lock = xSemaphoreCreateMutex();
-  if (!st->lock) {
+  st->io_lock = xSemaphoreCreateMutex();
+  if (!st->io_lock) {
     free(st);
     return false;
   }
@@ -226,8 +226,8 @@ static void driver_bus_adc_shutdown(eos_dev_t *dev) {
 
   adc_bus_state_t *st = dev->state;
 
-  if (st->lock) {
-    xSemaphoreTake(st->lock, portMAX_DELAY);
+  if (st->io_lock) {
+    xSemaphoreTake(st->io_lock, portMAX_DELAY);
   }
 
   for (int i = 0; i < EOS_ADC_TOTAL_CHANNELS; i++) {
@@ -250,10 +250,10 @@ static void driver_bus_adc_shutdown(eos_dev_t *dev) {
     }
   }
 
-  if (st->lock) {
-    xSemaphoreGive(st->lock);
-    vSemaphoreDelete(st->lock);
-    st->lock = NULL;
+  if (st->io_lock) {
+    xSemaphoreGive(st->io_lock);
+    vSemaphoreDelete(st->io_lock);
+    st->io_lock = NULL;
   }
 
   free(st);
@@ -292,13 +292,13 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
   }
 
   adc_bus_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->io_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
 
   if (st->read_offset > 0) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->io_lock);
     return 0; // EOF for cat /dev/adc0
   }
 
@@ -307,7 +307,7 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
   bool ok = adc_read_pin(st, dev, st->default_pin, &raw, &mv);
 
   if (!ok) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->io_lock);
     errno = EIO;
     return -1;
   }
@@ -316,14 +316,14 @@ static ssize_t driver_bus_adc_read(eos_dev_t *dev, int fd, void *dst,
   int n = snprintf(buf, sizeof(buf), "pin: %" PRId32 "\nraw: %" PRId32 "\nmv: %" PRId32 "\n",
                    st->default_pin, raw, mv);
   if (n <= 0) {
-    xSemaphoreGive(st->lock);
+    xSemaphoreGive(st->io_lock);
     return 0;
   }
 
   size_t to_copy = ((size_t)n < size) ? (size_t)n : size;
   memcpy(dst, buf, to_copy);
   st->read_offset += (int32_t)to_copy;
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->io_lock);
   return (ssize_t)to_copy;
 }
 
@@ -335,7 +335,7 @@ static int driver_bus_adc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
   }
 
   adc_bus_state_t *st = dev->state;
-  if (xSemaphoreTake(st->lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
+  if (xSemaphoreTake(st->io_lock, pdMS_TO_TICKS(EOS_MS_PER_SEC)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -382,7 +382,7 @@ static int driver_bus_adc_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     break;
   }
 
-  xSemaphoreGive(st->lock);
+  xSemaphoreGive(st->io_lock);
   return ret;
 }
 

@@ -49,6 +49,13 @@ EOS supports three primary hardware targets under `main/eboard/`:
 | **I2S WS (LRCK)** | `GPIO 1` | `sound/max98357` | `/dev/sound0` | Word select |
 | **I2S DOUT** | `GPIO 2` | `sound/max98357` | `/dev/sound0` | Audio PCM data |
 | **Battery ADC** | `GPIO 3` | `bus/adc`, `power/battery` | `/dev/battery0` | Resistor divider: R_top=33k, R_bot=100k |
+| **USB OTG (FS)** | `GPIO 19 / 20` | `bus/usb`, `usb/*` | `/dev/usb0` | CDC-ACM interactive shell (`ush -i` on `/dev/usb_serial0`) + MTP/MSC |
+
+### Dependencies & Versions (`lilka_v23`):
+* **ESP-IDF:** `6.0.2`
+* **`cherry-embedded/cherryusb`:** `1.6.1` (USB OTG composite gadget: CDC-ACM + MTP/MSC)
+* **`espressif/elf_loader`:** `2.0.0`
+* **`espressif/cmake_utilities`:** `0.5.3`
 
 ---
 
@@ -91,6 +98,19 @@ EOS supports three primary hardware targets under `main/eboard/`:
 | **SDMMC Slot 1 D0–D3**| `GPIO 14–17` | `net/wifi` | `/dev/wifi0` | Data lines |
 | **C6 Chip Power-Up** | `GPIO 54` | `net/wifi` | `/dev/wifi0` | Co-processor reset control |
 
+### Dependencies & Versions (`jc4880p443c_i_w_y`):
+* **ESP-IDF:** `6.0.2`
+* **`cherry-embedded/cherryusb`:** `1.6.1` (HS USB OTG composite gadget + Host)
+* **`espressif/esp_hosted`:** `2.13.1` (ESP32-C6 SDIO co-processor transport)
+* **`espressif/esp_wifi_remote`:** `1.6.5`
+* **`espressif/eppp_link`:** `1.1.6`
+* **`espressif/esp_serial_slave_link`:** `1.1.2`
+* **`espressif/esp_lcd_st7701`:** `2.0.3`
+* **`espressif/esp_lcd_touch`:** `1.2.1`
+* **`espressif/esp_lcd_touch_gt911`:** `1.2.1`
+* **`espressif/elf_loader`:** `2.0.0`
+* **`espressif/cmake_utilities`:** `0.5.3`
+
 ---
 
 ## 3. Espressif QEMU Emulator (`esp32s3_qemu`)
@@ -101,3 +121,11 @@ EOS supports three primary hardware targets under `main/eboard/`:
 * **Input:** Virtual Keyboard FIFO (`input/gpio_keyboard`) supporting synthetic key event injection.
 * **Storage:** Root flash partition storage (`storage/flash`).
 * **Usage:** Continuous integration, headless automated testing (`tools/hardware_test.py`), graphics development.
+
+### Dependencies & Versions (`esp32s3_qemu`):
+* **ESP-IDF:** `6.0.2`
+* **`espressif/elf_loader`:** `2.0.0`
+* **`espressif/cmake_utilities`:** `0.5.3`
+
+---
+*Last updated: 2026-11-27*

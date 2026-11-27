@@ -150,7 +150,7 @@ static void test_backlight_logic(test_ctx_t *ctx) {
   report_test(ctx, "backlight: presets array populated", presets != NULL && pcount > 0);
 
   char buf[TEST_GUI_BUF_SZ];
-  backlight_logic_format_label(100, buf, sizeof(buf));
+  backlight_logic_format_label(EOS_PERCENT_MAX, buf, sizeof(buf));
   report_test(ctx, "backlight: format 100% label", strstr(buf, "100%") != NULL);
 
   backlight_logic_format_label(TEST_BACKLIGHT_SAMPLE_PCT, buf, sizeof(buf));

@@ -45,7 +45,7 @@ typedef struct eos_vfs_dir {
   const struct eos_vfs_mount *mount;     // Filesystem mount owning this dir (NULL for native ESP-IDF)
   atomic_int ref_count;
   atomic_bool closing;
-  pthread_mutex_t lock;                  // Serializes readdir/telldir on this DIR*
+  pthread_mutex_t dir_lock;              // Serializes readdir/telldir on this DIR*
   void *fs_data;                         // Private pointer or extra data
 } eos_vfs_dir_t;
 

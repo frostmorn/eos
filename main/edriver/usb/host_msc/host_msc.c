@@ -12,26 +12,25 @@
 #include <string.h>
 
 bool driver_usb_host_msc_init(eos_dev_t *dev) {
-  eos_usb_host_msc_state_t *st = eos_psram_malloc_prefer(sizeof(eos_usb_host_msc_state_t));
+  eos_usb_host_msc_state_t *st = eos_psram_calloc_prefer(1, sizeof(eos_usb_host_msc_state_t));
   if (!st) {
     return false;
   }
-  memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->io_mutex = xSemaphoreCreateMutex();
+  if (!st->io_mutex) {
     free(st);
     dev->state = NULL;
     return false;
   }
 
-  st->sector_size = EOS_USB_HOST_MSC_SECTOR_SIZE;
+  st->sector_size = EOS_SECTOR_SIZE;
   st->sector_count = EOS_USB_HOST_MSC_DEFAULT_COUNT;
   st->storage_size = st->sector_size * st->sector_count;
   st->storage = eos_psram_malloc_prefer(st->storage_size);
   if (!st->storage) {
-    vSemaphoreDelete(st->mutex);
+    vSemaphoreDelete(st->io_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -54,9 +53,9 @@ void driver_usb_host_msc_shutdown(eos_dev_t *dev) {
     free(st->storage);
     st->storage = NULL;
   }
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->io_mutex) {
+    vSemaphoreDelete(st->io_mutex);
+    st->io_mutex = NULL;
   }
   free(st);
   dev->state = NULL;
@@ -87,10 +86,10 @@ ssize_t driver_usb_host_msc_read(eos_dev_t *dev, int fd, void *dst, size_t size)
     return -1;
   }
   eos_usb_host_msc_state_t *st = (eos_usb_host_msc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
   if ((size_t)st->cur_offset >= st->storage_size) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->io_mutex);
     return 0;
   }
 
@@ -99,7 +98,7 @@ ssize_t driver_usb_host_msc_read(eos_dev_t *dev, int fd, void *dst, size_t size)
   memcpy(dst, st->storage + st->cur_offset, to_read);
   st->cur_offset += to_read;
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)to_read;
 }
 
@@ -110,10 +109,10 @@ ssize_t driver_usb_host_msc_write(eos_dev_t *dev, int fd, const void *data, size
     return -1;
   }
   eos_usb_host_msc_state_t *st = (eos_usb_host_msc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
   if ((size_t)st->cur_offset >= st->storage_size) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->io_mutex);
     errno = ENOSPC;
     return -1;
   }
@@ -123,7 +122,7 @@ ssize_t driver_usb_host_msc_write(eos_dev_t *dev, int fd, const void *data, size
   memcpy(st->storage + st->cur_offset, data, to_write);
   st->cur_offset += to_write;
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return (ssize_t)to_write;
 }
 
@@ -134,7 +133,7 @@ off_t driver_usb_host_msc_lseek(eos_dev_t *dev, int fd, off_t offset, int whence
     return -1;
   }
   eos_usb_host_msc_state_t *st = (eos_usb_host_msc_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
 
   off_t new_pos = st->cur_offset;
   switch (whence) {
@@ -148,19 +147,19 @@ off_t driver_usb_host_msc_lseek(eos_dev_t *dev, int fd, off_t offset, int whence
       new_pos = (off_t)st->storage_size + offset;
       break;
     default:
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->io_mutex);
       errno = EINVAL;
       return -1;
   }
 
   if (new_pos < 0 || (size_t)new_pos > st->storage_size) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->io_mutex);
     errno = EINVAL;
     return -1;
   }
 
   st->cur_offset = new_pos;
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->io_mutex);
   return new_pos;
 }
 

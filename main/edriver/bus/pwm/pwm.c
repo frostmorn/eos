@@ -122,7 +122,7 @@ static uint32_t pwm_duty16_to_hw(pwm_dev_state_t *st, uint16_t duty16) {
 static int pwm_apply_duty(pwm_dev_state_t *st, uint16_t duty16) {
   if (!st || st->channel_idx < 0) return -EINVAL;
   st->duty16 = duty16;
-  st->duty_pct = (uint8_t)(((uint32_t)duty16 * (uint32_t)EOS_PWM_PERCENT_MAX) / (uint32_t)EOS_PWM_DUTY_MAX_16BIT);
+  st->duty_pct = (uint8_t)(((uint32_t)duty16 * (uint32_t)EOS_PERCENT_MAX) / (uint32_t)EOS_PWM_DUTY_MAX_16BIT);
 
   uint32_t hw_val = st->enabled ? pwm_duty16_to_hw(st, duty16) : 0;
   esp_err_t err = ledc_set_duty(LEDC_LOW_SPEED_MODE, (ledc_channel_t)st->channel_idx, hw_val);
@@ -134,7 +134,7 @@ static int pwm_apply_duty(pwm_dev_state_t *st, uint16_t duty16) {
 static int pwm_apply_fade(pwm_dev_state_t *st, uint16_t target_duty, uint32_t duration_ms) {
   if (!st || st->channel_idx < 0) return -EINVAL;
   st->duty16 = target_duty;
-  st->duty_pct = (uint8_t)(((uint32_t)target_duty * (uint32_t)EOS_PWM_PERCENT_MAX) / (uint32_t)EOS_PWM_DUTY_MAX_16BIT);
+  st->duty_pct = (uint8_t)(((uint32_t)target_duty * (uint32_t)EOS_PERCENT_MAX) / (uint32_t)EOS_PWM_DUTY_MAX_16BIT);
 
   uint32_t target_hw = st->enabled ? pwm_duty16_to_hw(st, target_duty) : 0;
   if (duration_ms == 0) {
@@ -226,9 +226,9 @@ bool driver_bus_pwm_init(eos_dev_t *dev) {
   st->hw_duty_max = EOS_PWM_HW_DUTY_MAX_DEFAULT;
 
   if (initial_duty_pct < 0) initial_duty_pct = 0;
-  if (initial_duty_pct > EOS_PWM_PERCENT_MAX) initial_duty_pct = EOS_PWM_PERCENT_MAX;
+  if (initial_duty_pct > EOS_PERCENT_MAX) initial_duty_pct = EOS_PERCENT_MAX;
   st->duty_pct = (uint8_t)initial_duty_pct;
-  st->duty16 = (uint16_t)(((uint32_t)st->duty_pct * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PWM_PERCENT_MAX);
+  st->duty16 = (uint16_t)(((uint32_t)st->duty_pct * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PERCENT_MAX);
 
   ledc_timer_config_t timer_conf = {
       .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -347,14 +347,14 @@ ssize_t driver_bus_pwm_write(eos_dev_t *dev, int fd, const void *buf, size_t cou
   tmp[len] = '\0';
 
   char *endptr = NULL;
-  long val = strtol(tmp, &endptr, EOS_PWM_DECIMAL_BASE);
+  long val = strtol(tmp, &endptr, EOS_DECIMAL_BASE);
   if (endptr == tmp) {
     return -EINVAL;
   }
   if (val < 0) val = 0;
-  if (val > EOS_PWM_PERCENT_MAX) val = EOS_PWM_PERCENT_MAX;
+  if (val > EOS_PERCENT_MAX) val = EOS_PERCENT_MAX;
 
-  uint16_t duty16 = (uint16_t)(((uint32_t)val * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PWM_PERCENT_MAX);
+  uint16_t duty16 = (uint16_t)(((uint32_t)val * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PERCENT_MAX);
   if (pwm_apply_duty(st, duty16) != 0) {
     return -EIO;
   }
@@ -369,8 +369,8 @@ int driver_bus_pwm_ioctl(eos_dev_t *dev, int fd, int request, va_list args) {
   switch (request) {
   case EOS_PWM_IOCTL_SET_DUTY: {
     uint32_t duty_arg = va_arg(args, uint32_t);
-    uint16_t duty16 = (duty_arg <= EOS_PWM_PERCENT_MAX)
-                          ? (uint16_t)(((uint32_t)duty_arg * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PWM_PERCENT_MAX)
+    uint16_t duty16 = (duty_arg <= EOS_PERCENT_MAX)
+                          ? (uint16_t)(((uint32_t)duty_arg * (uint32_t)EOS_PWM_DUTY_MAX_16BIT) / (uint32_t)EOS_PERCENT_MAX)
                           : (uint16_t)duty_arg;
     return pwm_apply_duty(st, duty16);
   }

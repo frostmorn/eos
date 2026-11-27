@@ -110,7 +110,7 @@ static void msc_open_backing_locked(eos_usb_msc_state_t *st) {
   if (!st) return;
   st->backing_dev = NULL;
   st->sector_count = 0;
-  st->sector_size = EOS_USB_MSC_SECTOR_SIZE;
+  st->sector_size = EOS_SECTOR_SIZE;
   st->read_only = false;
   if (st->backing_dev_path[0] == '\0') {
     return;
@@ -140,18 +140,25 @@ static void msc_open_backing_locked(eos_usb_msc_state_t *st) {
     EOS_LOGI("usb_msc: Bound to backing device '%s' (sector_size=%lu, sectors=%lu, ro=%d)",
              st->backing_dev_path, (unsigned long)st->sector_size,
              (unsigned long)st->sector_count, (int)st->read_only);
-    // Unmount any active local VFS mounts/partitions on this device for exclusive USB access
-    (void)eos_umount(st->backing_dev_path, 0);
-    for (int p = 0; p < 4; p++) {
-      char part_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
-      snprintf(part_path, sizeof(part_path), "/dev/part%d", p);
-      (void)eos_umount(part_path, 0);
-      char part_name[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
-      snprintf(part_name, sizeof(part_name), "part%d", p);
-      eos_dev_t *pdev = eos_dev_find_by_name(part_name);
-      if (pdev) {
-        bool umount_ok = false;
-        (void)eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_STORAGE_IOCTL_UMOUNT, &umount_ok);
+    uint32_t usb_funcs = 0;
+    eos_dev_t *msc_dev = eos_dev_find_by_name("usb_msc0");
+    if (msc_dev && msc_dev->parent) {
+      (void)eos_dev_ioctl(msc_dev->parent, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_GET_FUNCS, &usb_funcs);
+    }
+    if (usb_funcs & EOS_USB_GADGET_FUNC_MSC) {
+      // Unmount any active local VFS mounts/partitions on this device for exclusive USB MSC access
+      (void)eos_umount(st->backing_dev_path, 0);
+      for (int p = 0; p < 4; p++) {
+        char part_path[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+        snprintf(part_path, sizeof(part_path), "/dev/part%d", p);
+        (void)eos_umount(part_path, 0);
+        char part_name[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
+        snprintf(part_name, sizeof(part_name), "part%d", p);
+        eos_dev_t *pdev = eos_dev_find_by_name(part_name);
+        if (pdev) {
+          bool umount_ok = false;
+          (void)eos_dev_ioctl_call(pdev, EOS_DRV_FD, EOS_STORAGE_IOCTL_UMOUNT, &umount_ok);
+        }
       }
     }
     if (st->sector_count == 0 || st->sector_size == 0) {
@@ -170,7 +177,7 @@ static void msc_open_backing(eos_usb_msc_state_t *st) {
 }
 
 static void msc_init_sim_storage(eos_usb_msc_state_t *st) {
-  st->sim_storage_size = EOS_USB_MSC_SIM_SECTOR_COUNT * EOS_USB_MSC_SECTOR_SIZE;
+  st->sim_storage_size = EOS_USB_MSC_SIM_SECTOR_COUNT * EOS_SECTOR_SIZE;
   st->sim_storage = eos_psram_malloc_prefer(st->sim_storage_size);
   if (st->sim_storage) {
     memset(st->sim_storage, 0, st->sim_storage_size);
@@ -197,7 +204,7 @@ bool driver_usb_msc_init(eos_dev_t *dev) {
     return false;
   }
 
-  st->sector_size = EOS_USB_MSC_SECTOR_SIZE;
+  st->sector_size = EOS_SECTOR_SIZE;
   st->sector_count = EOS_USB_MSC_SIM_SECTOR_COUNT;
   st->sector_buf = eos_psram_malloc_prefer(st->sector_size);
   if (!st->sector_buf) {

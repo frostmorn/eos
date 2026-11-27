@@ -45,7 +45,7 @@ typedef struct {
   int open_refcount;
   int attached_count;
   i2c_master_bus_handle_t i2c_bus;
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t bus_mutex;
   i2c_master_dev_handle_t dev_handles[EOS_I2C_ADDR_TABLE_SIZE];
   kvec_psram_t(i2c_fd_ctx_t) fds;
 } i2c_bus_state_t;
@@ -317,8 +317,8 @@ bool driver_bus_i2c_init(eos_dev_t *dev) {
     return false;
   }
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->bus_mutex = xSemaphoreCreateMutex();
+  if (!st->bus_mutex) {
     EOS_LOGE("i2c: failed to create bus mutex");
     eos_cap_release(EOS_CAPS_I2C, port, dev);
     free(st);
@@ -336,16 +336,16 @@ void driver_bus_i2c_shutdown(eos_dev_t *dev) {
   if (!dev || !dev->state) return;
   i2c_bus_state_t *st = dev->state;
 
-  if (st->mutex) {
-    xSemaphoreTake(st->mutex, portMAX_DELAY);
+  if (st->bus_mutex) {
+    xSemaphoreTake(st->bus_mutex, portMAX_DELAY);
   }
 
   bus_deactivate_locked(dev, st);
 
-  if (st->mutex) {
-    xSemaphoreGive(st->mutex);
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->bus_mutex) {
+    xSemaphoreGive(st->bus_mutex);
+    vSemaphoreDelete(st->bus_mutex);
+    st->bus_mutex = NULL;
   }
 
   eos_cap_release(EOS_CAPS_I2C, st->port, dev);
@@ -359,19 +359,19 @@ bool driver_bus_i2c_attach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (!dev || !dev->state) return false;
   i2c_bus_state_t *st = dev->state;
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     return false;
   }
 
   if (!st->i2c_bus) {
     if (st->sda_pin < 0 || st->scl_pin < 0) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->bus_mutex);
       EOS_LOGW("i2c: cannot attach child device, bus pins not configured");
       return false;
     }
     esp_err_t err = bus_activate_locked(dev, st);
     if (err != ESP_OK) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->bus_mutex);
       return false;
     }
   }
@@ -386,7 +386,7 @@ bool driver_bus_i2c_attach_req(eos_dev_t *dev, eos_dev_t *child) {
   }
 
   st->attached_count++;
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return true;
 }
 
@@ -394,7 +394,7 @@ bool driver_bus_i2c_detach_req(eos_dev_t *dev, eos_dev_t *child) {
   if (!dev || !dev->state) return false;
   i2c_bus_state_t *st = dev->state;
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     return false;
   }
 
@@ -410,7 +410,7 @@ bool driver_bus_i2c_detach_req(eos_dev_t *dev, eos_dev_t *child) {
     st->attached_count--;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return true;
 }
 
@@ -453,7 +453,7 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
     }
   }
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -475,7 +475,7 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
   if (!st->i2c_bus && st->sda_pin >= 0 && st->scl_pin >= 0) {
     esp_err_t err = bus_activate_locked(dev, st);
     if (err != ESP_OK) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->bus_mutex);
       errno = (err == ESP_ERR_NOT_FOUND) ? EBUSY : EIO;
       return -1;
     }
@@ -485,7 +485,7 @@ int driver_bus_i2c_open(eos_dev_t *dev, const char *path, int flags, int mode) {
   kv_A(st->fds, slot).target_addr = parsed_addr;
   kv_A(st->fds, slot).timeout_ms = EOS_I2C_DEFAULT_TIMEOUT_MS;
   st->open_refcount++;
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
 
   return slot;
 }
@@ -497,7 +497,7 @@ int driver_bus_i2c_close(eos_dev_t *dev, int fd) {
   }
   i2c_bus_state_t *st = dev->state;
 
-  if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -515,7 +515,7 @@ int driver_bus_i2c_close(eos_dev_t *dev, int fd) {
     bus_deactivate_locked(dev, st);
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return 0;
 }
 
@@ -537,7 +537,7 @@ ssize_t driver_bus_i2c_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
 
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -545,13 +545,13 @@ ssize_t driver_bus_i2c_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   i2c_master_dev_handle_t dev_h = NULL;
   esp_err_t err = get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
   if (err != ESP_OK) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : EIO;
     return -1;
   }
 
   err = i2c_master_receive(dev_h, (uint8_t *)dst, size, timeout);
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
 
   if (err != ESP_OK) {
     errno = (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
@@ -579,7 +579,7 @@ ssize_t driver_bus_i2c_write(eos_dev_t *dev, int fd, const void *data,
     return -1;
   }
 
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -587,13 +587,13 @@ ssize_t driver_bus_i2c_write(eos_dev_t *dev, int fd, const void *data,
   i2c_master_dev_handle_t dev_h = NULL;
   esp_err_t err = get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
   if (err != ESP_OK) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : EIO;
     return -1;
   }
 
   err = i2c_master_transmit(dev_h, (const uint8_t *)data, size, timeout);
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
 
   if (err != ESP_OK) {
     errno = (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
@@ -611,7 +611,7 @@ static esp_err_t i2c_bus_probe_verified(i2c_master_bus_handle_t bus,
   // Verify with subsequent probes to filter out transient noise / floating pin glitches.
   // Real I2C devices reliably ACK every query; open/floating pins or noise spikes fail.
   for (int retry = 0; retry < 2; retry++) {
-    esp_rom_delay_us(100);
+    esp_rom_delay_us(EOS_TENTH_SEC_MS);
     esp_err_t v_err = i2c_master_probe(bus, addr, timeout_ms);
     if (v_err != ESP_OK) {
       return v_err;
@@ -628,7 +628,7 @@ static int i2c_ioctl_scan_bus(eos_dev_t *dev, i2c_bus_state_t *st, va_list args)
   }
   scan->count = 0;
   int timeout_ms = (scan->timeout_ms > 0) ? scan->timeout_ms : 20;
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(2000)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -636,7 +636,7 @@ static int i2c_ioctl_scan_bus(eos_dev_t *dev, i2c_bus_state_t *st, va_list args)
     bus_activate_locked(dev, st);
   }
   if (!st->i2c_bus) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     errno = ENODEV;
     return -1;
   }
@@ -653,7 +653,7 @@ static int i2c_ioctl_scan_bus(eos_dev_t *dev, i2c_bus_state_t *st, va_list args)
       }
     }
   }
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   return 0;
 }
 
@@ -665,7 +665,7 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
       errno = EINVAL;
       return -1;
     }
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
@@ -673,12 +673,12 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
       bus_activate_locked(dev, st);
     }
     if (!st->i2c_bus) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->bus_mutex);
       errno = ENODEV;
       return -1;
     }
     *out = (void *)st->i2c_bus;
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return 0;
   }
   case EOS_I2C_IOCTL_SET_SLAVE_ADDR: {
@@ -702,7 +702,7 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
       errno = EINVAL;
       return -1;
     }
-    if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout_ms + 100)) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout_ms + EOS_TENTH_SEC_MS)) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
@@ -710,7 +710,7 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
       bus_activate_locked(dev, st);
     }
     if (!st->i2c_bus) {
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->bus_mutex);
       errno = ENODEV;
       return -1;
     }
@@ -720,7 +720,7 @@ static int i2c_ioctl_scan_probe(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int
       i2c_master_dev_handle_t dev_h = NULL;
       get_or_create_device(dev, st, addr, st->clk_speed, &dev_h);
     }
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     if (err == ESP_OK) {
       return 0;
     }
@@ -746,14 +746,14 @@ static int i2c_ioctl_msg_transfer(eos_dev_t *dev, i2c_bus_state_t *st, va_list a
     return -1;
   }
   int timeout = (msg->timeout_ms > 0) ? msg->timeout_ms : EOS_I2C_DEFAULT_TIMEOUT_MS;
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
   i2c_master_dev_handle_t dev_h = NULL;
   esp_err_t err = get_or_create_device(dev, st, msg->addr, msg->clk_speed_hz, &dev_h);
   if (err != ESP_OK) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : EIO;
     return -1;
   }
@@ -770,7 +770,7 @@ static int i2c_ioctl_msg_transfer(eos_dev_t *dev, i2c_bus_state_t *st, va_list a
   } else {
     err = ESP_ERR_INVALID_ARG;
   }
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   if (err != ESP_OK) {
     errno = (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
     return -1;
@@ -789,7 +789,7 @@ static int i2c_ioctl_simple_rw(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int 
       return -1;
     }
     if (timeout <= 0) timeout = EOS_I2C_DEFAULT_TIMEOUT_MS;
-    if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
@@ -798,7 +798,7 @@ static int i2c_ioctl_simple_rw(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int 
     if (err == ESP_OK) {
       err = i2c_master_transmit(dev_h, (const uint8_t *)buf, len, timeout);
     }
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     if (err != ESP_OK) {
       errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
       return -1;
@@ -814,7 +814,7 @@ static int i2c_ioctl_simple_rw(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int 
       return -1;
     }
     if (timeout <= 0) timeout = EOS_I2C_DEFAULT_TIMEOUT_MS;
-    if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
@@ -823,7 +823,7 @@ static int i2c_ioctl_simple_rw(eos_dev_t *dev, i2c_bus_state_t *st, int fd, int 
     if (err == ESP_OK) {
       err = i2c_master_receive(dev_h, (uint8_t *)buf, len, timeout);
     }
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     if (err != ESP_OK) {
       errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
       return -1;
@@ -845,7 +845,7 @@ static int i2c_ioctl_write_read(eos_dev_t *dev, i2c_bus_state_t *st, int fd, va_
     return -1;
   }
   if (timeout <= 0) timeout = EOS_I2C_DEFAULT_TIMEOUT_MS;
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
+  if (xSemaphoreTake(st->bus_mutex, pdMS_TO_TICKS(timeout)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
@@ -855,7 +855,7 @@ static int i2c_ioctl_write_read(eos_dev_t *dev, i2c_bus_state_t *st, int fd, va_
     err = i2c_master_transmit_receive(dev_h, (const uint8_t *)tx, tx_len,
                                       (uint8_t *)rx, rx_len, timeout);
   }
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->bus_mutex);
   if (err != ESP_OK) {
     errno = (err == ESP_ERR_INVALID_STATE) ? ENODEV : (err == ESP_ERR_TIMEOUT) ? ETIMEDOUT : EIO;
     return -1;
@@ -871,44 +871,44 @@ static int i2c_ioctl_pins(eos_dev_t *dev, i2c_bus_state_t *st, int cmd, va_list 
       errno = EINVAL;
       return -1;
     }
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
     st->clk_speed = speed;
     i2c_remove_all_devices(st);
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return 0;
   }
   case EOS_I2C_IOCTL_SET_SDA: {
     int pin = va_arg(args, int);
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
     int rc = reconfigure_pins_locked(dev, pin, st->scl_pin);
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return rc;
   }
   case EOS_I2C_IOCTL_SET_SCL: {
     int pin = va_arg(args, int);
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
     int rc = reconfigure_pins_locked(dev, st->sda_pin, pin);
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return rc;
   }
   case EOS_I2C_IOCTL_SET_PINS: {
     int sda = va_arg(args, int);
     int scl = va_arg(args, int);
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
     int rc = reconfigure_pins_locked(dev, sda, scl);
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return rc;
   }
   case EOS_I2C_IOCTL_GET_PINS: {
@@ -918,13 +918,13 @@ static int i2c_ioctl_pins(eos_dev_t *dev, i2c_bus_state_t *st, int cmd, va_list 
       errno = EINVAL;
       return -1;
     }
-    if (xSemaphoreTake(st->mutex, portMAX_DELAY) != pdTRUE) {
+    if (xSemaphoreTake(st->bus_mutex, portMAX_DELAY) != pdTRUE) {
       errno = EBUSY;
       return -1;
     }
     *out_sda = st->sda_pin;
     *out_scl = st->scl_pin;
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->bus_mutex);
     return 0;
   }
   default:

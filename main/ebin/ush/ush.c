@@ -15,18 +15,19 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-static int ush_readline(char *buf, size_t size) {
+static int ush_readline(char *buf, size_t size, bool force_tty) {
   size_t len = 0;
 
   for (;;) {
     eos_proc_t *proc = eos_proc_current();
     bool is_console = (!proc || eos_proc_fd_map_get(proc, STDIN_FILENO) < 0);
+    bool is_tty = is_console || force_tty;
 
     // When booted without UART / USB-Serial-JTAG connected, wait calmly
     // instead of spinning on read() or returning -1 (which would exit ush
     // and cause eos_main to respawn init.sh / launcher in a loop).
     if (is_console && !eos_console_is_connected()) {
-      usleep(EOS_POLL_INTERVAL_MS * (useconds_t)EOS_US_PER_MS);
+      usleep(5 * (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US);
       continue;
     }
 
@@ -67,9 +68,9 @@ static int ush_readline(char *buf, size_t size) {
     }
 
     if (n == 0) {
-      if (is_console) {
+      if (is_tty) {
         clearerr(stdin);
-        usleep(2 * (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US);
+        usleep(5 * (useconds_t)EOS_DEFAULT_POLL_TIMEOUT_US);
         continue;
       }
       return -1;
@@ -96,16 +97,35 @@ static FILE *fopen_path(const char *name) {
   return fopen(name, "r");
 }
 
-int ush_main(int argc, char **argv) {
-  if (argc > 1) {
-    // Non-interactive script execution mode: read lines and pass to system()
-    FILE *f = fopen_path(argv[1]);
-    if (!f) {
-      perror("fopen script");
-      return -1;
+static int ush_run_script(int argc, char **argv) {
+  const int max_pos = 10;
+  char **saved_pos = (char **)calloc((size_t)(max_pos + 1), sizeof(char *));
+  char key_buf[EOS_XSMALL_STR_LEN];
+  if (saved_pos) {
+    const char *old_argc = getenv("#");
+    saved_pos[max_pos] = old_argc ? strdup(old_argc) : NULL;
+    for (int i = 0; i < max_pos; i++) {
+      snprintf(key_buf, sizeof(key_buf), "%d", i);
+      const char *prev = getenv(key_buf);
+      saved_pos[i] = prev ? strdup(prev) : NULL;
+      if (i + 1 < argc) {
+        setenv(key_buf, argv[i + 1], 1);
+      } else {
+        unsetenv(key_buf);
+      }
     }
+    char argc_str[EOS_XSMALL_STR_LEN];
+    snprintf(argc_str, sizeof(argc_str), "%d", (argc > 2) ? (argc - 2) : 0);
+    setenv("#", argc_str, 1);
+  }
+
+  FILE *f = fopen_path(argv[1]);
+  int ret = -1;
+  if (!f) {
+    perror("fopen script");
+  } else {
     char line[USH_LINE_MAX];
-    int ret = 0;
+    ret = 0;
     while (fgets(line, sizeof(line), f) != NULL) {
       size_t len = strlen(line);
       while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
@@ -117,7 +137,42 @@ int ush_main(int argc, char **argv) {
       ret = system(line);
     }
     fclose(f);
-    return ret;
+  }
+
+  if (saved_pos) {
+    for (int i = 0; i < max_pos; i++) {
+      snprintf(key_buf, sizeof(key_buf), "%d", i);
+      if (saved_pos[i]) {
+        setenv(key_buf, saved_pos[i], 1);
+        free(saved_pos[i]);
+      } else {
+        unsetenv(key_buf);
+      }
+    }
+    if (saved_pos[max_pos]) {
+      setenv("#", saved_pos[max_pos], 1);
+      free(saved_pos[max_pos]);
+    } else {
+      unsetenv("#");
+    }
+    free(saved_pos);
+  }
+  return ret;
+}
+
+int ush_main(int argc, char **argv) {
+  bool force_tty = false;
+  if (argc > 1 && strcmp(argv[1], "-i") == 0) {
+    force_tty = true;
+  } else if (argc > 1) {
+    return ush_run_script(argc, argv);
+  }
+
+  eos_proc_t *self_proc = eos_proc_current();
+  if (self_proc &&
+      eos_proc_fd_map_get(self_proc, STDOUT_FILENO) >= 0 &&
+      eos_proc_fd_map_get(self_proc, STDERR_FILENO) < 0) {
+    dup2(STDOUT_FILENO, STDERR_FILENO);
   }
 
   printf("\neos shell — type 'help' for available commands\n\n");
@@ -140,11 +195,18 @@ int ush_main(int argc, char **argv) {
     printf(USH_WELCOME "%s > ", path);
     fflush(stdout);
 
-    if (ush_readline(line, sizeof(line)) < 0)
+    if (ush_readline(line, sizeof(line), force_tty) < 0)
       break;
 
     if (!line[0])
       continue;
+
+    if (force_tty && (strncmp(line, "~/", 2) == 0 || strncmp(line, "E (", 3) == 0 ||
+                      strncmp(line, "W (", 3) == 0 || strncmp(line, "I (", 3) == 0 ||
+                      strncmp(line, "exit code:", 10) == 0 ||
+                      strncmp(line, "eos shell", 9) == 0)) {
+      continue;
+    }
 
     if (!strcmp(line, "exit"))
       break;

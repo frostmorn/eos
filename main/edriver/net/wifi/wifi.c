@@ -39,7 +39,7 @@ typedef struct {
   uint16_t head;
   uint16_t tail;
   uint16_t count;
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t state_mutex;
   SemaphoreHandle_t sem_rx;
   bool promisc_enabled;
   eos_wifi_promisc_cfg_t promisc_cfg;
@@ -78,7 +78,7 @@ static void IRAM_ATTR wifi_promisc_rx_cb(void *buf, wifi_promiscuous_pkt_type_t 
   wifi_radio_state_t *st = s_radio_state;
 
   BaseType_t high_task_wakeup = pdFALSE;
-  if (xSemaphoreTakeFromISR(st->mutex, &high_task_wakeup) == pdTRUE) {
+  if (xSemaphoreTakeFromISR(st->state_mutex, &high_task_wakeup) == pdTRUE) {
     if (st->count < RAW_PACKET_QUEUE_SIZE) {
       eos_wifi_raw_packet_t *item = &st->packets[st->head];
       item->rssi = (int8_t)pkt->rx_ctrl.rssi;
@@ -132,7 +132,7 @@ static void IRAM_ATTR wifi_promisc_rx_cb(void *buf, wifi_promiscuous_pkt_type_t 
         xSemaphoreGiveFromISR(st->sem_rx, &high_task_wakeup);
       }
     }
-    xSemaphoreGiveFromISR(st->mutex, &high_task_wakeup);
+    xSemaphoreGiveFromISR(st->state_mutex, &high_task_wakeup);
   }
 
   if (high_task_wakeup == pdTRUE) {
@@ -504,7 +504,7 @@ bool driver_net_wifi_init(eos_dev_t *dev) {
   wifi_radio_state_t *st = eos_psram_calloc_prefer(1, sizeof(wifi_radio_state_t));
   if (!st) return false;
 
-  st->mutex = xSemaphoreCreateMutex();
+  st->state_mutex = xSemaphoreCreateMutex();
   st->sem_rx = xSemaphoreCreateBinary();
   st->channel = 1;
   st->tx_power = (int8_t)eos_cfg_get_i(dev->cfg, "tx_power", 14);
@@ -573,7 +573,7 @@ void driver_net_wifi_shutdown(eos_dev_t *dev) {
     free(st->packets);
     st->packets = NULL;
   }
-  if (st->mutex) vSemaphoreDelete(st->mutex);
+  if (st->state_mutex) vSemaphoreDelete(st->state_mutex);
   if (st->sem_rx) vSemaphoreDelete(st->sem_rx);
 
   free(st);
@@ -618,13 +618,13 @@ ssize_t driver_net_wifi_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
 
-  if (xSemaphoreTake(st->mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+  if (xSemaphoreTake(st->state_mutex, pdMS_TO_TICKS(EOS_TENTH_SEC_MS)) != pdTRUE) {
     errno = EBUSY;
     return -1;
   }
 
   if (st->count == 0) {
-    xSemaphoreGive(st->mutex);
+    xSemaphoreGive(st->state_mutex);
     errno = EAGAIN;
     return -1;
   }
@@ -634,7 +634,7 @@ ssize_t driver_net_wifi_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   st->tail = (st->tail + 1) % RAW_PACKET_QUEUE_SIZE;
   st->count--;
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->state_mutex);
   return sizeof(eos_wifi_raw_packet_t);
 }
 

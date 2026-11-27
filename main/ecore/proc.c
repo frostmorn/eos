@@ -8,6 +8,8 @@
 #include "emisc/strlimits.h"
 #include "emisc/psram_alloc.h"
 #include <errno.h>
+#include <esp_event.h>
+#include <esp_memory_utils.h>
 #include <esp_timer.h>
 #include <esp_pthread.h>
 #include <freertos/FreeRTOS.h>
@@ -23,7 +25,7 @@
 
 typedef struct {
   kvec_psram_t(eos_proc_t *) procs;
-  pthread_mutex_t lock;
+  pthread_mutex_t table_lock;
   pthread_cond_t cond;
   pid_t next_pid;
   eos_proc_t *kernel_proc;
@@ -35,14 +37,14 @@ static inline void proc_lock(void) {
   if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || !s_proc_table) {
     return;
   }
-  pthread_mutex_lock(&s_proc_table->lock);
+  pthread_mutex_lock(&s_proc_table->table_lock);
 }
 
 static inline void proc_unlock(void) {
   if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING || !s_proc_table) {
     return;
   }
-  pthread_mutex_unlock(&s_proc_table->lock);
+  pthread_mutex_unlock(&s_proc_table->table_lock);
 }
 
 static bool proc_memblock_remove_locked(eos_proc_t *proc, void *ptr, size_t *out_size, bool *out_is_psram);
@@ -857,7 +859,7 @@ eos_proc_t *eos_proc_current(void) {
 }
 
 typedef struct {
-  SemaphoreHandle_t sem;
+  SemaphoreHandle_t raw_sem;
   int type;
 } esp_pthread_mutex_raw_t;
 
@@ -866,8 +868,8 @@ static void proc_destroy_mutex(pthread_mutex_t *mutex) {
   if (pthread_mutex_destroy(mutex) != 0) {
     esp_pthread_mutex_raw_t *mux = (esp_pthread_mutex_raw_t *)*mutex;
     if (mux) {
-      if (mux->sem) {
-        vSemaphoreDelete(mux->sem);
+      if (mux->raw_sem) {
+        vSemaphoreDelete(mux->raw_sem);
       }
       free(mux);
     }
@@ -930,6 +932,37 @@ static eos_proc_t *proc_alloc_initial_context(pid_t pid, pid_t ppid, pid_t pgid,
   return p;
 }
 
+ESP_EVENT_DEFINE_BASE(EOS_SYS_EVENT);
+enum { EOS_SYS_EVENT_REBOOT = 1 };
+static bool s_sys_evt_ready = false;
+
+static void eos_sys_event_handler(void *arg, esp_event_base_t base,
+                                  int32_t id, void *data) {
+  (void)arg;
+  (void)base;
+  (void)data;
+  if (id == EOS_SYS_EVENT_REBOOT) {
+    eos_dev_detach_all();
+    esp_restart();
+  }
+}
+
+static void eos_sys_events_init(void) {
+  if (s_sys_evt_ready) return;
+  esp_err_t err = esp_event_loop_create_default();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    EOS_LOGW("eos_sys_events_init: default event loop failed: %d", (int)err);
+    return;
+  }
+  err = esp_event_handler_instance_register(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT,
+                                            eos_sys_event_handler, NULL, NULL);
+  if (err != ESP_OK) {
+    EOS_LOGW("eos_sys_events_init: handler register failed: %d", (int)err);
+    return;
+  }
+  s_sys_evt_ready = true;
+}
+
 void eos_proc_init(void) {
   task_flags_lock();
   if (!s_task_flags) {
@@ -957,7 +990,7 @@ void eos_proc_init(void) {
   pthread_mutexattr_t attr;
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&table->lock, &attr);
+  pthread_mutex_init(&table->table_lock, &attr);
   pthread_mutexattr_destroy(&attr);
   pthread_cond_init(&table->cond, NULL);
   table->next_pid = 2;
@@ -988,6 +1021,7 @@ void eos_proc_init(void) {
 
   s_proc_table = table;
   pthread_mutex_unlock(&s_init_mutex);
+  eos_sys_events_init();
   EOS_LOGI("Process table initialized in PSRAM (dynamic kvec storage)\n");
 }
 
@@ -1097,6 +1131,14 @@ pid_t eos_proc_create(const char *name, const char *cmdline, pid_t ppid, pid_t p
   kv_init(p->fd_map);
 
   proc_inherit_env_locked(p, cur);
+  if (cur) {
+    for (int fd = 0; fd <= STDERR_FILENO; fd++) {
+      int mapped = eos_proc_fd_map_get(cur, fd);
+      if (mapped >= 0) {
+        eos_proc_fd_map_set(p, fd, mapped);
+      }
+    }
+  }
 
   proc_unlock();
   eos_proc_heap_tracking_restore(prev_h);
@@ -1877,7 +1919,7 @@ pid_t eos_waitpid(pid_t pid, int *status, int options) {
     }
 
     bool prev_w = eos_proc_enter_wait();
-    pthread_cond_wait(&s_proc_table->cond, &s_proc_table->lock);
+    pthread_cond_wait(&s_proc_table->cond, &s_proc_table->table_lock);
     eos_proc_leave_wait(prev_w);
   }
 }
@@ -2483,6 +2525,131 @@ int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
   }
   eos_proc_heap_tracking_restore(prev_h);
   return rc;
+}
+
+void eos_reboot(bool bootloader) {
+  if (bootloader) {
+    extern void eos_arch_force_download_boot(void);
+    eos_arch_force_download_boot();
+  }
+  if (s_sys_evt_ready &&
+      xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
+      esp_event_post(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT, NULL, 0, 0) == ESP_OK) {
+    for (;;) {
+      vTaskDelay(portMAX_DELAY);
+    }
+  }
+  if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
+    eos_dev_detach_all();
+  }
+  esp_restart();
+}
+
+void eos_reboot_from_isr(bool bootloader) {
+  if (bootloader) {
+    extern void eos_arch_force_download_boot(void);
+    eos_arch_force_download_boot();
+  }
+  if (s_sys_evt_ready) {
+    BaseType_t woken = pdFALSE;
+    if (esp_event_isr_post(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT, NULL, 0, &woken) == ESP_OK) {
+      portYIELD_FROM_ISR(woken);
+      return;
+    }
+  }
+  esp_restart();
+}
+
+bool eos_ktask_create_psram(eos_ktask_t *out, TaskFunction_t fn, const char *name,
+                            uint32_t stack_bytes, void *arg, UBaseType_t prio) {
+  if (!out || !fn || stack_bytes == 0) return false;
+  memset(out, 0, sizeof(*out));
+
+  extern TaskHandle_t __real_xTaskCreateStaticPinnedToCore(
+      TaskFunction_t pxTaskCode, const char *const pcName,
+      const uint32_t ulStackDepth, void *const pvParameters,
+      UBaseType_t uxPriority, StackType_t *const pxStackBuffer,
+      StaticTask_t *const pxTaskBuffer, const BaseType_t xCoreID);
+  extern BaseType_t __real_xTaskCreatePinnedToCore(
+      TaskFunction_t pxTaskCode, const char *const pcName,
+      const configSTACK_DEPTH_TYPE usStackDepth, void *const pvParameters,
+      UBaseType_t uxPriority, TaskHandle_t *const pvCreatedTask,
+      const BaseType_t xCoreID);
+
+  out->stack = (StackType_t *)eos_psram_malloc_prefer(stack_bytes * sizeof(StackType_t));
+  out->tcb = (StaticTask_t *)heap_caps_calloc(1, sizeof(StaticTask_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (out->stack && out->tcb) {
+    bool prev_h = eos_proc_heap_tracking_disable();
+    out->handle = __real_xTaskCreateStaticPinnedToCore(
+        fn, name, stack_bytes, arg, prio, out->stack, out->tcb, tskNO_AFFINITY);
+    eos_proc_heap_tracking_restore(prev_h);
+    if (out->handle) {
+      eos_proc_task_classify(out->handle, name);
+      return true;
+    }
+  }
+
+  eos_ktask_cleanup(out);
+  bool prev_h = eos_proc_heap_tracking_disable();
+  BaseType_t rc = __real_xTaskCreatePinnedToCore(
+      fn, name, stack_bytes, arg, prio, &out->handle, tskNO_AFFINITY);
+  eos_proc_heap_tracking_restore(prev_h);
+  if (rc == pdPASS && out->handle) {
+    eos_proc_task_classify(out->handle, name);
+    return true;
+  }
+  out->handle = NULL;
+  return false;
+}
+
+void eos_ktask_cleanup(eos_ktask_t *kt) {
+  if (!kt) return;
+  kt->handle = NULL;
+  if (kt->stack) {
+    free(kt->stack);
+    kt->stack = NULL;
+  }
+  if (kt->tcb) {
+    free(kt->tcb);
+    kt->tcb = NULL;
+  }
+}
+
+typedef struct {
+  SemaphoreHandle_t done_sem;
+  bool ran;
+  bool stack_in_psram;
+} ktask_test_ctx_t;
+
+static void ktask_test_fn(void *arg) {
+  ktask_test_ctx_t *ctx = (ktask_test_ctx_t *)arg;
+  volatile uint32_t stack_probe = 0;
+  ctx->stack_in_psram = esp_ptr_external_ram((const void *)&stack_probe);
+  ctx->ran = true;
+  xSemaphoreGive(ctx->done_sem);
+  vTaskDelete(NULL);
+}
+
+bool eos_ktask_self_test(void) {
+  if (!s_sys_evt_ready) return false;
+  ktask_test_ctx_t ctx = {
+      .done_sem = xSemaphoreCreateBinary(),
+      .ran = false,
+      .stack_in_psram = false,
+  };
+  if (!ctx.done_sem) return false;
+
+  eos_ktask_t kt;
+  bool ok = eos_ktask_create_psram(&kt, ktask_test_fn, "ktask_tst",
+                                   EOS_BIN_MIN_STACK_SIZE, &ctx, tskIDLE_PRIORITY + 1);
+  if (ok) {
+    ok = (xSemaphoreTake(ctx.done_sem, pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS * EOS_POLL_INTERVAL_MS)) == pdTRUE) &&
+         ctx.ran && ctx.stack_in_psram;
+    vTaskDelay(pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS));
+  }
+  eos_ktask_cleanup(&kt);
+  vSemaphoreDelete(ctx.done_sem);
+  return ok && kt.handle == NULL && kt.stack == NULL && kt.tcb == NULL;
 }
 
 static void proc_disown_reent_blocks(eos_proc_t *proc, struct _reent *r) {

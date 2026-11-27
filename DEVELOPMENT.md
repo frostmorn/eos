@@ -81,6 +81,7 @@ EOS supports diverse screen form factors ranging from compact handhelds (e.g. Li
     python3 tools/hardware_test.py -p /dev/ttyACM0 --suite all -x
     ```
   - **Zero Regressions**: All modifications must pass with 0 failures on physical target devices (ESP32-P4 and ESP32-S3) and QEMU.
+  - **Mandatory Reset-Reason Verification**: Every hardware test that triggers a reboot or reset (`reboot`, `kcmd`, or JTAG/hardware reset) **must** verify `cat /proc/uptime` for the expected `reset reason:` (e.g., `reset reason: software` after `reboot`) and forbid `panic` / `wdt` / `brownout`, so a crash followed by a double-reboot cannot be masked by a recovered shell prompt.
 
 ---
 
@@ -108,6 +109,11 @@ All GUI applications (`main/ebin/lvgl_*`) must use centralized EOS LVGL kernel a
   - Sizing must be configured to at least `131072` (128 KB) on ESP32-S3 boards and `262144` (256 KB) on ESP32-P4 boards (`CONFIG_LV_MEM_SIZE=131072`).
 * **Kernel & Process Dynamic Storage**:
   - Dynamic tables (process tables, file descriptors, pipe tables, cleanup hooks) utilize `kvec_psram_t` with preferred allocation in external PSRAM (`eos_psram_calloc_prefer()`), preserving DMA-capable internal SRAM for high-speed hardware transactions.
+* **Minimize Internal SRAM & Size DMA Buffers Strictly to Hardware Needs**:
+  - Internal SRAM (especially DMA-capable SRAM on ESP32-S3) is scarce and shared across Wi-Fi, display DMA, FreeRTOS tasks/queues, and USB DWC2 DMA.
+  - Place all non-DMA driver state, ring buffers, and object/handle tables in external PSRAM (`eos_psram_malloc_prefer()` or `kvec_psram_t`), where fragmentation is negligible.
+  - Never pre-allocate large fixed arrays when `kvec_psram_t` can grow dynamically on demand.
+  - Restrict `MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA` allocations strictly to hardware DMA bounce buffers sized to the actual transport/MPS minimum (e.g., 64 B Full-Speed / 512 B High-Speed packet boundaries for USB CDC and compact 1 KB streaming buffers for MTP), and size FreeRTOS queues (`cdc_rx_queue`, etc.) for the target's actual packet size.
 
 ---
 
@@ -145,6 +151,11 @@ On devices with a single physical USB controller (e.g. ESP32-S3 on Lilka v2.3), 
      ```bash
      ~/.espressif/tools/openocd-esp32/v0.12.0-esp32-20260424/openocd-esp32/bin/openocd -f board/esp32s3-builtin.cfg -c "adapter speed 5000" -c "program_esp_bins build flasher_args.json verify reset exit"
      ```
+   - **Exiting ROM Download Mode after OpenOCD JTAG Flash**: On ESP32-S3, OpenOCD's `reset exit` performs a software core reset, which leaves the chip in ROM Download mode if it was entered via `BOOT`+`RESET` or `FORCE_DOWNLOAD_BOOT`. Trigger a watchdog reset via `esptool` to boot into the flashed firmware:
+     ```bash
+     python3 -m esptool --chip esp32s3 --port /dev/ttyACM<N> --before no-reset --after watchdog-reset chip-id
+     ```
+   - **Entering ROM Download Mode from EOS Shell**: Run `reboot -b` (or `reboot --bootloader`) from `ush` to set `FORCE_DOWNLOAD_BOOT` and restart directly into ROM Download mode.
 
 
 

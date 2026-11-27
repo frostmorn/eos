@@ -76,7 +76,7 @@ bool driver_net_sta_init(eos_dev_t *dev) {
   base_cfg.if_key = "WIFI_STA_DEF";
   base_cfg.if_desc = "sta";
   base_cfg.flags = (esp_netif_flags_t)(ESP_NETIF_DHCP_CLIENT | ESP_NETIF_FLAG_EVENT_IP_MODIFIED);
-  base_cfg.route_prio = 100;
+  base_cfg.route_prio = EOS_PERCENT_MAX;
   esp_netif_config_t netif_cfg = {
       .base = &base_cfg,
       .driver = NULL,

@@ -24,7 +24,7 @@ typedef enum {
 } eos_usb_modem_mode_t;
 
 typedef struct {
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t state_mutex;
   eos_usb_modem_mode_t mode;
   eos_usb_modem_line_coding_t line_coding;
   bool dtr;

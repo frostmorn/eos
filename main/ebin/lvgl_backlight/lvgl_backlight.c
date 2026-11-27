@@ -8,7 +8,7 @@
 #include "lvgl_backlight.h"
 
 enum {
-  BL_ACT_DEC = 100,
+  BL_ACT_DEC = EOS_PERCENT_MAX,
   BL_ACT_INC,
   BL_ACT_FADE,
 };

@@ -209,6 +209,20 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap);
 // Thread management & wrapping
 int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
                           uint32_t stack_size, bool prefer_psram, pthread_t *thread_out);
+
+void eos_reboot(bool bootloader);
+void eos_reboot_from_isr(bool bootloader);
+
+typedef struct {
+  TaskHandle_t handle;
+  StackType_t *stack;
+  StaticTask_t *tcb;
+} eos_ktask_t;
+
+bool eos_ktask_create_psram(eos_ktask_t *out, TaskFunction_t fn, const char *name,
+                            uint32_t stack_bytes, void *arg, UBaseType_t prio);
+void eos_ktask_cleanup(eos_ktask_t *kt);
+bool eos_ktask_self_test(void);
 void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread);
 void eos_proc_remove_thread(eos_proc_t *proc, TaskHandle_t thread);
 uint64_t eos_proc_get_cpu_time_us(eos_proc_t *proc);

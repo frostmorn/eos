@@ -12,7 +12,7 @@
 #define EOS_USB_HOST_HID_BUFFER_SIZE 256
 
 typedef struct {
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t state_mutex;
   uint8_t *key_buf;
   size_t   buf_size;
   size_t   head;

@@ -1036,7 +1036,7 @@ int test_proc_main(int argc, char **argv) {
   }
 
   if (argc >= 2 && strcmp(argv[1], "--child-sleep-bound") == 0) {
-    usleep(100 * (useconds_t)EOS_US_PER_MS);
+    usleep(EOS_TENTH_SEC_MS * (useconds_t)EOS_US_PER_MS);
     return 0;
   }
   // Subcommand dispatch for child processes spawned during tests
@@ -1074,8 +1074,8 @@ int test_proc_main(int argc, char **argv) {
 
   if (argc >= 2 && strcmp(argv[1], "--child-mem-leak") == 0) {
     for (int i = 0; i < 5; i++) {
-      void *m = malloc(100);
-      if (m) memset(m, 0x7E, 100);
+      void *m = malloc(EOS_PERCENT_MAX);
+      if (m) memset(m, 0x7E, EOS_PERCENT_MAX);
     }
     return EOS_TEST_MAGIC_STATUS;
   }
@@ -1128,6 +1128,15 @@ int test_proc_main(int argc, char **argv) {
   test_vfs_concurrency(&ctx);
   test_cpu_time_accounting_t09(&ctx);
   test_1000_cycles_stress(&ctx);
+
+  printf("\n--- Kernel PSRAM Task & SysEvt Self-Test ---\n");
+  if (eos_ktask_self_test()) {
+    printf("  [PASS] ktask: eos_ktask_create_psram (PSRAM stack) & sys_evt ready\n");
+    ctx.passed++;
+  } else {
+    printf("  [FAIL] ktask: eos_ktask_create_psram (PSRAM stack) & sys_evt ready\n");
+    ctx.failed++;
+  }
 
   printf("\nProcess Table Tests: %d passed, %d failed\n\n", ctx.passed, ctx.failed);
   return (ctx.failed == 0) ? 0 : 1;

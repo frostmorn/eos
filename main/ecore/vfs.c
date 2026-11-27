@@ -141,7 +141,7 @@ void *eos_vfs_dir_alloc(const eos_vfs_mount_t *mount, size_t total_size) {
   dir->mount = mount;
   atomic_init(&dir->ref_count, 1);
   atomic_init(&dir->closing, false);
-  pthread_mutex_init(&dir->lock, NULL);
+  pthread_mutex_init(&dir->dir_lock, NULL);
 
   pthread_mutex_lock(&s_vfs_table_lock);
   bool placed = false;
@@ -316,7 +316,7 @@ void eos_vfs_dir_register(DIR *pdir) {
   dir->mount = NULL;
   atomic_init(&dir->ref_count, 1);
   atomic_init(&dir->closing, false);
-  pthread_mutex_init(&dir->lock, NULL);
+  pthread_mutex_init(&dir->dir_lock, NULL);
 
   pthread_mutex_lock(&s_vfs_table_lock);
   kv_push(eos_vfs_dir_t *, s_dir_descs, dir);
@@ -344,7 +344,7 @@ eos_vfs_dir_t *eos_vfs_dir_acquire(DIR *pdir) {
 void eos_vfs_dir_release(eos_vfs_dir_t *dir) {
   if (!dir) return;
   if (atomic_fetch_sub(&dir->ref_count, 1) == 1) {
-    pthread_mutex_destroy(&dir->lock);
+    pthread_mutex_destroy(&dir->dir_lock);
     bool prev_h = eos_proc_heap_tracking_disable();
     eos_psram_free(dir);
     eos_proc_heap_tracking_restore(prev_h);
@@ -1107,21 +1107,21 @@ struct dirent *eos_vfs_readdir(DIR *pdir) {
       eos_vfs_dir_release(dir);
       return NULL;
     }
-    pthread_mutex_lock(&dir->lock);
+    pthread_mutex_lock(&dir->dir_lock);
     struct dirent *ent = dir->mount->ops.readdir(dir->mount->ctx, dir);
-    pthread_mutex_unlock(&dir->lock);
+    pthread_mutex_unlock(&dir->dir_lock);
     eos_vfs_dir_release(dir);
     return ent;
   }
 
   if (dir) {
-    pthread_mutex_lock(&dir->lock);
+    pthread_mutex_lock(&dir->dir_lock);
   }
   bool prev_h = eos_proc_heap_tracking_disable();
   struct dirent *ent = __real_readdir(pdir);
   eos_proc_heap_tracking_restore(prev_h);
   if (dir) {
-    pthread_mutex_unlock(&dir->lock);
+    pthread_mutex_unlock(&dir->dir_lock);
     eos_vfs_dir_release(dir);
   }
   return ent;
@@ -1159,9 +1159,9 @@ void eos_vfs_seekdir(DIR *pdir, long loc) {
   eos_vfs_dir_t *dir = eos_vfs_dir_acquire(pdir);
   if (dir && dir->mount) {
     if (dir->mount->ops.seekdir) {
-      pthread_mutex_lock(&dir->lock);
+      pthread_mutex_lock(&dir->dir_lock);
       dir->mount->ops.seekdir(dir->mount->ctx, dir, loc);
-      pthread_mutex_unlock(&dir->lock);
+      pthread_mutex_unlock(&dir->dir_lock);
     }
     eos_vfs_dir_release(dir);
     return;
@@ -1183,9 +1183,9 @@ long eos_vfs_telldir(DIR *pdir) {
   if (dir && dir->mount) {
     long ret = -1;
     if (dir->mount->ops.telldir) {
-      pthread_mutex_lock(&dir->lock);
+      pthread_mutex_lock(&dir->dir_lock);
       ret = dir->mount->ops.telldir(dir->mount->ctx, dir);
-      pthread_mutex_unlock(&dir->lock);
+      pthread_mutex_unlock(&dir->dir_lock);
     }
     eos_vfs_dir_release(dir);
     return ret;

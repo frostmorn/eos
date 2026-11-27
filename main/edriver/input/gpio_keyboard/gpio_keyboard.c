@@ -26,7 +26,7 @@ typedef struct {
 typedef struct {
   gpio_keyboard_key_t keys[16];
   int key_count;
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t queue_lock;
   SemaphoreHandle_t sem_event;
   atomic_bool shutting_down;
   atomic_int readers;
@@ -54,14 +54,14 @@ static uint16_t map_key_name(const char *name) {
 
 static void gpio_keyboard_enqueue_event(gpio_keyboard_state_t *state, const eos_input_event_t *ev) {
   if (!state || !ev) return;
-  if (state->lock) xSemaphoreTake(state->lock, portMAX_DELAY);
+  if (state->queue_lock) xSemaphoreTake(state->queue_lock, portMAX_DELAY);
   uint8_t next = (uint8_t)((state->q_head + 1U) % GPIO_KEYBOARD_QUEUE_SIZE);
   if (next == state->q_tail) {
     state->q_tail = (uint8_t)((state->q_tail + 1U) % GPIO_KEYBOARD_QUEUE_SIZE);
   }
   state->queue[state->q_head] = *ev;
   state->q_head = next;
-  if (state->lock) xSemaphoreGive(state->lock);
+  if (state->queue_lock) xSemaphoreGive(state->queue_lock);
   if (state->sem_event) {
     xSemaphoreGive(state->sem_event);
   }
@@ -70,13 +70,13 @@ static void gpio_keyboard_enqueue_event(gpio_keyboard_state_t *state, const eos_
 static bool gpio_keyboard_dequeue_event(gpio_keyboard_state_t *state, eos_input_event_t *ev) {
   if (!state || !ev) return false;
   bool got = false;
-  if (state->lock) xSemaphoreTake(state->lock, portMAX_DELAY);
+  if (state->queue_lock) xSemaphoreTake(state->queue_lock, portMAX_DELAY);
   if (state->q_head != state->q_tail) {
     *ev = state->queue[state->q_tail];
     state->q_tail = (uint8_t)((state->q_tail + 1U) % GPIO_KEYBOARD_QUEUE_SIZE);
     got = true;
   }
-  if (state->lock) xSemaphoreGive(state->lock);
+  if (state->queue_lock) xSemaphoreGive(state->queue_lock);
   return got;
 }
 
@@ -84,7 +84,7 @@ bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
   gpio_keyboard_state_t *state = eos_psram_malloc_prefer(sizeof(gpio_keyboard_state_t));
   if (!state) return false;
   memset(state, 0, sizeof(gpio_keyboard_state_t));
-  state->lock = xSemaphoreCreateMutex();
+  state->queue_lock = xSemaphoreCreateMutex();
   state->sem_event = xSemaphoreCreateCounting(GPIO_KEYBOARD_QUEUE_SIZE, 0);
   atomic_init(&state->shutting_down, false);
   atomic_init(&state->readers, 0);
@@ -100,8 +100,8 @@ bool driver_input_gpio_keyboard_init(eos_dev_t *dev) {
         if (state->sem_event) {
           vSemaphoreDelete(state->sem_event);
         }
-        if (state->lock) {
-          vSemaphoreDelete(state->lock);
+        if (state->queue_lock) {
+          vSemaphoreDelete(state->queue_lock);
         }
         free(state);
         return false;
@@ -148,9 +148,9 @@ void driver_input_gpio_keyboard_shutdown(eos_dev_t *dev) {
     vSemaphoreDelete(state->sem_event);
     state->sem_event = NULL;
   }
-  if (state->lock) {
-    vSemaphoreDelete(state->lock);
-    state->lock = NULL;
+  if (state->queue_lock) {
+    vSemaphoreDelete(state->queue_lock);
+    state->queue_lock = NULL;
   }
   free(state);
   dev->state = NULL;

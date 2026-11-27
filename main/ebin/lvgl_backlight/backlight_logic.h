@@ -9,7 +9,7 @@
 #define EOS_BACKLIGHT_PRESET_COUNT 5
 #define EOS_BACKLIGHT_DEFAULT_STEP 5
 #define EOS_BACKLIGHT_FADE_MS      200
-#define EOS_BACKLIGHT_MAX_DUTY     100
+#include "emisc/fancymacro.h"
 #define EOS_BACKLIGHT_DEFAULT_DEV  "/dev/" "fb0"
 
 typedef struct {

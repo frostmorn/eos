@@ -15,7 +15,7 @@ Only drivers with `is_bus == true` can parent child devices. `eos_dev_attach()` 
 | **`i2c`** | `/dev/i2c0` | Manages I2C master controllers, transaction queuing, clock stretching, and address probing. | ESP32-S3, ESP32-P4 |
 | **`sdio`** | `/dev/sdio0`, `/dev/sdio1` | Manages SDMMC host slots. Slot 0 for high-speed storage; Slot 1 for lazy ESP-Hosted co-processor links. | ESP32-P4 (SDMMC controller) |
 | **`gpio`** | `/dev/gpio` | Container bus exposing individual GPIO pins as virtual nodes (`/dev/gpio/<pin>`). | Universal |
-| **`usb`** | `/dev/usb0`, `/dev/usb1` | Manages USB host/device controllers and composite device endpoints (Port 0: FS, Port 1: HS). | ESP32-S3 (FS OTG), ESP32-P4 (Dual FS/HS OTG) |
+| **`usb`** | `/dev/usb0`, `/dev/usb1` | Manages USB host/device controllers and composite device endpoints (Port 0: FS, Port 1: HS). See [USB, MTP & MSC Drivers](./usb.md). | ESP32-S3 (FS OTG), ESP32-P4 (Dual FS/HS OTG) |
 
 ---
 

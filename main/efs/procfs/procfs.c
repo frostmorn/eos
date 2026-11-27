@@ -437,7 +437,7 @@ static char *procfs_gen_uptime(void) {
   uint32_t ticks = (uint32_t)xTaskGetTickCount();
   uint32_t hz = (uint32_t)configTICK_RATE_HZ;
   uint32_t sec = ticks / hz;
-  uint32_t csec = (ticks % hz) * 100 / hz;
+  uint32_t csec = (ticks % hz) * EOS_PERCENT_MAX / hz;
 
   sbuf_printf(&sb, "%" PRIu32 ".%02" PRIu32 " 0.00\n", sec, csec);
   sbuf_printf(&sb, "uptime: %" PRIu32 "s (%" PRIu32 " ticks @ %" PRIu32 " Hz)\n",

@@ -14,7 +14,7 @@ void sysmon_logic_query_mem(uint32_t caps, sysmon_mem_info_t *out) {
                         ? (out->total_bytes - out->free_bytes)
                         : 0;
   out->usage_pct = (out->total_bytes > 0)
-                       ? (int32_t)((out->used_bytes * 100ULL) / out->total_bytes)
+                       ? (int32_t)((out->used_bytes * (uint64_t)EOS_PERCENT_MAX) / out->total_bytes)
                        : 0;
 }
 

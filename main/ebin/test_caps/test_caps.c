@@ -49,7 +49,7 @@ static void test_caps_api(test_ctx_t *ctx) {
   bool oob_neg = eos_cap_claim(EOS_CAPS_GPIO, -1, NULL);
   report_test(ctx, "caps: negative ID claim rejected", !oob_neg);
 
-  bool oob_high = eos_cap_claim(EOS_CAPS_GPIO, gpio_max + 100, NULL);
+  bool oob_high = eos_cap_claim(EOS_CAPS_GPIO, gpio_max + EOS_PERCENT_MAX, NULL);
   report_test(ctx, "caps: out-of-bounds ID claim rejected", !oob_high);
 
   // Find a free LEDC channel to test claim/conflict/release

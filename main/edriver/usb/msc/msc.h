@@ -11,29 +11,12 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#define EOS_USB_MSC_SECTOR_SIZE         512
+#include "emisc/strlimits.h"
 #define EOS_USB_MSC_SIM_SECTOR_COUNT    128
 #define EOS_USB_MSC_MBR_SIG_OFFSET_0    510
 #define EOS_USB_MSC_MBR_SIG_OFFSET_1    511
 #define EOS_USB_MSC_MBR_SIG_BYTE_0      0x55
 #define EOS_USB_MSC_MBR_SIG_BYTE_1      0xAA
-#define EOS_USB_MSC_SCSI_RMB_FLAG       0x80
-#define EOS_USB_MSC_SCSI_ANSI_2         0x02
-#define EOS_USB_MSC_SCSI_RESP_FMT_2     0x02
-#define EOS_USB_MSC_SCSI_INQ_ADD_LEN    31
-#define EOS_USB_MSC_SCSI_INQ_LEN        36
-#define EOS_USB_MSC_CBW_SIGNATURE       0x43425355
-#define EOS_USB_MSC_CSW_SIGNATURE       0x53425355
-#define EOS_USB_MSC_SCSI_INQUIRY        0x12
-#define EOS_USB_MSC_SCSI_READ_CAP_10    0x25
-#define EOS_USB_MSC_SCSI_READ_10        0x28
-#define EOS_USB_MSC_SCSI_WRITE_10       0x2A
-#define EOS_USB_MSC_SCSI_TEST_UNIT      0x00
-#define EOS_USB_MSC_SCSI_REQ_SENSE      0x03
-#define EOS_USB_MSC_SCSI_MODE_SENSE_6   0x1A
-#define EOS_USB_MSC_SCSI_PREVENT_ALLOW  0x1E
-#define EOS_USB_MSC_SCSI_VERIFY_10      0x2F
-#define EOS_USB_MSC_SCSI_SYNC_CACHE_10  0x35
 
 // SCSI Command Block Wrapper (31 bytes)
 typedef struct __attribute__((packed)) {

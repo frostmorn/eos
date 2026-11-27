@@ -26,7 +26,7 @@ typedef struct {
   eos_clip_rect_t clip;
   uint8_t *dma_buf[2];
   uint8_t dma_idx;
-  SemaphoreHandle_t lock;
+  SemaphoreHandle_t disp_lock;
   int32_t en_pin;
   uint8_t brightness;
   char pwm_dev_name[EOS_SMALL_STR_LEN];
@@ -132,7 +132,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   }
 
   state->en_pin = en_pin;
-  state->brightness = 100;
+  state->brightness = EOS_PERCENT_MAX;
   char *pwm_s = eos_cfg_get_s(dev->cfg, "pwm", "");
   if (pwm_s) snprintf(state->pwm_dev_name, sizeof(state->pwm_dev_name), "%s", pwm_s);
 
@@ -193,7 +193,7 @@ bool driver_display_st7789_init(eos_dev_t *dev) {
   state->dma_buf[1] =
       heap_caps_malloc(ST7789_DMA_STRIP_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
   state->dma_idx = 0;
-  state->lock = xSemaphoreCreateRecursiveMutex();
+  state->disp_lock = xSemaphoreCreateRecursiveMutex();
 
   esp_lcd_panel_reset(state->panel);
   esp_lcd_panel_init(state->panel);
@@ -229,8 +229,8 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
     return -1;
   }
 
-  if (st->lock) {
-    xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+  if (st->disp_lock) {
+    xSemaphoreTakeRecursive(st->disp_lock, portMAX_DELAY);
   }
   size_t row_bytes = (size_t)r.w * bytes_per_pixel;
 
@@ -258,21 +258,21 @@ ssize_t driver_display_st7789_write(eos_dev_t *dev, int fd, const void *buf, siz
       memcpy(dst, src + (size_t)sy * row_bytes, chunk_len);
       if (esp_lcd_panel_draw_bitmap(st->panel, r.x, r.y + sy, r.x + r.w,
                                     r.y + sy + sh, dst) != ESP_OK) {
-        if (st->lock) xSemaphoreGiveRecursive(st->lock);
+        if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
         return -1;
       }
     }
-    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
     return (ssize_t)((size_t)total_rows * row_bytes);
   }
 
   // Fallback if persistent ping-pong buffers are unavailable
   if (esp_lcd_panel_draw_bitmap(st->panel, r.x, r.y, r.x + r.w, r.y + total_rows,
                                 buf) != ESP_OK) {
-    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
     return -1;
   }
-  if (st->lock) xSemaphoreGiveRecursive(st->lock);
+  if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
   return (ssize_t)((size_t)total_rows * row_bytes);
 }
 
@@ -304,11 +304,11 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
     return eos_clip_rect_get(&st->clip, (uint32_t)st->width, (uint32_t)st->height,
                             va_arg(args, eos_display_rect_t *));
   case EOS_DISPLAY_IOCTL_LOCK:
-    if (st->lock) xSemaphoreTakeRecursive(st->lock, portMAX_DELAY);
+    if (st->disp_lock) xSemaphoreTakeRecursive(st->disp_lock, portMAX_DELAY);
     return 0;
 
   case EOS_DISPLAY_IOCTL_UNLOCK:
-    if (st->lock) xSemaphoreGiveRecursive(st->lock);
+    if (st->disp_lock) xSemaphoreGiveRecursive(st->disp_lock);
     return 0;
 
   case EOS_DISPLAY_IOCTL_GET_FORMATS: {
@@ -334,7 +334,7 @@ int driver_display_st7789_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
 
   case EOS_DISPLAY_IOCTL_SET_BRIGHTNESS: {
     uint32_t b = va_arg(args, uint32_t);
-    if (b > 100) b = 100;
+    if (b > EOS_PERCENT_MAX) b = EOS_PERCENT_MAX;
     st->brightness = (uint8_t)b;
     eos_dev_t *pdev = eos_dev_find_by_name(st->pwm_dev_name[0] ? st->pwm_dev_name : "pwm0");
     if (pdev) {
@@ -363,9 +363,9 @@ void driver_display_st7789_shutdown(eos_dev_t *dev) {
   if (!state)
     return;
 
-  if (state->lock) {
-    vSemaphoreDelete(state->lock);
-    state->lock = NULL;
+  if (state->disp_lock) {
+    vSemaphoreDelete(state->disp_lock);
+    state->disp_lock = NULL;
   }
 
   int32_t en_pin = eos_pin_get_no(dev->pins, "en");

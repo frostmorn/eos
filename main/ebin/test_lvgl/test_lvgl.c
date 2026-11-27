@@ -108,7 +108,7 @@ static void test_lvgl_setup_ui(test_lvgl_ui_t *ui, uint32_t width, uint32_t heig
 
   ui->bar = lv_bar_create(scr);
   lv_obj_set_size(ui->bar, (int32_t)width - 24, 14);
-  lv_bar_set_range(ui->bar, 0, 100);
+  lv_bar_set_range(ui->bar, 0, EOS_PERCENT_MAX);
   lv_obj_align(ui->bar, LV_ALIGN_TOP_MID, 0, 84);
 
   ui->sprite = lv_obj_create(scr);
@@ -129,6 +129,77 @@ static void test_lvgl_setup_ui(test_lvgl_ui_t *ui, uint32_t width, uint32_t heig
   update_test_ui(ui, NULL);
 }
 
+typedef struct {
+  int ok_count;
+  int cancel_count;
+} test_dlg_state_t;
+
+static void test_dlg_bool_cb(bool accepted, void *user_data) {
+  test_dlg_state_t *st = (test_dlg_state_t *)user_data;
+  if (!st) return;
+  if (accepted) st->ok_count++;
+  else st->cancel_count++;
+}
+
+static void test_dlg_info_cb(void *user_data) {
+  test_dlg_state_t *st = (test_dlg_state_t *)user_data;
+  if (st) st->ok_count++;
+}
+
+static bool test_lvgl_dialog_keys(void) {
+  test_dlg_state_t st = {0, 0};
+
+  // 1. Confirm dialog: KEY_A ignored, KEY_SPACE confirms, KEY_B cancels
+  eos_lvgl_confirm_dialog_cfg_t ccfg = {
+      .title = "Test Confirm",
+      .message = "Confirm?",
+      .cb = test_dlg_bool_cb,
+      .user_data = &st,
+  };
+  lv_obj_t *dlg = eos_lvgl_dialog_confirm(&ccfg);
+  if (!dlg) return false;
+  if (eos_lvgl_dialog_handle_key(dlg, KEY_A) || st.ok_count != 0) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_SPACE) || st.ok_count != 1) return false;
+
+  dlg = eos_lvgl_dialog_confirm(&ccfg);
+  if (!dlg) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_B) || st.cancel_count != 1) return false;
+
+  // 2. Alert dialog: KEY_A acknowledges, KEY_B cancels
+  eos_lvgl_alert_dialog_cfg_t acfg = {
+      .title = "Test Alert",
+      .message = "Alert!",
+      .cancel_label = "No",
+      .cb = test_dlg_bool_cb,
+      .user_data = &st,
+  };
+  dlg = eos_lvgl_dialog_alert(&acfg);
+  if (!dlg) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_A) || st.ok_count != 2) return false;
+
+  dlg = eos_lvgl_dialog_alert(&acfg);
+  if (!dlg) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_B) || st.cancel_count != 2) return false;
+
+  // 3. Info dialog: KEY_A and KEY_B both dismiss
+  eos_lvgl_info_dialog_cfg_t icfg = {
+      .title = "Test Info",
+      .message = "Info",
+      .cb = test_dlg_info_cb,
+      .user_data = &st,
+  };
+  dlg = eos_lvgl_dialog_info(&icfg);
+  if (!dlg) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_A) || st.ok_count != 3) return false;
+
+  dlg = eos_lvgl_dialog_info(&icfg);
+  if (!dlg) return false;
+  if (!eos_lvgl_dialog_handle_key(dlg, KEY_B) || st.ok_count != 4) return false;
+
+  printf("LVGL Dialog Key Test PASSED (ok=%d cancel=%d)\n", st.ok_count, st.cancel_count);
+  return true;
+}
+
 static void test_lvgl_run_auto(test_lvgl_ui_t *ui) {
   printf("Running automated LVGL partial and full fallback test...\n");
   eos_lvgl_set_full_fallback(false);
@@ -144,13 +215,25 @@ static void test_lvgl_run_auto(test_lvgl_ui_t *ui) {
   uint32_t f_flushes = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->full_flushes : 0;
 
   eos_lvgl_set_full_fallback(false);
-  ui->progress = 100;
+  ui->progress = EOS_PERCENT_MAX;
   update_test_ui(ui, "AUTO_DONE");
   eos_lvgl_step(EOS_POLL_INTERVAL_MS);
   uint32_t p_flushes2 = eos_lvgl_get_ctx() ? eos_lvgl_get_ctx()->partial_flushes : 0;
 
   printf("Automated test flushes: partial=%u->%u, full=%u\n",
          (unsigned)p_flushes1, (unsigned)p_flushes2, (unsigned)f_flushes);
+  bool dlg_ok = test_lvgl_dialog_keys();
+  FILE *rf = fopen("/tmp/test_lvgl.res", "w");
+  if (rf) {
+    fprintf(rf, "%s\n", dlg_ok ? "LVGL Dialog Key Test PASSED\nLVGL Framebuffer Test PASSED"
+                               : "LVGL Dialog Key Test FAILED");
+    fclose(rf);
+  }
+  if (!dlg_ok) {
+    printf("LVGL Dialog Key Test FAILED\n");
+    ui->running = false;
+    return;
+  }
   printf("LVGL Framebuffer Test PASSED\n");
   ui->running = false;
 }

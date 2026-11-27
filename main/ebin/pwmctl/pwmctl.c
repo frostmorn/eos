@@ -78,7 +78,7 @@ static int pwmctl_cmd_get(const char *dev_name) {
     return 1;
   }
 
-  char buf[EOS_PWMCTL_DECIMAL_BASE + 2];
+  char buf[EOS_DECIMAL_BASE + 2];
   ssize_t n = read(fd, buf, sizeof(buf) - 1);
   close(fd);
 
@@ -98,8 +98,8 @@ static int pwmctl_cmd_set(const char *dev_name, const char *val_str) {
   pwmctl_normalize_path(dev_name, dev_path, sizeof(dev_path));
 
   char *endptr = NULL;
-  long pct = strtol(val_str, &endptr, EOS_PWMCTL_DECIMAL_BASE);
-  if (endptr == val_str || pct < 0 || pct > EOS_PWMCTL_MAX_DUTY_PCT) {
+  long pct = strtol(val_str, &endptr, EOS_DECIMAL_BASE);
+  if (endptr == val_str || pct < 0 || pct > EOS_PERCENT_MAX) {
     fprintf(stderr, "pwmctl: invalid duty percentage '%s' (0 - 100)\n", val_str);
     return 1;
   }
@@ -126,7 +126,7 @@ static int pwmctl_cmd_freq(const char *dev_name, const char *val_str) {
   pwmctl_normalize_path(dev_name, dev_path, sizeof(dev_path));
 
   char *endptr = NULL;
-  long hz = strtol(val_str, &endptr, EOS_PWMCTL_DECIMAL_BASE);
+  long hz = strtol(val_str, &endptr, EOS_DECIMAL_BASE);
   if (endptr == val_str || hz <= 0) {
     fprintf(stderr, "pwmctl: invalid frequency '%s'\n", val_str);
     return 1;
@@ -154,11 +154,11 @@ static int pwmctl_cmd_fade(const char *dev_name, const char *pct_str, const char
   pwmctl_normalize_path(dev_name, dev_path, sizeof(dev_path));
 
   char *end_pct = NULL;
-  long pct = strtol(pct_str, &end_pct, EOS_PWMCTL_DECIMAL_BASE);
+  long pct = strtol(pct_str, &end_pct, EOS_DECIMAL_BASE);
   char *end_ms = NULL;
-  long ms = strtol(ms_str, &end_ms, EOS_PWMCTL_DECIMAL_BASE);
+  long ms = strtol(ms_str, &end_ms, EOS_DECIMAL_BASE);
 
-  if (end_pct == pct_str || pct < 0 || pct > EOS_PWMCTL_MAX_DUTY_PCT || end_ms == ms_str || ms < 0) {
+  if (end_pct == pct_str || pct < 0 || pct > EOS_PERCENT_MAX || end_ms == ms_str || ms < 0) {
     fprintf(stderr, "pwmctl: invalid fade arguments (target pct 0-100, duration ms >= 0)\n");
     return 1;
   }
@@ -170,7 +170,7 @@ static int pwmctl_cmd_fade(const char *dev_name, const char *pct_str, const char
   }
 
   eos_pwm_fade_t fade = {
-      .target_duty = (uint16_t)(((uint32_t)pct * 65535U) / 100U),
+      .target_duty = (uint16_t)(((uint32_t)pct * 65535U) / (uint32_t)EOS_PERCENT_MAX),
       .duration_ms = (uint32_t)ms,
   };
   int ret = ioctl(fd, EOS_PWM_IOCTL_FADE, &fade);

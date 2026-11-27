@@ -63,15 +63,15 @@ typedef struct {
 
 struct tmpfs_state_t {
   tmpfs_fnode_t *root;
-  pthread_mutex_t lock;
+  pthread_mutex_t fs_lock;
 };
 
 static inline void tmpfs_lock(tmpfs_state_t *state) {
-  if (state) pthread_mutex_lock(&state->lock);
+  if (state) pthread_mutex_lock(&state->fs_lock);
 }
 
 static inline void tmpfs_unlock(tmpfs_state_t *state) {
-  if (state) pthread_mutex_unlock(&state->lock);
+  if (state) pthread_mutex_unlock(&state->fs_lock);
 }
 
 
@@ -1128,7 +1128,7 @@ tmpfs_state_t *eos_tmpfs_mount(const char *path) {
   pthread_mutexattr_t attr;
   pthread_mutexattr_init(&attr);
   pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
-  pthread_mutex_init(&state->lock, &attr);
+  pthread_mutex_init(&state->fs_lock, &attr);
   pthread_mutexattr_destroy(&attr);
 
   eos_proc_leave_kernel(prev_k);
@@ -1187,7 +1187,7 @@ int eos_tmpfs_umount(const char *path, tmpfs_state_t *state) {
     state->root = NULL;
   }
   tmpfs_unlock(state);
-  pthread_mutex_destroy(&state->lock);
+  pthread_mutex_destroy(&state->fs_lock);
   bool prev_k = eos_proc_enter_kernel();
   free(state);
   eos_proc_leave_kernel(prev_k);

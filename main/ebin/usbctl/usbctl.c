@@ -1,6 +1,7 @@
 #include "includes.h"
 #include "ecore/bin.h"
 #include "ecore/ioctl.h"
+#include "ecore/kcmd.h"
 #include "ecore/usb.h"
 #include "ebin/usbctl/usbctl.h"
 
@@ -77,6 +78,7 @@ static int subcmd_role(int argc, char **argv, int fd) {
   }
 
   const char *target = argv[2];
+  bool do_reboot = (argc >= 4 && strcmp(argv[3], "--reboot") == 0);
   eos_usb_role_t new_role = EOS_USB_ROLE_OFF;
   if (strcmp(target, "host") == 0) {
     new_role = EOS_USB_ROLE_HOST;
@@ -92,10 +94,26 @@ static int subcmd_role(int argc, char **argv, int fd) {
   }
 
   if (ioctl(fd, EOS_USB_IOCTL_SET_ROLE, new_role) < 0) {
+    if (errno == ENOTSUP) {
+      if (do_reboot) {
+        printf("Reboot required; rebooting with role '%s'...\n", target);
+        fflush(stdout);
+        eos_reboot_with_kcmd(target);
+        return 0;
+      }
+      fprintf(stderr,
+              "usbctl: reboot required to apply role '%s' on this port "
+              "(run 'usbctl ... role %s --reboot' or 'reboot -- %s')\n",
+              target, target, target);
+      return 1;
+    }
     perror("usbctl: ioctl SET_ROLE failed");
     return 1;
   }
   printf("Switched USB role to '%s'\n", target);
+  if (do_reboot) {
+    eos_reboot_with_kcmd(target);
+  }
   return 0;
 }
 

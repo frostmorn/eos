@@ -207,8 +207,12 @@ def find_console_port(target_chip=None):
 def find_gadget_device(target_chip=None):
     """Find the TinyUSB Composite Gadget USB device dict for target_chip, if connected."""
     chip = target_chip or get_target_chip()
-    for d in enumerate_espressif_usb():
-        if d["role"] == "tinyusb_gadget" and (d["chip"] == chip or d["chip"] is None):
+    devs = [d for d in enumerate_espressif_usb() if d["role"] == "tinyusb_gadget"]
+    for d in devs:
+        if d["chip"] == chip:
+            return d
+    for d in devs:
+        if d["chip"] is None:
             return d
     return None
 

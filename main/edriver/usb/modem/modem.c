@@ -85,8 +85,8 @@ bool driver_usb_modem_init(eos_dev_t *dev) {
   memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->mutex = xSemaphoreCreateMutex();
-  if (!st->mutex) {
+  st->state_mutex = xSemaphoreCreateMutex();
+  if (!st->state_mutex) {
     free(st);
     dev->state = NULL;
     return false;
@@ -97,7 +97,7 @@ bool driver_usb_modem_init(eos_dev_t *dev) {
   if (!st->rx_buf || !st->tx_buf) {
     if (st->rx_buf) free(st->rx_buf);
     if (st->tx_buf) free(st->tx_buf);
-    vSemaphoreDelete(st->mutex);
+    vSemaphoreDelete(st->state_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -130,9 +130,9 @@ void driver_usb_modem_shutdown(eos_dev_t *dev) {
     free(st->tx_buf);
     st->tx_buf = NULL;
   }
-  if (st->mutex) {
-    vSemaphoreDelete(st->mutex);
-    st->mutex = NULL;
+  if (st->state_mutex) {
+    vSemaphoreDelete(st->state_mutex);
+    st->state_mutex = NULL;
   }
   free(st);
   dev->state = NULL;
@@ -163,7 +163,7 @@ ssize_t driver_usb_modem_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
   eos_usb_modem_state_t *st = (eos_usb_modem_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->state_mutex, portMAX_DELAY);
 
   size_t bytes_read = 0;
   uint8_t *out = (uint8_t *)dst;
@@ -173,7 +173,7 @@ ssize_t driver_usb_modem_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     st->rx_count--;
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->state_mutex);
   return (ssize_t)bytes_read;
 }
 
@@ -184,7 +184,7 @@ ssize_t driver_usb_modem_write(eos_dev_t *dev, int fd, const void *data, size_t 
     return -1;
   }
   eos_usb_modem_state_t *st = (eos_usb_modem_state_t *)dev->state;
-  xSemaphoreTake(st->mutex, portMAX_DELAY);
+  xSemaphoreTake(st->state_mutex, portMAX_DELAY);
 
   const uint8_t *in = (const uint8_t *)data;
   size_t bytes_written = 0;
@@ -227,7 +227,7 @@ ssize_t driver_usb_modem_write(eos_dev_t *dev, int fd, const void *data, size_t 
     }
   }
 
-  xSemaphoreGive(st->mutex);
+  xSemaphoreGive(st->state_mutex);
   return (ssize_t)bytes_written;
 }
 
@@ -258,7 +258,7 @@ int driver_usb_modem_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->mutex, portMAX_DELAY);
+      xSemaphoreTake(st->state_mutex, portMAX_DELAY);
       for (size_t i = 0; i < len; i++) {
         if (st->rx_count < st->rx_size) {
           st->rx_buf[st->rx_head] = buf[i];
@@ -266,7 +266,7 @@ int driver_usb_modem_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
           st->rx_count++;
         }
       }
-      xSemaphoreGive(st->mutex);
+      xSemaphoreGive(st->state_mutex);
       return 0;
     }
 

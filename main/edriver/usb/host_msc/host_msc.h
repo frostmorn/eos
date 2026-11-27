@@ -9,7 +9,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#define EOS_USB_HOST_MSC_SECTOR_SIZE    512
+#include "emisc/strlimits.h"
 #define EOS_USB_HOST_MSC_DEFAULT_COUNT  256
 #define EOS_USB_HOST_MSC_MBR_SIG_OFF_0  510
 #define EOS_USB_HOST_MSC_MBR_SIG_OFF_1  511
@@ -17,7 +17,7 @@
 #define EOS_USB_HOST_MSC_MBR_SIG_VAL_1  0xAA
 
 typedef struct {
-  SemaphoreHandle_t mutex;
+  SemaphoreHandle_t io_mutex;
   uint32_t sector_size;
   uint32_t sector_count;
   uint8_t *storage;

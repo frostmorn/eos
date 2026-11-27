@@ -443,6 +443,13 @@ def run_rule_magic_numbers(rule):
     flagged_literals = rule.get("flagged_literals", {})
     max_cross_file = rule.get("max_cross_file_occurrences", 4)
     min_cross_file_value = int(rule.get("min_cross_file_value", 36))
+    ui_dimension_paths = tuple(rule.get("ui_dimension_paths", []))
+    ui_dimension_funcs = rule.get("ui_dimension_funcs", [])
+    ui_dim_re = (
+        re.compile(r"\b(" + "|".join(re.escape(fn) for fn in ui_dimension_funcs) + r")\s*\(([^;]+)\)")
+        if ui_dimension_funcs
+        else None
+    )
 
     # Match hex/octal keys by exact normalized token, and decimal keys by integer value
     flagged_by_str = {str(k).lower(): v for k, v in flagged_literals.items()}
@@ -458,6 +465,7 @@ def run_rule_magic_numbers(rule):
 
     print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
     for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        is_ui_dim_file = bool(ui_dim_re) and bool(ui_dimension_paths) and filepath.startswith(ui_dimension_paths)
         try:
             with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                 raw_content = f.read()
@@ -508,6 +516,18 @@ def run_rule_magic_numbers(rule):
                             violations += 1
 
                 # 2. Scan numeric literals on the line
+                if is_ui_dim_file:
+                    for m_ui in ui_dim_re.finditer(s):
+                        for m_num in re.finditer(r"(?<![A-Za-z0-9_])(-?\d+)(?![A-Za-z0-9_])", m_ui.group(2)):
+                            val = int(m_num.group(1))
+                            if val not in allowed_literals:
+                                print(
+                                    f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx} "
+                                    f"magic UI dimension '{val}' in {m_ui.group(1)}() (move to a header macro)"
+                                )
+                                print(f"    Match: {rl.strip()}")
+                                violations += 1
+
                 for m_num in NUMERIC_LITERAL_RE.finditer(s):
                     if any( start <= m_num.start(1) and m_num.end(1) <= end for start, end in flagged_spans ):
                         continue
@@ -1215,6 +1235,65 @@ def run_rule_gui_theme_unification(rule):
     return violations
 
 
+def run_rule_unused_defines(rule):
+    violations = 0
+    name = rule.get("name", rule.get("id"))
+    paths = rule.get("paths", ["main"])
+    search_paths = rule.get("search_paths", ["main"])
+    file_exts = tuple(rule.get("file_extensions", [".h"]))
+    define_prefix = rule.get("define_prefix", "EOS_")
+    allowlist = set(rule.get("allowlist", []))
+    exclude_patterns = [re.compile(p) for p in rule.get("exclude_patterns", [])]
+
+    print(f"\n{Colors.BOLD}=== Running check: {name} ==={Colors.RESET}")
+
+    # Load all searchable source/header texts once
+    all_texts = {}
+    for spath in iter_target_files(search_paths, (".c", ".h"), None, None):
+        try:
+            with open(spath, "r", encoding="utf-8", errors="ignore") as f:
+                all_texts[spath] = f.read()
+        except Exception:
+            pass
+
+    def_re = re.compile(r"^\s*#\s*define\s+(" + re.escape(define_prefix) + r"[A-Za-z0-9_]+)\b")
+    defs = []
+    def_counts = collections.Counter()
+    for filepath in iter_target_files(paths, file_exts, rule.get("exclude_dirs"), rule.get("exclude_files")):
+        text = all_texts.get(filepath)
+        if text is None:
+            continue
+        for idx, line in enumerate(text.splitlines(), 1):
+            m = def_re.match(line)
+            if m:
+                macro = m.group(1)
+                defs.append((filepath, idx, macro))
+                def_counts[macro] += 1
+
+    seen_macros = set()
+    for filepath, idx, macro in defs:
+        if macro in seen_macros or macro in allowlist:
+            continue
+        if any(p.search(macro) for p in exclude_patterns):
+            continue
+        seen_macros.add(macro)
+
+        pat = re.compile(r"\b" + re.escape(macro) + r"\b")
+        total_hits = sum(len(pat.findall(txt)) for txt in all_texts.values())
+        if total_hits <= def_counts[macro]:
+            print(
+                f"  [{Colors.RED}VIOLATION{Colors.RESET}] {filepath}:{idx} "
+                f"unused #define '{macro}' (remove or add to allowlist/exclude_patterns if reserved for future use)"
+            )
+            violations += 1
+
+    if violations == 0:
+        print(f"  [{Colors.GREEN}PASS{Colors.RESET}] No unused {define_prefix}* definitions found.")
+    else:
+        print(f"  [{Colors.RED}FAIL{Colors.RESET}] Found {violations} unused definition(s) for {name}.")
+    return violations
+
+
 DISPATCHER = {
     "forbidden_patterns": run_rule_forbidden_patterns,
     "max_pattern_occurrences_per_file": run_rule_max_pattern_occurrences_per_file,
@@ -1237,6 +1316,7 @@ DISPATCHER = {
     "gui_logic_separation": run_rule_gui_logic_separation,
     "init_sh_lifecycle": run_rule_init_sh_lifecycle,
     "gui_theme_unification": run_rule_gui_theme_unification,
+    "unused_defines": run_rule_unused_defines,
 }
 
 

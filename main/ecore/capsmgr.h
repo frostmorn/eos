@@ -42,8 +42,6 @@ typedef enum {
   EOS_CAPS_COUNT
 } eos_cap_type_t;
 
-#define EOS_CAPS_PWM EOS_CAPS_LEDC_CHANNEL
-
 typedef struct {
   eos_cap_type_t type;
   int32_t no;

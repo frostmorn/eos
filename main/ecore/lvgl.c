@@ -1238,6 +1238,46 @@ static void eos_lvgl_default_back_btn_cb(lv_event_t *e) {
   key_queue_push(KEY_ESC);
 }
 
+typedef struct {
+  int32_t lh;
+  int32_t unit;
+  int32_t pad_xs;
+  int32_t pad_sm;
+  int32_t pad_md;
+  int32_t pad_lg;
+  int32_t pad_xl;
+  int32_t radius_sm;
+  int32_t radius_md;
+  int32_t border_focus;
+  int32_t hdr_h;
+  int32_t btn_h;
+  int32_t dlg_btn_h;
+} eos_lvgl_metrics_t;
+
+static eos_lvgl_metrics_t eos_lvgl_get_metrics(void) {
+  const lv_font_t *font = eos_lvgl_get_font();
+  if (!font) font = LV_FONT_DEFAULT;
+  int32_t lh = (int32_t)lv_font_get_line_height(font);
+  int32_t unit = lh / 4;
+  if (unit < 2) unit = 2;
+  eos_lvgl_metrics_t m = {
+      .lh = lh,
+      .unit = unit,
+      .pad_xs = unit / 2,
+      .pad_sm = unit,
+      .pad_md = unit + unit / 2,
+      .pad_lg = unit * 2,
+      .pad_xl = unit * 3,
+      .radius_sm = unit > 1 ? unit - 1 : 1,
+      .radius_md = unit,
+      .border_focus = unit / 2,
+      .hdr_h = lh + unit * 2,
+      .btn_h = lh + unit * 2,
+      .dlg_btn_h = lh + unit * 4,
+  };
+  return m;
+}
+
 lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
                                    void *user_data) {
   if (!parent) {
@@ -1246,17 +1286,18 @@ lv_obj_t *eos_lvgl_create_back_btn(lv_obj_t *parent, lv_event_cb_t custom_cb,
   if (!parent)
     return NULL;
 
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
   lv_obj_t *btn = lv_button_create(parent);
   int32_t ph = lv_obj_get_height(parent);
-  if (ph > 0 && ph <= 26) {
-    lv_obj_set_size(btn, 24, ph > 4 ? ph - 4 : 16);
-    lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -2, 0);
+  if (ph > 0 && ph <= m.hdr_h + m.pad_xs) {
+    lv_obj_set_size(btn, m.hdr_h, ph > m.pad_sm ? ph - m.pad_sm : m.lh);
+    lv_obj_align(btn, LV_ALIGN_RIGHT_MID, -m.pad_xs, 0);
   } else {
-    lv_obj_set_size(btn, 26, 18);
-    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -3, 2);
+    lv_obj_set_size(btn, m.hdr_h + m.pad_xs, m.lh + m.pad_xs);
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -m.radius_sm, m.pad_xs);
   }
   lv_obj_set_style_bg_color(btn, lv_color_hex(0xEF4444), 0);
-  lv_obj_set_style_radius(btn, 3, 0);
+  lv_obj_set_style_radius(btn, m.radius_sm, 0);
   lv_obj_set_style_pad_all(btn, 0, 0);
   lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1277,13 +1318,14 @@ lv_obj_t *eos_lvgl_create_card(lv_obj_t *parent, int32_t w, int32_t h) {
   if (!parent) parent = lv_screen_active();
   if (!parent) return NULL;
 
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
   lv_obj_t *card = lv_obj_create(parent);
   lv_obj_set_size(card, w, h);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 4, 0);
-  lv_obj_set_style_pad_all(card, 4, 0);
+  lv_obj_set_style_radius(card, m.radius_md, 0);
+  lv_obj_set_style_pad_all(card, m.pad_sm, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   return card;
 }
@@ -1292,15 +1334,16 @@ lv_obj_t *eos_lvgl_create_header(lv_obj_t *parent, const char *title, const char
   if (!parent) parent = lv_screen_active();
   if (!parent) return NULL;
 
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
   uint32_t w = eos_lvgl_get_width();
   lv_obj_t *hdr = lv_obj_create(parent);
-  lv_obj_set_size(hdr, (int32_t)w, 24);
+  lv_obj_set_size(hdr, (int32_t)w, m.hdr_h);
   lv_obj_align(hdr, LV_ALIGN_TOP_MID, 0, 0);
   lv_obj_set_style_bg_color(hdr, lv_color_hex(EOS_COLOR_BG_HDR), 0);
   lv_obj_set_style_border_width(hdr, 0, 0);
   lv_obj_set_style_radius(hdr, 0, 0);
-  lv_obj_set_style_pad_hor(hdr, 6, 0);
-  lv_obj_set_style_pad_ver(hdr, 2, 0);
+  lv_obj_set_style_pad_hor(hdr, m.pad_md, 0);
+  lv_obj_set_style_pad_ver(hdr, m.pad_xs, 0);
   lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
   if (title) {
@@ -1324,17 +1367,18 @@ lv_obj_t *eos_lvgl_create_toast(lv_obj_t *parent, const char *message, bool is_e
   if (!parent) parent = lv_screen_active();
   if (!parent || !message) return NULL;
 
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
   uint32_t w = eos_lvgl_get_width();
-  int32_t toast_w = (int32_t)w - 20;
-  if (toast_w > 360) toast_w = 360;
+  int32_t toast_w = (int32_t)w - m.pad_xl * 2;
+  if (toast_w < 0) toast_w = (int32_t)w;
 
   lv_obj_t *toast = lv_obj_create(parent);
-  lv_obj_set_size(toast, toast_w, 26);
-  lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, 28);
+  lv_obj_set_size(toast, toast_w, m.hdr_h + m.pad_xs);
+  lv_obj_align(toast, LV_ALIGN_TOP_MID, 0, m.hdr_h + m.pad_sm);
   lv_obj_set_style_bg_color(toast, lv_color_hex(is_error ? EOS_COLOR_STATUS_RED : EOS_COLOR_STATUS_GREEN), 0);
   lv_obj_set_style_border_width(toast, 0, 0);
-  lv_obj_set_style_radius(toast, 4, 0);
-  lv_obj_set_style_pad_all(toast, 2, 0);
+  lv_obj_set_style_radius(toast, m.radius_md, 0);
+  lv_obj_set_style_pad_all(toast, m.pad_xs, 0);
   lv_obj_clear_flag(toast, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t *lbl = lv_label_create(toast);
@@ -1376,27 +1420,28 @@ lv_obj_t *eos_lvgl_create_keyboard(lv_obj_t *parent, lv_obj_t *target_ta) {
   int32_t parent_h = lv_obj_get_height(parent);
   if (parent_h <= 0) parent_h = (int32_t)h;
 
-  int32_t kb_w = parent_w - 6;
-  if (kb_w > EOS_LVGL_KB_MAX_W) kb_w = EOS_LVGL_KB_MAX_W;
-  int32_t kb_h = parent_h * EOS_LVGL_KB_HEIGHT_PCT / 100;
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  int32_t kb_w = parent_w - m.pad_md;
+  if (kb_w < 0) kb_w = parent_w;
+  int32_t kb_h = parent_h * EOS_LVGL_KB_HEIGHT_PCT / EOS_PERCENT_MAX;
   if (kb_h < EOS_LVGL_KB_MIN_H) kb_h = EOS_LVGL_KB_MIN_H;
-  if (kb_h > EOS_LVGL_KB_MAX_H) kb_h = EOS_LVGL_KB_MAX_H;
+  if (kb_h > parent_h - m.hdr_h) kb_h = parent_h - m.hdr_h;
 
   lv_obj_set_size(kb, kb_w, kb_h);
-  lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -2);
+  lv_obj_align(kb, LV_ALIGN_BOTTOM_MID, 0, -m.pad_xs);
   lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
   lv_obj_set_style_border_color(kb, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(kb, 1, 0);
-  lv_obj_set_style_radius(kb, 4, 0);
-  lv_obj_set_style_pad_all(kb, 2, 0);
-  lv_obj_set_style_pad_gap(kb, 2, 0);
+  lv_obj_set_style_radius(kb, m.radius_md, 0);
+  lv_obj_set_style_pad_all(kb, m.pad_xs, 0);
+  lv_obj_set_style_pad_gap(kb, m.pad_xs, 0);
 
   // Normal keyboard keys
   lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_BG_CARD), LV_PART_ITEMS);
   lv_obj_set_style_text_color(kb, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), LV_PART_ITEMS);
   lv_obj_set_style_border_color(kb, lv_color_hex(EOS_COLOR_BORDER), LV_PART_ITEMS);
   lv_obj_set_style_border_width(kb, 1, LV_PART_ITEMS);
-  lv_obj_set_style_radius(kb, 3, LV_PART_ITEMS);
+  lv_obj_set_style_radius(kb, m.radius_sm, LV_PART_ITEMS);
 
   // High-visibility focus indicator for D-pad / arrow key navigation
   lv_obj_set_style_bg_color(kb, lv_color_hex(EOS_COLOR_ACCENT_BLUE),
@@ -1468,6 +1513,45 @@ static void input_dialog_kb_event(lv_event_t *e) {
   }
 }
 
+static void input_dialog_build_header(lv_obj_t *card, int32_t dlg_btn_w, int32_t dlg_btn_h,
+                                      const eos_lvgl_metrics_t *m,
+                                      const eos_lvgl_input_dialog_cfg_t *cfg,
+                                      eos_input_dialog_data_t *data,
+                                      lv_obj_t **btn_ok_out, lv_obj_t **btn_cancel_out) {
+  lv_obj_t *tlbl = lv_label_create(card);
+  lv_label_set_text(tlbl, cfg->title ? cfg->title : "Input");
+  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+  lv_obj_align(tlbl, LV_ALIGN_TOP_LEFT, m->pad_sm, m->pad_sm);
+
+  lv_obj_t *btn_cancel = lv_button_create(card);
+  lv_obj_set_size(btn_cancel, dlg_btn_w, dlg_btn_h);
+  lv_obj_align(btn_cancel, LV_ALIGN_TOP_RIGHT, -(dlg_btn_w + m->pad_lg), 0);
+  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
+  lv_obj_set_style_border_color(btn_cancel, lv_color_hex(EOS_COLOR_BORDER), 0);
+  lv_obj_set_style_border_width(btn_cancel, 1, 0);
+  lv_obj_set_style_radius(btn_cancel, m->radius_sm, 0);
+  lv_obj_add_event_cb(btn_cancel, input_dialog_cancel_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *clbl = lv_label_create(btn_cancel);
+  lv_label_set_text(clbl, cfg->cancel_label ? cfg->cancel_label : "Cancel");
+  lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
+  lv_obj_center(clbl);
+
+  lv_obj_t *btn_ok = lv_button_create(card);
+  lv_obj_set_size(btn_ok, dlg_btn_w, dlg_btn_h);
+  lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -m->pad_xs, 0);
+  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
+  lv_obj_set_style_radius(btn_ok, m->radius_sm, 0);
+  lv_obj_add_event_cb(btn_ok, input_dialog_ok_click, LV_EVENT_CLICKED, data);
+
+  lv_obj_t *oklbl = lv_label_create(btn_ok);
+  lv_label_set_text(oklbl, cfg->ok_label ? cfg->ok_label : "OK");
+  lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
+  lv_obj_center(oklbl);
+  if (btn_ok_out) *btn_ok_out = btn_ok;
+  if (btn_cancel_out) *btn_cancel_out = btn_cancel;
+}
+
 lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   if (!cfg) return NULL;
   lv_obj_t *scr = lv_screen_active();
@@ -1504,47 +1588,25 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
   lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 4, 0);
-  lv_obj_set_style_pad_all(card, 4, 0);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  int32_t dlg_btn_w = dlg_w / 4;
+  int32_t dlg_btn_h = m.lh + m.pad_md;
+  lv_obj_set_style_radius(card, m.radius_md, 0);
+  lv_obj_set_style_pad_all(card, m.pad_sm, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   // Top header: Title on left, Action buttons on right
-  lv_obj_t *tlbl = lv_label_create(card);
-  lv_label_set_text(tlbl, cfg->title ? cfg->title : "Input");
-  lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
-  lv_obj_align(tlbl, LV_ALIGN_TOP_LEFT, 4, 4);
-
-  lv_obj_t *btn_cancel = lv_button_create(card);
-  lv_obj_set_size(btn_cancel, EOS_LVGL_DIALOG_BTN_W, 22);
-  lv_obj_align(btn_cancel, LV_ALIGN_TOP_RIGHT, -EOS_LVGL_DIALOG_CANCEL_X, 0);
-  lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
-  lv_obj_set_style_border_color(btn_cancel, lv_color_hex(EOS_COLOR_BORDER), 0);
-  lv_obj_set_style_border_width(btn_cancel, 1, 0);
-  lv_obj_set_style_radius(btn_cancel, 3, 0);
-  lv_obj_add_event_cb(btn_cancel, input_dialog_cancel_click, LV_EVENT_CLICKED, data);
-
-  lv_obj_t *clbl = lv_label_create(btn_cancel);
-  lv_label_set_text(clbl, cfg->cancel_label ? cfg->cancel_label : "Cancel");
-  lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
-  lv_obj_center(clbl);
-
-  lv_obj_t *btn_ok = lv_button_create(card);
-  lv_obj_set_size(btn_ok, EOS_LVGL_DIALOG_BTN_W, 22);
-  lv_obj_align(btn_ok, LV_ALIGN_TOP_RIGHT, -2, 0);
-  lv_obj_set_style_bg_color(btn_ok, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
-  lv_obj_set_style_radius(btn_ok, 3, 0);
-  lv_obj_add_event_cb(btn_ok, input_dialog_ok_click, LV_EVENT_CLICKED, data);
-
-  lv_obj_t *oklbl = lv_label_create(btn_ok);
-  lv_label_set_text(oklbl, cfg->ok_label ? cfg->ok_label : "OK");
-  lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
-  lv_obj_center(oklbl);
+  lv_obj_t *btn_ok = NULL;
+  lv_obj_t *btn_cancel = NULL;
+  input_dialog_build_header(card, dlg_btn_w, dlg_btn_h, &m, cfg, data, &btn_ok, &btn_cancel);
 
   // Text Area right under header
   lv_obj_t *ta = lv_textarea_create(card);
   data->textarea = ta;
-  lv_obj_set_size(ta, dlg_w - 12, 28);
-  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 26);
+  int32_t ta_h = m.lh + m.pad_xl;
+  int32_t ta_y = dlg_btn_h + m.pad_sm;
+  lv_obj_set_size(ta, dlg_w - m.pad_xl, ta_h);
+  lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, ta_y);
   if (cfg->is_password) {
     lv_textarea_set_password_mode(ta, true);
   }
@@ -1557,16 +1619,16 @@ lv_obj_t *eos_lvgl_create_input_dialog(const eos_lvgl_input_dialog_cfg_t *cfg) {
   lv_obj_set_style_bg_color(ta, lv_color_hex(EOS_COLOR_BG_DARK), 0);
   lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
   lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
-  lv_obj_set_style_pad_all(ta, 4, 0);
+  lv_obj_set_style_pad_all(ta, m.pad_sm, 0);
 
   // On-screen keyboard: ALWAYS created and maximized in remaining height
-  int32_t kb_y = 58;
-  int32_t kb_h = dlg_h - kb_y - 4;
+  int32_t kb_y = ta_y + ta_h + m.pad_sm;
+  int32_t kb_h = dlg_h - kb_y - m.pad_sm;
   if (kb_h < EOS_LVGL_DIALOG_MIN_KB_H) kb_h = EOS_LVGL_DIALOG_MIN_KB_H;
 
   lv_obj_t *kb = eos_lvgl_create_keyboard(card, ta);
   if (kb) {
-    lv_obj_set_size(kb, dlg_w - 6, kb_h);
+    lv_obj_set_size(kb, dlg_w - m.pad_md, kb_h);
     lv_obj_align(kb, LV_ALIGN_TOP_MID, 0, kb_y);
     lv_obj_add_event_cb(kb, input_dialog_kb_event, LV_EVENT_ALL, data);
   }
@@ -1651,11 +1713,46 @@ int eos_statusbar_clear(void) {
   return unlink("/tmp/sbar");
 }
 
+// ── Shared Dialog Key/Hint Helpers ────────────────────────────
+
+typedef enum {
+  EOS_DIALOG_MAGIC = 0x454F5344u,
+} eos_dialog_magic_t;
+
+typedef enum {
+  EOS_DIALOG_KIND_CONFIRM = 1,
+  EOS_DIALOG_KIND_INFO,
+  EOS_DIALOG_KIND_ALERT,
+  EOS_DIALOG_KIND_PREVIEW,
+} eos_dialog_kind_t;
+
+typedef struct {
+  uint32_t magic;
+  eos_dialog_kind_t kind;
+  lv_obj_t *overlay;
+} eos_dialog_hdr_t;
+
+static void dialog_dismiss_overlay(lv_obj_t *ov) {
+  if (!ov) return;
+  lv_obj_add_flag(ov, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_delete_async(ov);
+}
+
+static void format_btn_hint(char *out, size_t sz, const char *prefix,
+                            const char *label, const char *fallback) {
+  const char *text = label ? label : fallback;
+  if (strncmp(text, prefix, strlen(prefix)) == 0) {
+    strlcpy(out, text, sz);
+  } else {
+    snprintf(out, sz, "%s%s", prefix, text);
+  }
+}
+
 // ── Shared Confirmation Dialog ─────────────────────────────────
 
 typedef struct {
+  eos_dialog_hdr_t hdr;
   eos_lvgl_confirm_dialog_cfg_t cfg;
-  lv_obj_t *overlay;
 } eos_confirm_dialog_data_t;
 
 static void confirm_dialog_delete_cb(lv_event_t *e) {
@@ -1663,24 +1760,20 @@ static void confirm_dialog_delete_cb(lv_event_t *e) {
   if (data) free(data);
 }
 
-static void confirm_dialog_confirm_click(lv_event_t *e) {
-  eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)lv_event_get_user_data(e);
+static void confirm_dialog_finish(eos_confirm_dialog_data_t *data, bool confirmed) {
   if (!data) return;
   eos_lvgl_confirm_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
-  lv_obj_t *ov = data->overlay;
-  lv_obj_delete(ov);
-  if (cb) cb(true, ud);
+  dialog_dismiss_overlay(data->hdr.overlay);
+  if (cb) cb(confirmed, ud);
+}
+
+static void confirm_dialog_confirm_click(lv_event_t *e) {
+  confirm_dialog_finish((eos_confirm_dialog_data_t *)lv_event_get_user_data(e), true);
 }
 
 static void confirm_dialog_cancel_click(lv_event_t *e) {
-  eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)lv_event_get_user_data(e);
-  if (!data) return;
-  eos_lvgl_confirm_cb_t cb = data->cfg.cb;
-  void *ud = data->cfg.user_data;
-  lv_obj_t *ov = data->overlay;
-  lv_obj_delete(ov);
-  if (cb) cb(false, ud);
+  confirm_dialog_finish((eos_confirm_dialog_data_t *)lv_event_get_user_data(e), false);
 }
 
 lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
@@ -1690,54 +1783,60 @@ lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
 
   eos_confirm_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_confirm_dialog_data_t));
   if (!data) return NULL;
+  data->hdr.magic = EOS_DIALOG_MAGIC;
+  data->hdr.kind = EOS_DIALOG_KIND_CONFIRM;
   data->cfg = *cfg;
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
 
   lv_obj_t *ov = lv_obj_create(scr);
-  data->overlay = ov;
-  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  data->hdr.overlay = ov;
+  lv_obj_set_user_data(ov, data);
+  lv_obj_set_size(ov, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_pos(ov, 0, 0);
   lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
   lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_set_style_pad_all(ov, 0, 0);
+  lv_obj_set_style_radius(ov, 0, 0);
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ov, confirm_dialog_delete_cb, LV_EVENT_DELETE, data);
 
-  int32_t dlg_w = (int32_t)w - 20;
-  if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
+  int32_t dlg_w = (int32_t)w;
 
   lv_obj_t *card = lv_obj_create(ov);
-  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
-  lv_obj_center(card);
+  lv_obj_set_size(card, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
+  lv_obj_set_pos(card, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_pad_row(card, 6, 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 0, 0);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  int32_t content_w = dlg_w - m.pad_xl * 2;
+  lv_obj_set_style_pad_all(card, m.pad_xl, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   // Title
   lv_obj_t *tlbl = lv_label_create(card);
   lv_label_set_text(tlbl, cfg->title ? cfg->title : "Confirm");
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+  lv_obj_set_pos(tlbl, 0, 0);
 
   // Message body
   if (cfg->message) {
     lv_obj_t *mlbl = lv_label_create(card);
     lv_label_set_text(mlbl, cfg->message);
-    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_obj_set_width(mlbl, content_w);
     lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_pos(mlbl, 0, m.lh + m.pad_xl);
   }
 
-  // Button row
+  // Button row pinned at bottom
   lv_obj_t *btn_row = lv_obj_create(card);
-  lv_obj_set_size(btn_row, lv_pct(100), 28);
+  lv_obj_set_size(btn_row, content_w, m.dlg_btn_h + m.pad_xs);
+  lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
   lv_obj_set_style_border_width(btn_row, 0, 0);
   lv_obj_set_style_pad_all(btn_row, 0, 0);
@@ -1745,29 +1844,33 @@ lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
 
   // Cancel button
   lv_obj_t *btn_c = lv_button_create(btn_row);
-  lv_obj_set_size(btn_c, (dlg_w - 30) / 2, 26);
+  lv_obj_set_size(btn_c, lv_pct(EOS_LVGL_SPLIT_BTN_PCT), m.dlg_btn_h);
   lv_obj_align(btn_c, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_set_style_bg_color(btn_c, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
   lv_obj_set_style_border_color(btn_c, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(btn_c, 1, 0);
-  lv_obj_set_style_radius(btn_c, 3, 0);
+  lv_obj_set_style_radius(btn_c, m.radius_md, 0);
   lv_obj_add_event_cb(btn_c, confirm_dialog_cancel_click, LV_EVENT_CLICKED, data);
 
+  char clbl_buf[EOS_SMALL_STR_LEN];
+  format_btn_hint(clbl_buf, sizeof(clbl_buf), "B:", cfg->cancel_label, "Cancel");
   lv_obj_t *clbl = lv_label_create(btn_c);
-  lv_label_set_text(clbl, cfg->cancel_label ? cfg->cancel_label : "Cancel");
+  lv_label_set_text(clbl, clbl_buf);
   lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
   lv_obj_center(clbl);
 
   // Confirm button
   lv_obj_t *btn_ok = lv_button_create(btn_row);
-  lv_obj_set_size(btn_ok, (dlg_w - 30) / 2, 26);
+  lv_obj_set_size(btn_ok, lv_pct(EOS_LVGL_SPLIT_BTN_PCT), m.dlg_btn_h);
   lv_obj_align(btn_ok, LV_ALIGN_RIGHT_MID, 0, 0);
   lv_obj_set_style_bg_color(btn_ok, lv_color_hex(cfg->dangerous ? EOS_COLOR_STATUS_RED : EOS_COLOR_ACCENT_BLUE), 0);
-  lv_obj_set_style_radius(btn_ok, 3, 0);
+  lv_obj_set_style_radius(btn_ok, m.radius_sm, 0);
   lv_obj_add_event_cb(btn_ok, confirm_dialog_confirm_click, LV_EVENT_CLICKED, data);
 
+  char oklbl_buf[EOS_SMALL_STR_LEN];
+  format_btn_hint(oklbl_buf, sizeof(oklbl_buf), "START:", cfg->confirm_label, "Confirm");
   lv_obj_t *oklbl = lv_label_create(btn_ok);
-  lv_label_set_text(oklbl, cfg->confirm_label ? cfg->confirm_label : "Confirm");
+  lv_label_set_text(oklbl, oklbl_buf);
   lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
   lv_obj_center(oklbl);
 
@@ -1784,8 +1887,8 @@ lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
 // ── Shared Information Dialog ──────────────────────────────────
 
 typedef struct {
+  eos_dialog_hdr_t hdr;
   eos_lvgl_info_dialog_cfg_t cfg;
-  lv_obj_t *overlay;
 } eos_info_dialog_data_t;
 
 static void info_dialog_delete_cb(lv_event_t *e) {
@@ -1793,14 +1896,16 @@ static void info_dialog_delete_cb(lv_event_t *e) {
   if (data) free(data);
 }
 
-static void info_dialog_ok_click(lv_event_t *e) {
-  eos_info_dialog_data_t *data = (eos_info_dialog_data_t *)lv_event_get_user_data(e);
+static void info_dialog_finish(eos_info_dialog_data_t *data) {
   if (!data) return;
   eos_lvgl_info_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
-  lv_obj_t *ov = data->overlay;
-  lv_obj_delete(ov);
+  dialog_dismiss_overlay(data->hdr.overlay);
   if (cb) cb(ud);
+}
+
+static void info_dialog_ok_click(lv_event_t *e) {
+  info_dialog_finish((eos_info_dialog_data_t *)lv_event_get_user_data(e));
 }
 
 lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
@@ -1810,35 +1915,38 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
 
   eos_info_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_info_dialog_data_t));
   if (!data) return NULL;
+  data->hdr.magic = EOS_DIALOG_MAGIC;
+  data->hdr.kind = EOS_DIALOG_KIND_INFO;
   data->cfg = *cfg;
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
 
   lv_obj_t *ov = lv_obj_create(scr);
-  data->overlay = ov;
-  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  data->hdr.overlay = ov;
+  lv_obj_set_user_data(ov, data);
+  lv_obj_set_size(ov, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_pos(ov, 0, 0);
   lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
   lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_set_style_pad_all(ov, 0, 0);
+  lv_obj_set_style_radius(ov, 0, 0);
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ov, info_dialog_delete_cb, LV_EVENT_DELETE, data);
 
-  int32_t dlg_w = (int32_t)w - 20;
-  if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
+  int32_t dlg_w = (int32_t)w;
 
   lv_obj_t *card = lv_obj_create(ov);
-  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
-  lv_obj_center(card);
+  lv_obj_set_size(card, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
+  lv_obj_set_pos(card, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_pad_row(card, 6, 0);
-  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 0, 0);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  int32_t content_w = dlg_w - m.pad_xl * 2;
+  lv_obj_set_style_pad_all(card, m.pad_xl, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   // Title
@@ -1847,26 +1955,30 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
   snprintf(thdr, sizeof(thdr), "i  %s", cfg->title ? cfg->title : "Information");
   lv_label_set_text(tlbl, thdr);
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
+  lv_obj_set_pos(tlbl, 0, 0);
 
   // Message body
   if (cfg->message) {
     lv_obj_t *mlbl = lv_label_create(card);
     lv_label_set_text(mlbl, cfg->message);
-    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_obj_set_width(mlbl, content_w);
     lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_pos(mlbl, 0, m.lh + m.pad_xl);
   }
 
   // Dismiss Button
   lv_obj_t *btn = lv_button_create(card);
-  lv_obj_set_size(btn, 80, 26);
+  lv_obj_set_size(btn, lv_pct(EOS_PERCENT_MAX), m.dlg_btn_h);
   lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
-  lv_obj_set_style_radius(btn, 3, 0);
-  lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_radius(btn, m.radius_md, 0);
+  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_event_cb(btn, info_dialog_ok_click, LV_EVENT_CLICKED, data);
 
+  char blbl_buf[EOS_SMALL_STR_LEN];
+  format_btn_hint(blbl_buf, sizeof(blbl_buf), "A:", cfg->button_label, "OK");
   lv_obj_t *blbl = lv_label_create(btn);
-  lv_label_set_text(blbl, cfg->button_label ? cfg->button_label : "OK");
+  lv_label_set_text(blbl, blbl_buf);
   lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
   lv_obj_center(blbl);
 
@@ -1882,8 +1994,8 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
 // ── Shared Alert Dialog ────────────────────────────────────────
 
 typedef struct {
+  eos_dialog_hdr_t hdr;
   eos_lvgl_alert_dialog_cfg_t cfg;
-  lv_obj_t *overlay;
 } eos_alert_dialog_data_t;
 
 static void alert_dialog_delete_cb(lv_event_t *e) {
@@ -1891,60 +2003,61 @@ static void alert_dialog_delete_cb(lv_event_t *e) {
   if (data) free(data);
 }
 
-static void alert_dialog_ok_click(lv_event_t *e) {
-  eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)lv_event_get_user_data(e);
+static void alert_dialog_finish(eos_alert_dialog_data_t *data, bool ok) {
   if (!data) return;
   eos_lvgl_alert_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
-  lv_obj_t *ov = data->overlay;
-  lv_obj_delete(ov);
-  if (cb) cb(true, ud);
+  dialog_dismiss_overlay(data->hdr.overlay);
+  if (cb) cb(ok, ud);
+}
+
+static void alert_dialog_ok_click(lv_event_t *e) {
+  alert_dialog_finish((eos_alert_dialog_data_t *)lv_event_get_user_data(e), true);
 }
 
 static void alert_dialog_cancel_click(lv_event_t *e) {
-  eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)lv_event_get_user_data(e);
-  if (!data) return;
-  eos_lvgl_alert_cb_t cb = data->cfg.cb;
-  void *ud = data->cfg.user_data;
-  lv_obj_t *ov = data->overlay;
-  lv_obj_delete(ov);
-  if (cb) cb(false, ud);
+  alert_dialog_finish((eos_alert_dialog_data_t *)lv_event_get_user_data(e), false);
 }
 
-static void alert_dialog_build_buttons(lv_obj_t *card, int32_t dlg_w, uint32_t accent,
+static void alert_dialog_build_buttons(lv_obj_t *card, uint32_t accent,
                                        const eos_lvgl_alert_dialog_cfg_t *cfg,
                                        eos_alert_dialog_data_t *data, lv_group_t *grp) {
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
   if (cfg->cancel_label) {
     lv_obj_t *btn_row = lv_obj_create(card);
-    lv_obj_set_size(btn_row, lv_pct(100), 28);
+    lv_obj_set_size(btn_row, lv_pct(EOS_PERCENT_MAX), m.btn_h + m.pad_sm);
     lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(btn_row, 0, 0);
     lv_obj_set_style_pad_all(btn_row, 0, 0);
     lv_obj_clear_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *btn_c = lv_button_create(btn_row);
-    lv_obj_set_size(btn_c, (dlg_w - 30) / 2, 26);
+    lv_obj_set_size(btn_c, lv_pct(EOS_LVGL_SPLIT_BTN_PCT), m.btn_h);
     lv_obj_align(btn_c, LV_ALIGN_LEFT_MID, 0, 0);
     lv_obj_set_style_bg_color(btn_c, lv_color_hex(EOS_COLOR_BG_PANEL), 0);
     lv_obj_set_style_border_color(btn_c, lv_color_hex(EOS_COLOR_BORDER), 0);
     lv_obj_set_style_border_width(btn_c, 1, 0);
-    lv_obj_set_style_radius(btn_c, 3, 0);
+    lv_obj_set_style_radius(btn_c, m.radius_sm, 0);
     lv_obj_add_event_cb(btn_c, alert_dialog_cancel_click, LV_EVENT_CLICKED, data);
 
+    char clbl_buf[EOS_SMALL_STR_LEN];
+    format_btn_hint(clbl_buf, sizeof(clbl_buf), "B:", cfg->cancel_label, "Cancel");
     lv_obj_t *clbl = lv_label_create(btn_c);
-    lv_label_set_text(clbl, cfg->cancel_label);
+    lv_label_set_text(clbl, clbl_buf);
     lv_obj_set_style_text_color(clbl, lv_color_hex(EOS_COLOR_TEXT_MUTED), 0);
     lv_obj_center(clbl);
 
     lv_obj_t *btn_ok = lv_button_create(btn_row);
-    lv_obj_set_size(btn_ok, (dlg_w - 30) / 2, 26);
+    lv_obj_set_size(btn_ok, lv_pct(EOS_LVGL_SPLIT_BTN_PCT), m.btn_h);
     lv_obj_align(btn_ok, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(btn_ok, lv_color_hex(accent), 0);
-    lv_obj_set_style_radius(btn_ok, 3, 0);
+    lv_obj_set_style_radius(btn_ok, m.radius_sm, 0);
     lv_obj_add_event_cb(btn_ok, alert_dialog_ok_click, LV_EVENT_CLICKED, data);
 
+    char oklbl_buf[EOS_SMALL_STR_LEN];
+    format_btn_hint(oklbl_buf, sizeof(oklbl_buf), "A:", cfg->ok_label, "Acknowledge");
     lv_obj_t *oklbl = lv_label_create(btn_ok);
-    lv_label_set_text(oklbl, cfg->ok_label ? cfg->ok_label : "Acknowledge");
+    lv_label_set_text(oklbl, oklbl_buf);
     lv_obj_set_style_text_color(oklbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
     lv_obj_center(oklbl);
 
@@ -1955,14 +2068,16 @@ static void alert_dialog_build_buttons(lv_obj_t *card, int32_t dlg_w, uint32_t a
     }
   } else {
     lv_obj_t *btn = lv_button_create(card);
-    lv_obj_set_size(btn, 110, 26);
+    lv_obj_set_size(btn, lv_pct(EOS_LVGL_HALF_PCT), m.btn_h);
     lv_obj_set_style_bg_color(btn, lv_color_hex(accent), 0);
-    lv_obj_set_style_radius(btn, 3, 0);
+    lv_obj_set_style_radius(btn, m.radius_sm, 0);
     lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_event_cb(btn, alert_dialog_ok_click, LV_EVENT_CLICKED, data);
 
+    char blbl_buf[EOS_SMALL_STR_LEN];
+    format_btn_hint(blbl_buf, sizeof(blbl_buf), "A:", cfg->ok_label, "Acknowledge");
     lv_obj_t *blbl = lv_label_create(btn);
-    lv_label_set_text(blbl, cfg->ok_label ? cfg->ok_label : "Acknowledge");
+    lv_label_set_text(blbl, blbl_buf);
     lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
     lv_obj_center(blbl);
 
@@ -1980,24 +2095,27 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
 
   eos_alert_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_alert_dialog_data_t));
   if (!data) return NULL;
+  data->hdr.magic = EOS_DIALOG_MAGIC;
+  data->hdr.kind = EOS_DIALOG_KIND_ALERT;
   data->cfg = *cfg;
 
   uint32_t w = eos_lvgl_get_width();
   uint32_t h = eos_lvgl_get_height();
 
   lv_obj_t *ov = lv_obj_create(scr);
-  data->overlay = ov;
-  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  data->hdr.overlay = ov;
+  lv_obj_set_user_data(ov, data);
+  lv_obj_set_size(ov, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_pos(ov, 0, 0);
   lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
   lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_set_style_pad_all(ov, 0, 0);
+  lv_obj_set_style_radius(ov, 0, 0);
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ov, alert_dialog_delete_cb, LV_EVENT_DELETE, data);
 
-  int32_t dlg_w = (int32_t)w - 20;
-  if (dlg_w > 340) dlg_w = 340;
-  if (dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = EOS_LVGL_DIALOG_MIN_W;
+  int32_t dlg_w = (int32_t)w;
 
   uint32_t accent = EOS_COLOR_ACCENT_CYAN;
   const char *icon = "i";
@@ -2010,14 +2128,16 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
   }
 
   lv_obj_t *card = lv_obj_create(ov);
-  lv_obj_set_size(card, dlg_w, LV_SIZE_CONTENT);
-  lv_obj_center(card);
+  lv_obj_set_size(card, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
+  lv_obj_set_pos(card, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(accent), 0);
-  lv_obj_set_style_border_width(card, 2, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, 8, 0);
-  lv_obj_set_style_pad_row(card, 6, 0);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 0, 0);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  int32_t content_w = dlg_w - m.pad_xl * 2;
+  lv_obj_set_style_pad_all(card, m.pad_xl, 0);
+  lv_obj_set_style_pad_row(card, m.pad_lg, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2032,28 +2152,28 @@ lv_obj_t *eos_lvgl_dialog_alert(const eos_lvgl_alert_dialog_cfg_t *cfg) {
   if (cfg->message) {
     lv_obj_t *mlbl = lv_label_create(card);
     lv_label_set_text(mlbl, cfg->message);
-    lv_obj_set_width(mlbl, dlg_w - 24);
+    lv_obj_set_width(mlbl, content_w);
     lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
   }
 
   lv_group_t *grp = eos_lvgl_get_group();
-  alert_dialog_build_buttons(card, dlg_w, accent, cfg, data, grp);
+  alert_dialog_build_buttons(card, accent, cfg, data, grp);
 
   return ov;
 }
 
 void eos_lvgl_dialog_close(lv_obj_t *dialog) {
   if (dialog) {
-    lv_obj_del_async(dialog);
+    dialog_dismiss_overlay(dialog);
   }
 }
 
 // ── Shared Preview Dialog ──────────────────────────────────────
 
 typedef struct {
+  eos_dialog_hdr_t hdr;
   eos_lvgl_preview_dialog_cfg_t cfg;
-  lv_obj_t *overlay;
   lv_obj_t *card;
   lv_obj_t *ta;
   lv_obj_t *btn;
@@ -2072,8 +2192,8 @@ static void preview_dialog_delete_cb(lv_event_t *e) {
 
 static void preview_dialog_close_click(lv_event_t *e) {
   eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_event_get_user_data(e);
-  if (data && data->overlay) {
-    eos_lvgl_dialog_close(data->overlay);
+  if (data && data->hdr.overlay) {
+    eos_lvgl_dialog_close(data->hdr.overlay);
   }
 }
 
@@ -2081,42 +2201,82 @@ static void preview_dialog_key_cb(lv_event_t *e) {
   uint32_t key = lv_event_get_key(e);
   if (key == LV_KEY_ESC || key == LV_KEY_ENTER) {
     eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_event_get_user_data(e);
-    if (data && data->overlay) {
-      eos_lvgl_dialog_close(data->overlay);
+    if (data && data->hdr.overlay) {
+      eos_lvgl_dialog_close(data->hdr.overlay);
     }
   }
 }
 
-bool eos_lvgl_dialog_preview_handle_key(lv_obj_t *dialog, uint16_t key) {
-  if (!dialog) return false;
-  eos_preview_dialog_data_t *data = (eos_preview_dialog_data_t *)lv_obj_get_user_data(dialog);
-  if (!data || data->overlay != dialog) return false;
-
+static bool preview_dialog_handle_key(eos_preview_dialog_data_t *data, uint16_t key) {
   switch (key) {
   case KEY_UP:
     if (data->ta) {
       lv_obj_scroll_by_bounded(data->ta, 0, 30, LV_ANIM_OFF);
     }
     return true;
-
   case KEY_DOWN:
     if (data->ta) {
       lv_obj_scroll_by_bounded(data->ta, 0, -30, LV_ANIM_OFF);
     }
     return true;
-
   case KEY_A:
   case KEY_B:
   case KEY_ENTER:
   case KEY_ESC:
   case KEY_BACKSPACE:
   case KEY_SPACE:
-    eos_lvgl_dialog_close(dialog);
+    eos_lvgl_dialog_close(data->hdr.overlay);
     return true;
-
   default:
     return false;
   }
+}
+
+bool eos_lvgl_dialog_handle_key(lv_obj_t *dialog, uint16_t key) {
+  if (!dialog) return false;
+  eos_dialog_hdr_t *hdr = (eos_dialog_hdr_t *)lv_obj_get_user_data(dialog);
+  if (!hdr || hdr->magic != EOS_DIALOG_MAGIC || hdr->overlay != dialog) {
+    return false;
+  }
+  if (hdr->kind == EOS_DIALOG_KIND_CONFIRM) {
+    eos_confirm_dialog_data_t *data = (eos_confirm_dialog_data_t *)hdr;
+    if (key == KEY_SPACE) {
+      confirm_dialog_finish(data, true);
+      return true;
+    }
+    if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE) {
+      confirm_dialog_finish(data, false);
+      return true;
+    }
+    return false;
+  }
+  if (hdr->kind == EOS_DIALOG_KIND_INFO) {
+    if (key == KEY_A || key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE) {
+      info_dialog_finish((eos_info_dialog_data_t *)hdr);
+      return true;
+    }
+    return false;
+  }
+  if (hdr->kind == EOS_DIALOG_KIND_ALERT) {
+    eos_alert_dialog_data_t *data = (eos_alert_dialog_data_t *)hdr;
+    if (key == KEY_A) {
+      alert_dialog_finish(data, true);
+      return true;
+    }
+    if (key == KEY_B || key == KEY_ESC || key == KEY_BACKSPACE) {
+      alert_dialog_finish(data, false);
+      return true;
+    }
+    return false;
+  }
+  if (hdr->kind == EOS_DIALOG_KIND_PREVIEW) {
+    return preview_dialog_handle_key((eos_preview_dialog_data_t *)hdr, key);
+  }
+  return false;
+}
+
+bool eos_lvgl_dialog_preview_handle_key(lv_obj_t *dialog, uint16_t key) {
+  return eos_lvgl_dialog_handle_key(dialog, key);
 }
 
 lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg) {
@@ -2128,47 +2288,36 @@ lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg) {
 
   eos_preview_dialog_data_t *data = eos_psram_calloc_prefer(1, sizeof(eos_preview_dialog_data_t));
   if (!data) return NULL;
+  data->hdr.magic = EOS_DIALOG_MAGIC;
+  data->hdr.kind = EOS_DIALOG_KIND_PREVIEW;
   data->cfg = *cfg;
 
-  uint32_t w = eos_lvgl_get_width();
-  uint32_t h = eos_lvgl_get_height();
   bool is_compact = eos_screen_is_compact();
 
   lv_obj_t *ov = lv_obj_create(scr);
-  data->overlay = ov;
+  data->hdr.overlay = ov;
   lv_obj_set_user_data(ov, data);
-  lv_obj_set_size(ov, (int32_t)w, (int32_t)h);
+  lv_obj_set_size(ov, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_pos(ov, 0, 0);
   lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(ov, LV_OPA_70, 0);
   lv_obj_set_style_border_width(ov, 0, 0);
+  lv_obj_set_style_pad_all(ov, 0, 0);
+  lv_obj_set_style_radius(ov, 0, 0);
   lv_obj_clear_flag(ov, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(ov, preview_dialog_delete_cb, LV_EVENT_DELETE, data);
 
-  int32_t dlg_w = is_compact ? ((int32_t)w - EOS_PREVIEW_DIALOG_COMPACT_MARGIN)
-                             : ((int32_t)w - EOS_PREVIEW_DIALOG_LARGE_MARGIN_X);
-  if (!is_compact && dlg_w > EOS_PREVIEW_DIALOG_LARGE_MAX_W) {
-    dlg_w = EOS_PREVIEW_DIALOG_LARGE_MAX_W;
-  }
-  if (!is_compact && dlg_w < EOS_LVGL_DIALOG_MIN_W) dlg_w = (int32_t)w;
-
-  int32_t dlg_h = is_compact ? ((int32_t)h - EOS_PREVIEW_DIALOG_COMPACT_MARGIN)
-                             : ((int32_t)h - EOS_PREVIEW_DIALOG_LARGE_MARGIN_Y);
-  if (!is_compact && dlg_h > EOS_PREVIEW_DIALOG_LARGE_MAX_H) {
-    dlg_h = EOS_PREVIEW_DIALOG_LARGE_MAX_H;
-  }
-  if (!is_compact && dlg_h < EOS_PREVIEW_DIALOG_MIN_H) dlg_h = (int32_t)h;
-
   lv_obj_t *card = lv_obj_create(ov);
   data->card = card;
-  lv_obj_set_size(card, dlg_w, dlg_h);
-  lv_obj_center(card);
+  lv_obj_set_size(card, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
+  lv_obj_set_pos(card, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_COLOR_BG_CARD), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_COLOR_BORDER_FOCUS), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 6, 0);
-  lv_obj_set_style_pad_all(card, is_compact ? 4 : 8, 0);
-  lv_obj_set_style_pad_row(card, is_compact ? 4 : 6, 0);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 0, 0);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  lv_obj_set_style_pad_all(card, is_compact ? m.pad_sm : m.pad_lg, 0);
+  lv_obj_set_style_pad_row(card, is_compact ? m.pad_sm : m.pad_md, 0);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2182,7 +2331,7 @@ lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg) {
   // Textarea body (scrollable and read-only)
   lv_obj_t *ta = lv_textarea_create(card);
   data->ta = ta;
-  lv_obj_set_width(ta, lv_pct(100));
+  lv_obj_set_width(ta, lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_flex_grow(ta, 1);
   lv_textarea_set_cursor_click_pos(ta, false);
   lv_textarea_set_text(ta, cfg->content ? cfg->content : "");
@@ -2190,22 +2339,21 @@ lv_obj_t *eos_lvgl_dialog_preview(const eos_lvgl_preview_dialog_cfg_t *cfg) {
   lv_obj_set_style_text_color(ta, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
   lv_obj_set_style_border_color(ta, lv_color_hex(EOS_COLOR_BORDER), 0);
   lv_obj_set_style_border_width(ta, 1, 0);
-  lv_obj_set_style_radius(ta, 4, 0);
-  lv_obj_set_style_pad_all(ta, 4, 0);
+  lv_obj_set_style_radius(ta, m.radius_md, 0);
+  lv_obj_set_style_pad_all(ta, m.pad_sm, 0);
 
   // Close Button
   lv_obj_t *btn = lv_button_create(card);
   data->btn = btn;
-  lv_obj_set_size(btn, is_compact ? EOS_PREVIEW_DIALOG_BTN_W_COMPACT : EOS_PREVIEW_DIALOG_BTN_W_LARGE,
-                       is_compact ? EOS_PREVIEW_DIALOG_BTN_H_COMPACT : EOS_PREVIEW_DIALOG_BTN_H_LARGE);
+  lv_obj_set_size(btn, lv_pct(EOS_LVGL_HALF_PCT), m.btn_h);
   lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_COLOR_ACCENT_BLUE), 0);
-  lv_obj_set_style_radius(btn, 3, 0);
+  lv_obj_set_style_radius(btn, m.radius_sm, 0);
   lv_obj_align(btn, LV_ALIGN_CENTER, 0, 0);
   lv_obj_add_event_cb(btn, preview_dialog_close_click, LV_EVENT_CLICKED, data);
 
   lv_obj_t *blbl = lv_label_create(btn);
   char btn_text[EOS_SMALL_STR_LEN];
-  snprintf(btn_text, sizeof(btn_text), "%s %s", LV_SYMBOL_CLOSE, cfg->close_label ? cfg->close_label : "Close");
+  format_btn_hint(btn_text, sizeof(btn_text), "B:", cfg->close_label, "Close");
   lv_label_set_text(blbl, btn_text);
   lv_obj_set_style_text_color(blbl, lv_color_hex(EOS_COLOR_TEXT_WHITE), 0);
   lv_obj_center(blbl);
@@ -2426,8 +2574,9 @@ static lv_obj_t *eos_menu_render_item_button(lv_obj_t *parent, const eos_menu_it
   lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_THEME_PRIMARY_BLUE), LV_STATE_FOCUS_KEY);
   lv_obj_set_style_border_color(btn, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), LV_STATE_FOCUSED);
   lv_obj_set_style_border_color(btn, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), LV_STATE_FOCUS_KEY);
-  lv_obj_set_style_border_width(btn, 2, LV_STATE_FOCUSED);
-  lv_obj_set_style_border_width(btn, 2, LV_STATE_FOCUS_KEY);
+  eos_lvgl_metrics_t m = eos_lvgl_get_metrics();
+  lv_obj_set_style_border_width(btn, m.border_focus, LV_STATE_FOCUSED);
+  lv_obj_set_style_border_width(btn, m.border_focus, LV_STATE_FOCUS_KEY);
   lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_FULL, LV_STATE_FOCUSED);
   lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_FULL, LV_STATE_FOCUS_KEY);
   lv_obj_set_style_outline_width(btn, 0, LV_STATE_FOCUSED);
@@ -2509,7 +2658,7 @@ void eos_menu_focus_index(lv_obj_t *menu, int index) {
       lv_obj_set_style_bg_color(btn, lv_color_hex(EOS_THEME_PRIMARY_BLUE), 0);
       lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
       lv_obj_set_style_border_color(btn, lv_color_hex(EOS_THEME_HIGHLIGHT_YELLOW), 0);
-      lv_obj_set_style_border_width(btn, 2, 0);
+      lv_obj_set_style_border_width(btn, eos_lvgl_get_metrics().border_focus, 0);
       lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_FULL, 0);
       lv_obj_add_state(btn, LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY);
       if (txt_lbl) {
@@ -2620,7 +2769,7 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
   lv_obj_t *ov = lv_obj_create(parent);
   ctx->root = ov;
   lv_obj_set_user_data(ov, ctx);
-  lv_obj_set_size(ov, lv_pct(100), lv_pct(100));
+  lv_obj_set_size(ov, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
   lv_obj_align(ov, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_set_style_bg_color(ov, lv_color_hex(0x000000), 0);
   lv_obj_set_style_bg_opa(ov, (lv_opa_t)EOS_MENU_BACKDROP_OPACITY, 0);
@@ -2630,23 +2779,21 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
   lv_obj_add_event_cb(ov, eos_menu_backdrop_click_cb, LV_EVENT_CLICKED, ctx);
   lv_obj_add_event_cb(ov, eos_menu_context_cleanup_cb, LV_EVENT_DELETE, ctx);
 
-  int32_t card_w = cfg->width > 0 ? cfg->width : (is_small ? (int32_t)sw : EOS_MENU_POPUP_DEFAULT_W);
-  if (!is_small && card_w > (int32_t)sw - 20) card_w = (int32_t)sw - 20;
+  int32_t card_w = (int32_t)sw;
+  int32_t card_h = (int32_t)sh;
 
   bool show_hdr = (!cfg->headerless && cfg->title);
   int32_t hdr_h = show_hdr ? EOS_MENU_HEADER_HEIGHT : 0;
   int32_t item_h = is_small ? EOS_MENU_ITEM_HEIGHT_SMALL : EOS_MENU_ITEM_HEIGHT_LARGE;
-  int32_t content_h = hdr_h + (int32_t)(cfg->item_count * item_h);
-  if (content_h > (int32_t)sh) content_h = (int32_t)sh;
 
   lv_obj_t *card = lv_obj_create(ov);
   ctx->card = card;
-  lv_obj_set_size(card, card_w, content_h);
-  lv_obj_center(card);
+  lv_obj_set_size(card, lv_pct(EOS_PERCENT_MAX), lv_pct(EOS_PERCENT_MAX));
+  lv_obj_set_pos(card, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(EOS_THEME_PANEL_COLOR), 0);
   lv_obj_set_style_border_color(card, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
-  lv_obj_set_style_border_width(card, 1, 0);
-  lv_obj_set_style_radius(card, 6, 0);
+  lv_obj_set_style_border_width(card, 0, 0);
+  lv_obj_set_style_radius(card, 0, 0);
   lv_obj_set_style_pad_all(card, 0, 0);
   lv_obj_set_style_clip_corner(card, true, 0);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -2661,7 +2808,7 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
     lv_obj_set_style_border_width(hdr, 1, 0);
     lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_radius(hdr, 0, 0);
-    lv_obj_set_style_pad_hor(hdr, 8, 0);
+    lv_obj_set_style_pad_hor(hdr, eos_lvgl_get_metrics().pad_lg, 0);
     lv_obj_set_style_pad_ver(hdr, 0, 0);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2682,6 +2829,7 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
     lv_obj_t *lbl = NULL;
     lv_obj_t *btn = eos_menu_render_item_button(card, item, ctx, (int32_t)(hdr_h + i * item_h),
                                                 card_w, item_h, 10, 26, &lbl);
+    lv_obj_set_width(btn, lv_pct(EOS_PERCENT_MAX));
     if (ctx->item_btns) ctx->item_btns[i] = btn;
     if (ctx->item_labels) ctx->item_labels[i] = lbl;
   }
@@ -2725,7 +2873,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
   ctx->root = cont;
   lv_obj_set_user_data(cont, ctx);
   if (is_small || cfg->width <= 0) {
-    lv_obj_set_width(cont, lv_pct(100));
+    lv_obj_set_width(cont, lv_pct(EOS_PERCENT_MAX));
   } else {
     lv_obj_set_width(cont, total_w);
   }
@@ -2745,13 +2893,13 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
   if (show_header) {
     lv_obj_t *hdr = lv_obj_create(cont);
     lv_obj_set_pos(hdr, 0, 0);
-    lv_obj_set_size(hdr, lv_pct(100), EOS_MENU_HEADER_HEIGHT);
+    lv_obj_set_size(hdr, lv_pct(EOS_PERCENT_MAX), EOS_MENU_HEADER_HEIGHT);
     lv_obj_set_style_bg_color(hdr, lv_color_hex(EOS_THEME_SURFACE_COLOR), 0);
     lv_obj_set_style_border_color(hdr, lv_color_hex(EOS_THEME_BORDER_COLOR), 0);
     lv_obj_set_style_border_width(hdr, 1, 0);
     lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, 0);
     lv_obj_set_style_radius(hdr, 0, 0);
-    lv_obj_set_style_pad_hor(hdr, 6, 0);
+    lv_obj_set_style_pad_hor(hdr, eos_lvgl_get_metrics().pad_md, 0);
     lv_obj_set_style_pad_ver(hdr, 0, 0);
     lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -2771,7 +2919,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
   int32_t list_h = total_h - hdr_h;
   lv_obj_t *list = lv_obj_create(cont);
   lv_obj_set_pos(list, 0, hdr_h);
-  lv_obj_set_width(list, lv_pct(100));
+  lv_obj_set_width(list, lv_pct(EOS_PERCENT_MAX));
   lv_obj_set_height(list, list_h);
   lv_obj_set_style_radius(list, 0, 0);
   lv_obj_set_style_bg_color(list, lv_color_hex(EOS_THEME_BG_COLOR), 0);
@@ -2789,7 +2937,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
     lv_obj_t *btn = eos_menu_render_item_button(list, item, ctx, (int32_t)(i * item_h),
                                                 total_w, item_h, 8, 24, &lbl);
     if (is_small || cfg->width <= 0) {
-      lv_obj_set_width(btn, lv_pct(100));
+      lv_obj_set_width(btn, lv_pct(EOS_PERCENT_MAX));
     }
     if (ctx->item_btns) ctx->item_btns[i] = btn;
     if (ctx->item_labels) ctx->item_labels[i] = lbl;
@@ -2807,11 +2955,9 @@ lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg) {
   eos_menu_cfg_t menu_cfg = *cfg;
   if (eos_screen_is_compact()) {
     menu_cfg.headerless = true; // Headerless mode on small screens
-    menu_cfg.width = 0;         // Full available area by width on small screens
-    if (menu_cfg.height <= 0) {
-      menu_cfg.height = 0;      // Full available area by height on small screens
-    }
   }
+  menu_cfg.width = 0;  // Full available area by width on all screens
+  menu_cfg.height = 0; // Full available area by height on all screens
   return eos_menu_create(&menu_cfg);
 }
 

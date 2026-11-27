@@ -16,6 +16,11 @@
       "patterns": [
         "\\bvTaskDelay\\b",
         "\\bxTaskCreate\\b",
+        "\\bxTaskCreatePinnedToCore\\b",
+        "\\bxTaskCreateStatic\\w*\\b",
+        "\\bxEventGroup\\w+\\b",
+        "\\bxTimerCreate\\w*\\b",
+        "\\bportMAX_DELAY\\b",
         "\\bSemaphoreHandle_t\\b",
         "\\bQueueHandle_t\\b",
         "\\bTaskHandle_t\\b",
@@ -433,17 +438,35 @@
       "allowed_literals": [
         -1,
         0,
-        1,
-        2,
-        3,
-        4,
-        8,
-        10,
-        16,
-        100
+        1
       ],
       "min_cross_file_value": 36,
       "max_cross_file_occurrences": 4,
+      "ui_dimension_paths": [
+        "main/ecore"
+      ],
+      "ui_dimension_funcs": [
+        "lv_obj_set_size",
+        "lv_obj_set_width",
+        "lv_obj_set_height",
+        "lv_obj_set_pos",
+        "lv_obj_set_x",
+        "lv_obj_set_y",
+        "lv_obj_align",
+        "lv_obj_align_to",
+        "lv_obj_set_style_pad_all",
+        "lv_obj_set_style_pad_hor",
+        "lv_obj_set_style_pad_ver",
+        "lv_obj_set_style_pad_row",
+        "lv_obj_set_style_pad_column",
+        "lv_obj_set_style_pad_gap",
+        "lv_obj_set_style_pad_top",
+        "lv_obj_set_style_pad_bottom",
+        "lv_obj_set_style_pad_left",
+        "lv_obj_set_style_pad_right",
+        "lv_obj_set_style_radius",
+        "lv_obj_set_style_border_width"
+      ],
       "flagged_literals": {
         "240": "Display dimension (use EOS_DISPLAY_DEFAULT_WIDTH / HEIGHT in header)",
         "280": "Display dimension (use EOS_DISPLAY_DEFAULT_HEIGHT / WIDTH in header)",
@@ -974,32 +997,84 @@
         ".c",
         ".h"
       ],
-      "exclude_files": [
-        "main/ecore/display.c",
-        "main/ecore/proc.c",
-        "main/ecore/vfs.h",
-        "main/edriver/bus/adc/adc.c",
-        "main/edriver/bus/i2c/i2c.c",
-        "main/edriver/bus/sdio/sdio.c",
-        "main/edriver/display/qemu_rgb/qemu_rgb.c",
-        "main/edriver/display/st7701s/st7701s.c",
-        "main/edriver/display/st7789/st7789.c",
-        "main/edriver/input/gpio_keyboard/gpio_keyboard.c",
-        "main/edriver/net/wifi/wifi.c",
-        "main/edriver/power/battery/battery.c",
-        "main/edriver/sound/max98357/max98357.c",
-        "main/edriver/usb/host_cdc/host_cdc.h",
-        "main/edriver/usb/host_hid/host_hid.h",
-        "main/edriver/usb/host_msc/host_msc.h",
-        "main/edriver/usb/modem/modem.h",
-        "main/edriver/usb/serial/serial.h",
-        "main/efs/pipefs/pipefs.c",
-        "main/efs/tmpfs/tmpfs.c"
-      ],
       "patterns": [
         "(SemaphoreHandle_t|pthread_mutex_t|portMUX_TYPE)\\s+(lock|mutex|mtx|sem|sema|spinlock|rwlock)\\s*;"
       ],
       "rationale": "Lock and mutex fields must carry a descriptive scope-specific name (e.g., io_mutex, bus_mutex, state_mutex, ring_mutex) instead of generic 'lock'/'mutex'/'mtx'/'sem', so readers immediately know what invariant the lock protects."
+    },
+    {
+      "id": "no_events_in_ebin_or_emisc",
+      "name": "Forbid posting/creating events in user-space (ebin) and pure utilities (emisc)",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/ebin",
+        "main/emisc"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\besp_event_post\\b",
+        "\\besp_event_isr_post\\b",
+        "\\besp_event_loop_create\\w*\\b",
+        "\\besp_event_loop_delete\\w*\\b",
+        "\\besp_event_loop_run\\b",
+        "\\beos_\\w*event_post\\w*\\b",
+        "\\beos_\\w*post_event\\w*\\b"
+      ],
+      "rationale": "Creating event loops and posting/launching events are restricted strictly to ecore and edriver; user-space apps (ebin) and pure utilities (emisc) may subscribe to events but must not emit them."
+    },
+    {
+      "id": "no_raw_task_create_in_edriver",
+      "name": "Forbid direct xTaskCreate*/pthread_create in drivers (edriver)",
+      "type": "forbidden_patterns",
+      "paths": [
+        "main/edriver"
+      ],
+      "file_extensions": [
+        ".c",
+        ".h"
+      ],
+      "patterns": [
+        "\\bxTaskCreate\\w*\\b",
+        "\\bpthread_create\\b"
+      ],
+      "rationale": "Drivers under main/edriver must create persistent worker tasks strictly through eos_ktask_create_psram() in ecore/proc.h rather than raw FreeRTOS or pthread task creation."
+    },
+    {
+      "id": "no_unused_eos_defines",
+      "name": "Forbid unused EOS_* macro definitions in headers",
+      "type": "unused_defines",
+      "paths": [
+        "main"
+      ],
+      "search_paths": [
+        "main"
+      ],
+      "file_extensions": [
+        ".h"
+      ],
+      "exclude_dirs": [
+        "eboard"
+      ],
+      "define_prefix": "EOS_",
+      "exclude_patterns": [
+        "^EOS_.*_H$",
+        "^EOS_.*_ATTR$",
+        "INITIALIZER",
+        "VERSION",
+        "^EOS_HAS_"
+      ],
+      "allowlist": [
+        "EOS_SD_PATH",
+        "EOS_BIN_PATH",
+        "EOS_DEV_PATH",
+        "EOS_TMP_PATH",
+        "EOS_PROC_PATH",
+        "EOS_FLASH_PATH"
+      ],
+      "rationale": "Dead EOS_* #define macros accumulate stale constants and mask architectural drift. Remove unused macros or explicitly add reserved ABI/future macros to allowlist."
     }
   ]
 }

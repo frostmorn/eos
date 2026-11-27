@@ -18,11 +18,9 @@
 #define EOS_BIN_FLAG_STACK_PSRAM  (1U << 3) // Prefer stack in external PSRAM
 #define EOS_BIN_FLAG_ROLE_SHIFT   4U
 #define EOS_BIN_FLAG_ROLE_MASK    (3U << EOS_BIN_FLAG_ROLE_SHIFT)
-#define EOS_BIN_FLAG_ROLE_MAIN    (0U << EOS_BIN_FLAG_ROLE_SHIFT)
 #define EOS_BIN_FLAG_ROLE_FULL    (1U << EOS_BIN_FLAG_ROLE_SHIFT)
 #define EOS_BIN_FLAG_ROLE_STATUS  (2U << EOS_BIN_FLAG_ROLE_SHIFT)
 #define EOS_BIN_FLAG_ROLE_TOOLBAR (3U << EOS_BIN_FLAG_ROLE_SHIFT)
-#define EOS_BIN_FLAG_FIXED_SIZE   (1U << 6)
 
 // Default, minimum, and GUI thread stack sizes for ebin execution
 #define EOS_BIN_DEFAULT_STACK_SIZE 8192U
