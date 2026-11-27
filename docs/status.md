@@ -54,7 +54,6 @@ This document tracks the implementation, test coverage, and hardware verificatio
 | `display` | `st7789` | **Implemented** | devctl, test_disp_*, launcher | lilka_v23 |
 | `input` | `gpio_keyboard` | **Implemented** | devctl, test_input | esp32s3_qemu, jc4880p443c_i_w_y, lilka_v23 |
 | `input` | `gt911` | **Implemented** | devctl, test_input, lvgl | jc4880p443c_i_w_y |
-| `input` | `qemu_keyboard` | **Stub** | devctl attach/detach | Manual / Optional |
 | `net` | `ap` | **Implemented** | netctl, wlanctl | jc4880p443c_i_w_y, lilka_v23 |
 | `net` | `bridge` | **Implemented** | devctl, netctl | Manual / Optional |
 | `net` | `sta` | **Implemented** | netctl (hardware_test.py) | jc4880p443c_i_w_y, lilka_v23 |
