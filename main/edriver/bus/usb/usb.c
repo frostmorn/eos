@@ -127,6 +127,14 @@ static bool usb_bus_should_expose_modem(const eos_usb_bus_state_t *st) {
   return true;
 }
 
+typedef enum {
+  USB_STORAGE_NONE = 0,
+  USB_STORAGE_MTP,
+  USB_STORAGE_MSC,
+} usb_storage_func_t;
+
+static usb_storage_func_t usb_bus_active_storage(eos_usb_bus_state_t *st);
+
 static uint32_t usb_bus_build_config_desc(eos_usb_bus_state_t *st, uint16_t mps) {
   uint8_t *buf = st->config_desc;
   uint8_t header[EOS_USB_CONFIG_HDR_LEN] = {
@@ -160,7 +168,8 @@ static uint32_t usb_bus_build_config_desc(eos_usb_bus_state_t *st, uint16_t mps)
     }
   }
 
-  if ((st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) && st->mtp_initialized) {
+  usb_storage_func_t storage = usb_bus_active_storage(st);
+  if (storage == USB_STORAGE_MTP) {
     const uint8_t mtp_desc[] = {
         MTP_DESCRIPTOR_INIT(intf_idx, EOS_USB_EP_STORAGE_OUT, EOS_USB_EP_STORAGE_IN,
                             EOS_USB_EP_MTP_INT, mps, EOS_USB_STRID_MTP)
@@ -170,7 +179,7 @@ static uint32_t usb_bus_build_config_desc(eos_usb_bus_state_t *st, uint16_t mps)
       offset += sizeof(mtp_desc);
       intf_idx += 1;
     }
-  } else if (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MSC) {
+  } else if (storage == USB_STORAGE_MSC) {
     const uint8_t msc_desc[] = {
         MSC_DESCRIPTOR_INIT(intf_idx, EOS_USB_EP_STORAGE_OUT, EOS_USB_EP_STORAGE_IN,
                             mps, EOS_USB_STRID_MSC)
@@ -310,8 +319,9 @@ static void usb_bus_cdc1_in_cb(uint8_t busid, uint8_t ep, uint32_t nbytes) {
 static void usb_bus_rx_task(void *arg) {
   eos_usb_bus_state_t *st = (eos_usb_bus_state_t *)arg;
   eos_usb_cdc_rx_msg_t msg;
-  while (st && st->cdc_rx_queue) {
+  while (st && st->rx_task_running && st->cdc_rx_queue) {
     if (xQueueReceive(st->cdc_rx_queue, &msg, portMAX_DELAY) == pdTRUE) {
+      if (!st->rx_task_running || msg.len == 0) continue;
       const char *target = (msg.cdc_index == 0) ? "usb_serial0" : "usb_modem0";
       eos_dev_t *child = eos_dev_find_by_name(target);
       if (child) {
@@ -319,6 +329,7 @@ static void usb_bus_rx_task(void *arg) {
       }
     }
   }
+  eos_ktask_signal_exit(&st->cdc_rx_ktask);
   vTaskDelete(NULL);
 }
 
@@ -459,6 +470,21 @@ static eos_dev_t *usb_bus_find_child_by_drv(eos_usb_bus_state_t *st, const char 
   return eos_dev_find_by_name(dev_name);
 }
 
+#ifdef CONFIG_CHERRYUSB_DEVICE
+static usb_storage_func_t usb_bus_active_storage(eos_usb_bus_state_t *st) {
+  if (!st) return USB_STORAGE_NONE;
+  if (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) {
+    eos_dev_t *mtp_dev = usb_bus_find_child_by_drv(st, "mtp", "usb_mtp0");
+    if (mtp_dev && mtp_dev->state) return USB_STORAGE_MTP;
+  }
+  if (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MSC) {
+    eos_dev_t *msc_dev = usb_bus_find_child_by_drv(st, "msc", "usb_msc0");
+    if (msc_dev && msc_dev->state) return USB_STORAGE_MSC;
+  }
+  return USB_STORAGE_NONE;
+}
+#endif
+
 static bool usb_bus_apply_composite(eos_usb_bus_state_t *st) {
   st->vbus_present = true;
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
@@ -498,7 +524,8 @@ static bool usb_bus_apply_composite(eos_usb_bus_state_t *st) {
     usbd_add_endpoint(st->bus_id, &st->ep_cdc1_in);
   }
 
-  if (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) {
+  usb_storage_func_t storage = usb_bus_active_storage(st);
+  if (storage == USB_STORAGE_MTP) {
     eos_dev_t *mtp_dev = usb_bus_find_child_by_drv(st, "mtp", "usb_mtp0");
     if (mtp_dev && mtp_dev->state) {
       usbd_add_interface(st->bus_id, &st->intf_storage);
@@ -512,7 +539,7 @@ static bool usb_bus_apply_composite(eos_usb_bus_state_t *st) {
                     (uint32_t)EOS_USB_EP_MTP_INT);
       st->mtp_initialized = true;
     }
-  } else if (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MSC) {
+  } else if (storage == USB_STORAGE_MSC) {
     eos_dev_t *msc_dev = usb_bus_find_child_by_drv(st, "msc", "usb_msc0");
     if (msc_dev && msc_dev->state) {
       usbd_add_interface(st->bus_id, &st->intf_storage);
@@ -624,16 +651,25 @@ static bool usb_bus_alloc_cdc_resources(eos_usb_bus_state_t *st) {
       !st->cdc0_tx_sem || !st->cdc1_tx_sem || !st->cdc_rx_queue) {
     return false;
   }
-  eos_ktask_create_psram(&st->cdc_rx_ktask, usb_bus_rx_task, "usb_rx",
-                         EOS_USB_RX_TASK_STACK, st, EOS_USB_RX_TASK_PRIO);
+  st->rx_task_running = true;
+  if (!eos_ktask_create_psram(&st->cdc_rx_ktask, usb_bus_rx_task, "usb_rx",
+                              EOS_USB_RX_TASK_STACK, st, EOS_USB_RX_TASK_PRIO)) {
+    st->rx_task_running = false;
+    EOS_LOGE("usb: failed to create CDC RX task");
+    return false;
+  }
   return true;
 }
 
 static void usb_bus_free_cdc_resources(eos_usb_bus_state_t *st) {
   if (st->cdc_rx_ktask.handle) {
-    vTaskDelete(st->cdc_rx_ktask.handle);
+    st->rx_task_running = false;
+    if (st->cdc_rx_queue) {
+      eos_usb_cdc_rx_msg_t wake_msg = {0};
+      xQueueSend(st->cdc_rx_queue, &wake_msg, 0);
+    }
   }
-  eos_ktask_cleanup(&st->cdc_rx_ktask);
+  eos_ktask_join_and_cleanup(&st->cdc_rx_ktask, EOS_USB_TX_TIMEOUT_MS);
   if (st->cdc_rx_queue) {
     vQueueDelete(st->cdc_rx_queue);
     st->cdc_rx_queue = NULL;
@@ -699,12 +735,23 @@ bool driver_bus_usb_init(eos_dev_t *dev) {
     role_str = (eos_cfg_get_i(dev->cfg, "role", -1) == 0) ? "off" : default_role;
   }
   eos_usb_role_t init_role = EOS_USB_ROLE_DEVICE_COMPOSITE;
-  if (strcmp(role_str, "debug") == 0 || strcmp(role_str, "jtag") == 0) {
+  if (strcmp(role_str, "device") == 0 || strcmp(role_str, "composite") == 0) {
+    init_role = EOS_USB_ROLE_DEVICE_COMPOSITE;
+  } else if (strcmp(role_str, "debug") == 0 || strcmp(role_str, "jtag") == 0 || strcmp(role_str, "usj") == 0) {
     init_role = EOS_USB_ROLE_DEBUG_USJ;
   } else if (strcmp(role_str, "host") == 0) {
     init_role = EOS_USB_ROLE_HOST;
   } else if (strcmp(role_str, "off") == 0) {
     init_role = EOS_USB_ROLE_OFF;
+  } else {
+    EOS_LOGE("usb: unknown role '%s'", role_str);
+#ifdef CONFIG_CHERRYUSB_DEVICE
+    usb_bus_free_cdc_resources(st);
+#endif
+    vSemaphoreDelete(st->bus_mutex);
+    free(st);
+    dev->state = NULL;
+    return false;
   }
 
   st->gadget_funcs_enabled = EOS_USB_DEFAULT_GADGET_FUNCS;
@@ -923,6 +970,19 @@ static int usb_bus_ioctl_role_status(eos_usb_bus_state_t *st, int cmd, va_list a
   return -1;
 }
 
+static void usb_bus_reapply_work(void *arg) {
+  eos_usb_bus_state_t *st = (eos_usb_bus_state_t *)arg;
+  if (!st || !st->bus_mutex) return;
+  xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
+  if (st->role == EOS_USB_ROLE_DEVICE_COMPOSITE &&
+      (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) &&
+      !st->mtp_initialized) {
+    usb_bus_teardown_hw(st);
+    usb_bus_apply_composite(st);
+  }
+  xSemaphoreGiveRecursive(st->bus_mutex);
+}
+
 static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) {
   if (cmd == EOS_USB_IOCTL_GADGET_SET_FUNCS) {
     uint32_t funcs = va_arg(args, uint32_t);
@@ -992,17 +1052,19 @@ static int usb_bus_ioctl_gadget(eos_usb_bus_state_t *st, int cmd, va_list args) 
     xSemaphoreTakeRecursive(st->bus_mutex, portMAX_DELAY);
     strncpy(st->mtp_base_path, mtp_path, sizeof(st->mtp_base_path) - 1);
     st->mtp_base_path[sizeof(st->mtp_base_path) - 1] = '\0';
-    xSemaphoreGiveRecursive(st->bus_mutex);
     eos_dev_t *mtp_dev = usb_bus_find_child_by_drv(st, "mtp", "usb_mtp0");
     if (mtp_dev && mtp_dev->state) {
       eos_dev_ioctl(mtp_dev, EOS_DRV_FD, EOS_USB_IOCTL_GADGET_SET_MTP_PATH, mtp_path);
       if (st->role == EOS_USB_ROLE_DEVICE_COMPOSITE &&
           (st->gadget_funcs_enabled & EOS_USB_GADGET_FUNC_MTP) &&
           !st->mtp_initialized) {
-        usb_bus_teardown_hw(st);
-        usb_bus_apply_composite(st);
+        if (!eos_sys_schedule(usb_bus_reapply_work, st)) {
+          usb_bus_teardown_hw(st);
+          usb_bus_apply_composite(st);
+        }
       }
     }
+    xSemaphoreGiveRecursive(st->bus_mutex);
     return 0;
   }
   if (cmd == EOS_USB_IOCTL_GADGET_GET_MTP_PATH) {

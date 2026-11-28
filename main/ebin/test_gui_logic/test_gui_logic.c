@@ -10,9 +10,11 @@
 #include "ebin/lvgl_usb/usb_logic.h"
 #include "ecore/bin.h"
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 static void test_calc_logic(test_ctx_t *ctx) {
   printf("--- Calculator Logic Tests ---\n");
@@ -231,8 +233,12 @@ static void test_usb_logic(test_ctx_t *ctx) {
     report_test(ctx, "usb: init opened /dev/usb0", uctx.fd >= 0);
     char orig_backing[EOS_USB_MSC_MAX_BACKING_DEV_LEN];
     strlcpy(orig_backing, uctx.msc_backing, sizeof(orig_backing));
+    int dfd = open("/dev/sd0", O_RDONLY);
+    if (dfd < 0) dfd = open("/dev/flash0", O_RDONLY);
+    bool has_blk = (dfd >= 0);
+    if (dfd >= 0) close(dfd);
     int crc = usb_logic_cycle_msc_device(&uctx);
-    report_test(ctx, "usb: cycle msc device succeeds", crc == 0);
+    report_test(ctx, "usb: cycle msc device succeeds", has_blk ? (crc == 0) : (crc == -1));
     report_test(ctx, "usb: cycle msc device has valid backing", uctx.msc_backing[0] != '\0');
     if (orig_backing[0] != '\0') {
       usb_logic_set_msc_backing(&uctx, orig_backing);

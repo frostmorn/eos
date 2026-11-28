@@ -27,7 +27,7 @@ void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t 
   eos_dev_t *dev = eos_dev_find_by_name("usb_msc0");
   if (!dev || !dev->state) {
     *block_num = 0;
-    *block_size = 0;
+    *block_size = EOS_SECTOR_SIZE;
     return;
   }
   eos_usb_msc_state_t *st = (eos_usb_msc_state_t *)dev->state;
@@ -40,7 +40,7 @@ void usbd_msc_get_cap(uint8_t busid, uint8_t lun, uint32_t *block_num, uint32_t 
     *block_size = st->sector_size;
   } else {
     *block_num = 0;
-    *block_size = 0;
+    *block_size = EOS_SECTOR_SIZE;
   }
   xSemaphoreGive(st->io_mutex);
 }

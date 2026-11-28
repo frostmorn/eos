@@ -179,7 +179,6 @@ static void fm_show_file_actions(fm_state_t *st, size_t entry_idx) {
     { .id = 3, .icon = LV_SYMBOL_CLOSE,    .label = "Cancel",  .detail = NULL, .is_destructive = false, .is_disabled = false },
   };
 
-  bool is_small = eos_screen_is_compact();
   eos_menu_cfg_t cfg = {
     .title = st->selected_name,
     .icon = fm_logic_get_icon(entry),

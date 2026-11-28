@@ -210,6 +210,16 @@ void eos_proc_cleanup_leaked_fds(eos_proc_fd_snapshot_t *snap);
 int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
                           uint32_t stack_size, bool prefer_psram, pthread_t *thread_out);
 
+#define EOS_SYS_TASK_STACK       8192
+#define EOS_SYS_WORK_QUEUE_LEN   16
+#define EOS_REBOOT_TIMEOUT_MS    3000
+#define EOS_KTASK_IDLE_GRACE_MS  20
+#define EOS_KTASK_DEFERRED_MS    10000
+#define EOS_KTASK_TEST_WAIT_MS   2500
+
+typedef void (*eos_sys_work_fn_t)(void *arg);
+bool eos_sys_schedule(eos_sys_work_fn_t fn, void *arg);
+
 void eos_reboot(bool bootloader);
 void eos_reboot_from_isr(bool bootloader);
 
@@ -217,10 +227,13 @@ typedef struct {
   TaskHandle_t handle;
   StackType_t *stack;
   StaticTask_t *tcb;
+  SemaphoreHandle_t done_sem;
 } eos_ktask_t;
 
 bool eos_ktask_create_psram(eos_ktask_t *out, TaskFunction_t fn, const char *name,
                             uint32_t stack_bytes, void *arg, UBaseType_t prio);
+void eos_ktask_signal_exit(eos_ktask_t *kt);
+bool eos_ktask_join_and_cleanup(eos_ktask_t *kt, uint32_t timeout_ms);
 void eos_ktask_cleanup(eos_ktask_t *kt);
 bool eos_ktask_self_test(void);
 void eos_proc_add_thread(eos_proc_t *proc, TaskHandle_t thread);

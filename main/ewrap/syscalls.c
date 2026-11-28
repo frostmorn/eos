@@ -1490,14 +1490,6 @@ static void free_ast(eos_ast_node_t *node) {
 #include "soc/lp_system_reg.h"
 #endif
 
-void eos_arch_force_download_boot(void) {
-#if defined(CONFIG_IDF_TARGET_ESP32S3)
-  REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
-#elif defined(CONFIG_IDF_TARGET_ESP32P4)
-  REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
-#endif
-}
-
 int __wrap_system(const char *cmdline) {
   if (!cmdline) {
     EOS_LOGE("eos_system() called with null cmdline");

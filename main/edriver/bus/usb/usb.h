@@ -156,6 +156,7 @@ typedef struct {
   SemaphoreHandle_t     cdc1_tx_sem;
   QueueHandle_t         cdc_rx_queue;
   eos_ktask_t           cdc_rx_ktask;
+  volatile bool         rx_task_running;
   volatile bool         cdc0_tx_busy;
   volatile bool         cdc1_tx_busy;
   volatile bool         usb_configured;

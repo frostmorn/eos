@@ -20,8 +20,11 @@ bool driver_usb_serial_init(eos_dev_t *dev) {
   memset(st, 0, sizeof(*st));
   dev->state = st;
 
-  st->io_mutex = xSemaphoreCreateMutex();
-  if (!st->io_mutex) {
+  st->rx_mutex = xSemaphoreCreateMutex();
+  st->tx_mutex = xSemaphoreCreateMutex();
+  if (!st->rx_mutex || !st->tx_mutex) {
+    if (st->rx_mutex) vSemaphoreDelete(st->rx_mutex);
+    if (st->tx_mutex) vSemaphoreDelete(st->tx_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -32,7 +35,8 @@ bool driver_usb_serial_init(eos_dev_t *dev) {
   if (!st->rx_buf || !st->tx_buf) {
     if (st->rx_buf) free(st->rx_buf);
     if (st->tx_buf) free(st->tx_buf);
-    vSemaphoreDelete(st->io_mutex);
+    vSemaphoreDelete(st->rx_mutex);
+    vSemaphoreDelete(st->tx_mutex);
     free(st);
     dev->state = NULL;
     return false;
@@ -55,8 +59,11 @@ void driver_usb_serial_shutdown(eos_dev_t *dev) {
   eos_usb_serial_state_t *st = (eos_usb_serial_state_t *)dev->state;
   free(st->rx_buf);
   free(st->tx_buf);
-  if (st->io_mutex) {
-    vSemaphoreDelete(st->io_mutex);
+  if (st->rx_mutex) {
+    vSemaphoreDelete(st->rx_mutex);
+  }
+  if (st->tx_mutex) {
+    vSemaphoreDelete(st->tx_mutex);
   }
   free(st);
   dev->state = NULL;
@@ -87,7 +94,7 @@ ssize_t driver_usb_serial_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
     return -1;
   }
   eos_usb_serial_state_t *st = (eos_usb_serial_state_t *)dev->state;
-  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+  xSemaphoreTake(st->rx_mutex, portMAX_DELAY);
 
   size_t to_copy = (size < st->rx_count) ? size : st->rx_count;
   for (size_t i = 0; i < to_copy; i++) {
@@ -97,7 +104,7 @@ ssize_t driver_usb_serial_read(eos_dev_t *dev, int fd, void *dst, size_t size) {
   st->rx_count -= to_copy;
   st->rx_total += (uint32_t)to_copy;
 
-  xSemaphoreGive(st->io_mutex);
+  xSemaphoreGive(st->rx_mutex);
   return (ssize_t)to_copy;
 }
 
@@ -108,11 +115,10 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
     return -1;
   }
   eos_usb_serial_state_t *st = (eos_usb_serial_state_t *)dev->state;
-  xSemaphoreTake(st->io_mutex, portMAX_DELAY);
-
   const uint8_t *src = (const uint8_t *)data;
 
   if (dev->parent) {
+    xSemaphoreTake(st->tx_mutex, portMAX_DELAY);
     size_t total_sent = 0;
     while (total_sent < size) {
       size_t sent = 0;
@@ -124,7 +130,7 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
       total_sent += sent;
     }
     st->tx_total += (uint32_t)total_sent;
-    xSemaphoreGive(st->io_mutex);
+    xSemaphoreGive(st->tx_mutex);
     if (total_sent > 0) {
       return (ssize_t)total_sent;
     }
@@ -132,6 +138,7 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
     return -1;
   }
 
+  xSemaphoreTake(st->rx_mutex, portMAX_DELAY);
   size_t written = 0;
   for (size_t i = 0; i < size; i++) {
     if (st->rx_count < EOS_USB_SERIAL_RING_BUF_SIZE) {
@@ -144,7 +151,7 @@ ssize_t driver_usb_serial_write(eos_dev_t *dev, int fd, const void *data, size_t
   }
   st->tx_total += (uint32_t)written;
 
-  xSemaphoreGive(st->io_mutex);
+  xSemaphoreGive(st->rx_mutex);
   return (ssize_t)written;
 }
 
@@ -163,11 +170,11 @@ int driver_usb_serial_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+      xSemaphoreTake(st->rx_mutex, portMAX_DELAY);
       out_st->rx_bytes = st->rx_total;
       out_st->tx_bytes = st->tx_total;
       out_st->host_device_connected = st->connected;
-      xSemaphoreGive(st->io_mutex);
+      xSemaphoreGive(st->rx_mutex);
       return 0;
     }
 
@@ -178,7 +185,7 @@ int driver_usb_serial_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
         errno = EINVAL;
         return -1;
       }
-      xSemaphoreTake(st->io_mutex, portMAX_DELAY);
+      xSemaphoreTake(st->rx_mutex, portMAX_DELAY);
       for (size_t i = 0; i < len; i++) {
         if (st->rx_count < EOS_USB_SERIAL_RING_BUF_SIZE) {
           st->rx_buf[st->rx_head] = buf[i];
@@ -186,7 +193,7 @@ int driver_usb_serial_ioctl(eos_dev_t *dev, int fd, int cmd, va_list args) {
           st->rx_count++;
         }
       }
-      xSemaphoreGive(st->io_mutex);
+      xSemaphoreGive(st->rx_mutex);
       return 0;
     }
 

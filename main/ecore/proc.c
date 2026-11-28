@@ -8,13 +8,13 @@
 #include "emisc/strlimits.h"
 #include "emisc/psram_alloc.h"
 #include <errno.h>
-#include <esp_event.h>
 #include <esp_memory_utils.h>
 #include <esp_timer.h>
 #include <esp_pthread.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/semphr.h>
+#include <freertos/queue.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -22,6 +22,11 @@
 #include <string.h>
 #include <sys/reent.h>
 #include <unistd.h>
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+#include <soc/rtc_cntl_reg.h>
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+#include <soc/lp_system_reg.h>
+#endif
 
 typedef struct {
   kvec_psram_t(eos_proc_t *) procs;
@@ -932,35 +937,85 @@ static eos_proc_t *proc_alloc_initial_context(pid_t pid, pid_t ppid, pid_t pgid,
   return p;
 }
 
-ESP_EVENT_DEFINE_BASE(EOS_SYS_EVENT);
-enum { EOS_SYS_EVENT_REBOOT = 1 };
-static bool s_sys_evt_ready = false;
+enum {
+  EOS_SYS_EVT_REBOOT = (1u << 0),
+  EOS_SYS_EVT_BOOTLOADER = (1u << 1),
+  EOS_SYS_EVT_WORK = (1u << 2),
+};
+typedef struct {
+  eos_sys_work_fn_t fn;
+  void *arg;
+} eos_sys_work_item_t;
 
-static void eos_sys_event_handler(void *arg, esp_event_base_t base,
-                                  int32_t id, void *data) {
+static TaskHandle_t s_sys_task = NULL;
+static QueueHandle_t s_sys_work_queue = NULL;
+
+static void eos_arch_force_download_boot(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32S3)
+  REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+#elif defined(CONFIG_IDF_TARGET_ESP32P4)
+  REG_SET_BIT(LP_SYSTEM_REG_SYS_CTRL_REG, LP_SYSTEM_REG_FORCE_DOWNLOAD_BOOT);
+#endif
+}
+
+static void eos_sys_task_fn(void *arg) {
   (void)arg;
-  (void)base;
-  (void)data;
-  if (id == EOS_SYS_EVENT_REBOOT) {
-    eos_dev_detach_all();
-    esp_restart();
+  for (;;) {
+    uint32_t bits = 0;
+    if (xTaskNotifyWait(0, UINT32_MAX, &bits, portMAX_DELAY) == pdTRUE) {
+      if (bits & EOS_SYS_EVT_REBOOT) {
+        eos_dev_detach_all();
+        if (bits & EOS_SYS_EVT_BOOTLOADER) {
+          eos_arch_force_download_boot();
+        }
+        esp_restart();
+      }
+      if ((bits & EOS_SYS_EVT_WORK) && s_sys_work_queue) {
+        eos_sys_work_item_t item;
+        while (xQueueReceive(s_sys_work_queue, &item, 0) == pdTRUE) {
+          if (item.fn) item.fn(item.arg);
+        }
+      }
+    }
   }
 }
 
+bool eos_sys_schedule(eos_sys_work_fn_t fn, void *arg) {
+  if (!fn || !s_sys_task || !s_sys_work_queue) return false;
+  eos_sys_work_item_t item = { .fn = fn, .arg = arg };
+  if (xPortInIsrContext()) {
+    BaseType_t woken = pdFALSE;
+    if (xQueueSendFromISR(s_sys_work_queue, &item, &woken) != pdTRUE) return false;
+    xTaskNotifyFromISR(s_sys_task, EOS_SYS_EVT_WORK, eSetBits, &woken);
+    portYIELD_FROM_ISR(woken);
+    return true;
+  }
+  if (xQueueSend(s_sys_work_queue, &item, 0) != pdTRUE) return false;
+  xTaskNotify(s_sys_task, EOS_SYS_EVT_WORK, eSetBits);
+  return true;
+}
+
 static void eos_sys_events_init(void) {
-  if (s_sys_evt_ready) return;
-  esp_err_t err = esp_event_loop_create_default();
-  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-    EOS_LOGW("eos_sys_events_init: default event loop failed: %d", (int)err);
+  if (s_sys_task) return;
+  s_sys_work_queue = xQueueCreate(EOS_SYS_WORK_QUEUE_LEN, sizeof(eos_sys_work_item_t));
+  if (!s_sys_work_queue) {
+    EOS_LOGW("eos_sys_events_init: failed to create work queue");
     return;
   }
-  err = esp_event_handler_instance_register(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT,
-                                            eos_sys_event_handler, NULL, NULL);
-  if (err != ESP_OK) {
-    EOS_LOGW("eos_sys_events_init: handler register failed: %d", (int)err);
-    return;
+  extern BaseType_t __real_xTaskCreatePinnedToCore(
+      TaskFunction_t pxTaskCode, const char *const pcName,
+      const configSTACK_DEPTH_TYPE usStackDepth, void *const pvParameters,
+      UBaseType_t uxPriority, TaskHandle_t *const pvCreatedTask,
+      const BaseType_t xCoreID);
+  bool prev_h = eos_proc_heap_tracking_disable();
+  BaseType_t rc = __real_xTaskCreatePinnedToCore(
+      eos_sys_task_fn, "eos_sys", EOS_SYS_TASK_STACK,
+      NULL, tskIDLE_PRIORITY + 2, &s_sys_task, tskNO_AFFINITY);
+  eos_proc_heap_tracking_restore(prev_h);
+  if (rc != pdPASS || !s_sys_task) {
+    s_sys_task = NULL;
+    EOS_LOGW("eos_sys_events_init: failed to create eos_sys task");
   }
-  s_sys_evt_ready = true;
 }
 
 void eos_proc_init(void) {
@@ -2528,42 +2583,42 @@ int eos_proc_spawn_thread(pid_t pid, void *(*start_routine)(void *), void *arg,
 }
 
 void eos_reboot(bool bootloader) {
-  if (bootloader) {
-    extern void eos_arch_force_download_boot(void);
-    eos_arch_force_download_boot();
-  }
-  if (s_sys_evt_ready &&
-      xTaskGetSchedulerState() == taskSCHEDULER_RUNNING &&
-      esp_event_post(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT, NULL, 0, 0) == ESP_OK) {
-    for (;;) {
-      vTaskDelay(portMAX_DELAY);
+  if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
+    if (s_sys_task && xTaskGetCurrentTaskHandle() != s_sys_task) {
+      uint32_t bits = EOS_SYS_EVT_REBOOT | (bootloader ? EOS_SYS_EVT_BOOTLOADER : 0);
+      xTaskNotify(s_sys_task, bits, eSetBits);
+      vTaskDelay(pdMS_TO_TICKS(EOS_REBOOT_TIMEOUT_MS));
+      EOS_LOGW("eos_reboot: eos_sys timed out after %d ms, forcing restart", EOS_REBOOT_TIMEOUT_MS);
+    } else {
+      eos_dev_detach_all();
     }
   }
-  if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING) {
-    eos_dev_detach_all();
+  if (bootloader) {
+    eos_arch_force_download_boot();
   }
   esp_restart();
 }
 
 void eos_reboot_from_isr(bool bootloader) {
-  if (bootloader) {
-    extern void eos_arch_force_download_boot(void);
-    eos_arch_force_download_boot();
-  }
-  if (s_sys_evt_ready) {
+  if (s_sys_task) {
     BaseType_t woken = pdFALSE;
-    if (esp_event_isr_post(EOS_SYS_EVENT, EOS_SYS_EVENT_REBOOT, NULL, 0, &woken) == ESP_OK) {
-      portYIELD_FROM_ISR(woken);
-      return;
-    }
+    uint32_t bits = EOS_SYS_EVT_REBOOT | (bootloader ? EOS_SYS_EVT_BOOTLOADER : 0);
+    xTaskNotifyFromISR(s_sys_task, bits, eSetBits, &woken);
+    portYIELD_FROM_ISR(woken);
+    return;
   }
-  esp_restart();
+  if (!xPortInIsrContext()) {
+    eos_reboot(bootloader);
+  }
 }
 
 bool eos_ktask_create_psram(eos_ktask_t *out, TaskFunction_t fn, const char *name,
                             uint32_t stack_bytes, void *arg, UBaseType_t prio) {
   if (!out || !fn || stack_bytes == 0) return false;
   memset(out, 0, sizeof(*out));
+
+  out->done_sem = xSemaphoreCreateBinary();
+  if (!out->done_sem) return false;
 
   extern TaskHandle_t __real_xTaskCreateStaticPinnedToCore(
       TaskFunction_t pxTaskCode, const char *const pcName,
@@ -2584,22 +2639,78 @@ bool eos_ktask_create_psram(eos_ktask_t *out, TaskFunction_t fn, const char *nam
         fn, name, stack_bytes, arg, prio, out->stack, out->tcb, tskNO_AFFINITY);
     eos_proc_heap_tracking_restore(prev_h);
     if (out->handle) {
+      vTaskSuspend(out->handle);
       eos_proc_task_classify(out->handle, name);
+      vTaskResume(out->handle);
       return true;
     }
   }
 
+  SemaphoreHandle_t saved_sem = out->done_sem;
+  out->done_sem = NULL;
   eos_ktask_cleanup(out);
+  out->done_sem = saved_sem;
+
   bool prev_h = eos_proc_heap_tracking_disable();
   BaseType_t rc = __real_xTaskCreatePinnedToCore(
       fn, name, stack_bytes, arg, prio, &out->handle, tskNO_AFFINITY);
   eos_proc_heap_tracking_restore(prev_h);
   if (rc == pdPASS && out->handle) {
+    vTaskSuspend(out->handle);
     eos_proc_task_classify(out->handle, name);
+    vTaskResume(out->handle);
     return true;
   }
-  out->handle = NULL;
+  eos_ktask_cleanup(out);
   return false;
+}
+
+void eos_ktask_signal_exit(eos_ktask_t *kt) {
+  if (kt && kt->done_sem) {
+    xSemaphoreGive(kt->done_sem);
+  }
+}
+
+static void eos_ktask_deferred_cleanup_work(void *arg) {
+  eos_ktask_t *deferred = (eos_ktask_t *)arg;
+  if (!deferred) return;
+  if (deferred->done_sem &&
+      xSemaphoreTake(deferred->done_sem, pdMS_TO_TICKS(EOS_KTASK_DEFERRED_MS)) == pdTRUE) {
+    vTaskDelay(pdMS_TO_TICKS(EOS_KTASK_IDLE_GRACE_MS));
+    eos_ktask_cleanup(deferred);
+  } else {
+    EOS_LOGW("eos_ktask_deferred_cleanup: task still running after %d ms; leaking safely",
+             EOS_KTASK_DEFERRED_MS);
+  }
+  free(deferred);
+}
+
+bool eos_ktask_join_and_cleanup(eos_ktask_t *kt, uint32_t timeout_ms) {
+  if (!kt) return true;
+  if (kt->handle && kt->done_sem) {
+    if (xSemaphoreTake(kt->done_sem, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+      eos_ktask_t *deferred = (eos_ktask_t *)malloc(sizeof(eos_ktask_t));
+      if (deferred) {
+        *deferred = *kt;
+        if (!eos_sys_schedule(eos_ktask_deferred_cleanup_work, deferred)) {
+          free(deferred);
+          deferred = NULL;
+        }
+      }
+      if (!deferred) {
+        EOS_LOGW("eos_ktask_join_and_cleanup: task did not exit within %u ms; leaking stack/TCB safely",
+                 (unsigned)timeout_ms);
+      }
+      kt->handle = NULL;
+      kt->stack = NULL;
+      kt->tcb = NULL;
+      kt->done_sem = NULL;
+      return false;
+    }
+    vTaskDelay(pdMS_TO_TICKS(EOS_KTASK_IDLE_GRACE_MS));
+  }
+  eos_ktask_cleanup(kt);
+  return true;
 }
 
 void eos_ktask_cleanup(eos_ktask_t *kt) {
@@ -2613,10 +2724,14 @@ void eos_ktask_cleanup(eos_ktask_t *kt) {
     free(kt->tcb);
     kt->tcb = NULL;
   }
+  if (kt->done_sem) {
+    vSemaphoreDelete(kt->done_sem);
+    kt->done_sem = NULL;
+  }
 }
 
 typedef struct {
-  SemaphoreHandle_t done_sem;
+  eos_ktask_t *kt;
   bool ran;
   bool stack_in_psram;
 } ktask_test_ctx_t;
@@ -2626,30 +2741,28 @@ static void ktask_test_fn(void *arg) {
   volatile uint32_t stack_probe = 0;
   ctx->stack_in_psram = esp_ptr_external_ram((const void *)&stack_probe);
   ctx->ran = true;
-  xSemaphoreGive(ctx->done_sem);
+  eos_ktask_signal_exit(ctx->kt);
   vTaskDelete(NULL);
 }
 
 bool eos_ktask_self_test(void) {
-  if (!s_sys_evt_ready) return false;
+  if (!s_sys_task) return false;
+  eos_ktask_t kt;
   ktask_test_ctx_t ctx = {
-      .done_sem = xSemaphoreCreateBinary(),
+      .kt = &kt,
       .ran = false,
       .stack_in_psram = false,
   };
-  if (!ctx.done_sem) return false;
 
-  eos_ktask_t kt;
   bool ok = eos_ktask_create_psram(&kt, ktask_test_fn, "ktask_tst",
                                    EOS_BIN_MIN_STACK_SIZE, &ctx, tskIDLE_PRIORITY + 1);
   if (ok) {
-    ok = (xSemaphoreTake(ctx.done_sem, pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS * EOS_POLL_INTERVAL_MS)) == pdTRUE) &&
-         ctx.ran && ctx.stack_in_psram;
-    vTaskDelay(pdMS_TO_TICKS(EOS_POLL_INTERVAL_MS));
+    bool joined = eos_ktask_join_and_cleanup(&kt, EOS_KTASK_TEST_WAIT_MS);
+    ok = joined && ctx.ran && ctx.stack_in_psram;
+  } else {
+    eos_ktask_cleanup(&kt);
   }
-  eos_ktask_cleanup(&kt);
-  vSemaphoreDelete(ctx.done_sem);
-  return ok && kt.handle == NULL && kt.stack == NULL && kt.tcb == NULL;
+  return ok && kt.handle == NULL && kt.stack == NULL && kt.tcb == NULL && kt.done_sem == NULL;
 }
 
 static void proc_disown_reent_blocks(eos_proc_t *proc, struct _reent *r) {

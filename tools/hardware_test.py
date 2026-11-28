@@ -1405,7 +1405,7 @@ class EOSTestHarness:
                        f"echo boot_cycle_{cycle}_alive", rf"boot_cycle_{cycle}_alive")
             self.check(suite, f"Cycle {cycle}: /proc/uptime reports clean system restart",
                        "cat /proc/uptime",
-                       r"uptime:\s+\d+s[\s\S]+reset reason:\s+(power_on|external|software|jtag|usb)\b",
+                       r"uptime:\s+\d+s[\s\S]+reset reason:\s+(power[_-]on|external|software|jtag|usb)\b",
                        not_pattern=r"panic|wdt|brownout")
             self.check(suite, f"Cycle {cycle}: /proc/devices verifies active device tree",
                        "cat /proc/devices", r"bus/root")
@@ -1613,7 +1613,7 @@ class EOSTestHarness:
             print(f"  [{Colors.YELLOW}SKIP{Colors.RESET}] /dev/sd0 not present (no SD card); skipping /dev/sd0 MSC bind check.")
 
         if not is_single_phy_usb:
-            if has_sd0:
+            if has_sd0 and not is_single_phy_usb:
                 self.check(suite, "usbctl storage switches to mtp mode", "usbctl storage mtp /", r"Switched USB storage to MTP", wait=1.0)
                 self.check(suite, "usbctl storage switches to msc mode", "usbctl storage msc /dev/sd0", r"Switched USB storage to MSC", wait=1.0)
             else:
@@ -1641,7 +1641,7 @@ class EOSTestHarness:
                             str(gadget))
             self.check_host(suite, "host sees CDC-ACM ttyACM port(s) on composite gadget",
                             len(gadget["tty_ports"]) >= 1, str(gadget["tty_ports"]))
-            if has_sd0:
+            if has_sd0 and not is_single_phy_usb:
                 msc_deadline = time.time() + 5.0
                 while not gadget["block_devices"] and time.time() < msc_deadline:
                     time.sleep(0.25)

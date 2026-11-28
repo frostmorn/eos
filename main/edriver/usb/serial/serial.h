@@ -14,7 +14,8 @@
 #define EOS_USB_SERIAL_DEFAULT_BAUD     115200
 
 typedef struct {
-  SemaphoreHandle_t io_mutex;
+  SemaphoreHandle_t rx_mutex;
+  SemaphoreHandle_t tx_mutex;
   uint8_t *rx_buf;
   size_t   rx_head;
   size_t   rx_tail;

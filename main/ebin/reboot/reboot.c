@@ -4,6 +4,7 @@
 #include "ecore/kcmd.h"
 #include "ecore/proc.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -60,14 +61,16 @@ int reboot_main(int argc, char **argv) {
     return 0;
   }
 
+  if (has_kcmd) {
+    if (eos_kcmd_set(kcmd_buf) != 0) {
+      fprintf(stderr, "reboot: invalid or unsafe kcmd '%s' (errno=%d)\n", kcmd_buf, errno);
+      return 1;
+    }
+  }
   printf("Rebooting system%s%s...\n", has_kcmd ? " with kcmd: " : "", has_kcmd ? kcmd_buf : "");
   fflush(stdout);
   usleep(EOS_POLL_INTERVAL_MS * (useconds_t)EOS_US_PER_MS);
-  if (has_kcmd) {
-    eos_reboot_with_kcmd(kcmd_buf);
-  } else {
-    eos_reboot(false);
-  }
+  eos_reboot(false);
   return 0;
 }
 

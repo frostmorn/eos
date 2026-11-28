@@ -63,6 +63,40 @@ static int subcmd_status(int argc, char **argv, int fd) {
   return 0;
 }
 
+static const char *role_enum_to_kcmd(eos_usb_role_t role) {
+  switch (role) {
+    case EOS_USB_ROLE_HOST:             return "host";
+    case EOS_USB_ROLE_DEVICE_COMPOSITE: return "device";
+    case EOS_USB_ROLE_DEBUG_USJ:        return "debug";
+    default:                            return "off";
+  }
+}
+
+static void usbctl_build_role_kcmd(int fd, const char *target, char *out, size_t out_sz) {
+  if (access("/dev/usb1", F_OK) != 0) {
+    strlcpy(out, target, out_sz);
+    return;
+  }
+  eos_usb_bus_status_t st;
+  memset(&st, 0, sizeof(st));
+  if (ioctl(fd, EOS_USB_IOCTL_GET_STATUS, &st) < 0) {
+    strlcpy(out, target, out_sz);
+    return;
+  }
+  bool is_p1 = (st.port_id == 1);
+  const char *other_path = is_p1 ? "/dev/usb0" : "/dev/usb1";
+  const char *other_str = is_p1 ? "debug" : "device";
+  int ofd = open(other_path, O_RDONLY);
+  if (ofd >= 0) {
+    eos_usb_role_t orole = EOS_USB_ROLE_OFF;
+    if (ioctl(ofd, EOS_USB_IOCTL_GET_ROLE, &orole) == 0) {
+      other_str = role_enum_to_kcmd(orole);
+    }
+    close(ofd);
+  }
+  snprintf(out, out_sz, "%s %s", is_p1 ? other_str : target, is_p1 ? target : other_str);
+}
+
 static int subcmd_role(int argc, char **argv, int fd) {
   if (argc < 3) {
     eos_usb_role_t role = EOS_USB_ROLE_OFF;
@@ -96,9 +130,11 @@ static int subcmd_role(int argc, char **argv, int fd) {
   if (ioctl(fd, EOS_USB_IOCTL_SET_ROLE, new_role) < 0) {
     if (errno == ENOTSUP) {
       if (do_reboot) {
-        printf("Reboot required; rebooting with role '%s'...\n", target);
+        char kcmd_buf[EOS_KCMD_MAX_LEN] = {0};
+        usbctl_build_role_kcmd(fd, target, kcmd_buf, sizeof(kcmd_buf));
+        printf("Reboot required; rebooting with role '%s'...\n", kcmd_buf);
         fflush(stdout);
-        eos_reboot_with_kcmd(target);
+        eos_reboot_with_kcmd(kcmd_buf);
         return 0;
       }
       fprintf(stderr,
@@ -112,7 +148,9 @@ static int subcmd_role(int argc, char **argv, int fd) {
   }
   printf("Switched USB role to '%s'\n", target);
   if (do_reboot) {
-    eos_reboot_with_kcmd(target);
+    char kcmd_buf[EOS_KCMD_MAX_LEN] = {0};
+    usbctl_build_role_kcmd(fd, target, kcmd_buf, sizeof(kcmd_buf));
+    eos_reboot_with_kcmd(kcmd_buf);
   }
   return 0;
 }

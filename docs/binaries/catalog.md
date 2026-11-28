@@ -369,16 +369,20 @@ Eight small tools share one implementation (`emisc/eos_hash.h`, `emisc/eos_base6
   ```
 
 ### `reboot` — Restart Microcontroller or Enter Bootloader
-* **Syntax:** `reboot [-b|--bootloader] [-h|--help]`
+* **Syntax:** `reboot [-b|--bootloader] [-k <cmd> | -- <args...>] [-h|--help]`
 * **Flags:** `EOS_BIN_FLAG_HIDDEN` | **Stack:** Default (8 KB SRAM)
 * **Options:**
-  * `-b`, `--bootloader`: Sets `FORCE_DOWNLOAD_BOOT` (`eos_reboot(true)`) so the SoC restarts directly into ESP-ROM Download Mode for flashing.
+  * `-b`, `--bootloader`: Sets `FORCE_DOWNLOAD_BOOT` after device teardown (`eos_reboot(true)`) so the SoC restarts directly into ESP-ROM Download Mode for flashing.
+  * `-k <cmd>`: Stores a validated one-shot `kcmd` boot argument string in `RTC_NOINIT_ATTR` memory (CRC32-protected) passed to `init.sh` on the next boot (`$1`, `$2`, ...).
+  * `-- <args...>`: Joins remaining arguments into a one-shot `kcmd` boot argument string.
   * `-h`, `--help`: Display usage information.
-* **Function:** Flushes stdout and invokes `eos_reboot(bootloader)` in `ecore`.
+* **Function:** Flushes stdout, detaches active devices via `eos_sys`, and invokes `eos_reboot(bootloader)` in `ecore`.
 * **Examples:**
   ```sh
   reboot
   reboot -b
+  reboot -- debug host
+  reboot -k "debug off"
   ```
 
 ### `statusbar` — Native System Status Bar Daemon

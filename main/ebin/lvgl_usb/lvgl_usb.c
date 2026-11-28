@@ -81,7 +81,7 @@ static const char *role_to_kcmd(eos_usb_role_t role) {
 }
 
 static eos_usb_role_t query_port_role(const char *dev_path, eos_usb_role_t fallback) {
-  int fd = open(dev_path, O_RDWR);
+  int fd = open(dev_path, O_RDONLY);
   if (fd < 0) return fallback;
   eos_usb_bus_status_t st;
   memset(&st, 0, sizeof(st));
@@ -165,8 +165,8 @@ static bool apply_role_or_prompt(usb_ui_t *ui, eos_usb_role_t role) {
   if (role == ui->logic.active_role) {
     return false;
   }
-  if (ui->logic.status.port_id > 0) {
-    usb_logic_set_role(&ui->logic, role);
+  int rc = usb_logic_set_role(&ui->logic, role);
+  if (rc != -ENOTSUP) {
     return false;
   }
   ui->pending_reboot_role = role;

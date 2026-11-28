@@ -37,13 +37,13 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Done | T15 | PWM driver | Drivers | M | T16 | 4 |
 | Done | T14 | Display colour mode (ioctl + manifest flag) | Drivers | M | F05, F03, T10 | 4 |
 | Pending | T02 | ES8311 codec and sound-driver split | Drivers | L | T16, F08 | 4 |
-| Pending | T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
+| Partial | T03 | USB: host (a) and composite device (b) | Drivers | L + XL | T16, T07, F07 | 4 |
 | Pending | T05 | libcurl compatibility layer | Network libs | L | F03 | 5 |
 | Pending | T11 | libmicrohttpd compatibility layer | Network libs | L | F03 | 5 |
 | Pending | T04 | SDL / SDL2 completion | Apps | XL | T02, T10, T14 | 5 |
 | Done | T08 | ELF loader and export table | Loader | XL | F02, F03, F05, T06, T21 | 6 |
-| Pending | T23 | SD/SDIO partition automounting on boot (/mnt/sd) | Filesystems | S | T07 | 3 |
-| Pending | T24 | lvgl_fm — Graphical File Manager | Apps | M | T07, T10 | 3 |
+| Done | T23 | SD/SDIO partition automounting on boot (/mnt/sd) | Filesystems | S | T07 | 3 |
+| Partial | T24 | lvgl_fm — Graphical File Manager | Apps | M | T07, T10 | 3 |
 | Pending | T25 | eos_open — File opener and MIME dispatcher | Userland | S | T08 | 3 |
 | Pending | T26 | lvgl_edit — Graphical text editor and viewer | Apps | M | T10 | 3 |
 
@@ -332,7 +332,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Why early:** T21 and T08 verify hashes.
 
-#### T23 — SD/SDIO partition automounting on boot (/mnt/sd)
+#### T23 — SD/SDIO partition automounting on boot (/mnt/sd) [DONE]
 `Size: S · Depends: T07`
 
 **Scope**
@@ -427,7 +427,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 
 **Acceptance:** play and record on the board; changing volume through the control node during playback; `test_sound` passes unchanged for max98357; docs updated with the new structure.
 
-#### T03 — USB: host (a) and composite device (b)
+#### T03 — USB: host (a) and composite device (b) [PARTIAL]
 `Size: L (a) + XL (b) · Depends: T16, T07, F07 · Orig #3`
 
 **Facts that shape the design**
@@ -517,7 +517,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - **Path and Shell Integration:** Resolves direct paths (`/path/to/binary`), relative cwd paths (`./prog`), and `$PATH` directory search from `system()` and `ush`.
 - **Verification:** Tested via `test_elf_loader` ebin (`main/ebin/test_elf_loader/test_elf_loader.c`) with relocations, parameter passing, relative path execution, and $PATH search.
 
-#### T24 — lvgl_fm — Graphical File Manager
+#### T24 — lvgl_fm — Graphical File Manager [PARTIAL]
 `Size: M · Depends: T07, T10, T23`
 
 **Scope**

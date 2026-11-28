@@ -1730,6 +1730,7 @@ typedef struct {
   uint32_t magic;
   eos_dialog_kind_t kind;
   lv_obj_t *overlay;
+  bool closed;
 } eos_dialog_hdr_t;
 
 static void dialog_dismiss_overlay(lv_obj_t *ov) {
@@ -1741,7 +1742,7 @@ static void dialog_dismiss_overlay(lv_obj_t *ov) {
 static void format_btn_hint(char *out, size_t sz, const char *prefix,
                             const char *label, const char *fallback) {
   const char *text = label ? label : fallback;
-  if (strncmp(text, prefix, strlen(prefix)) == 0) {
+  if (!eos_screen_is_compact() || strncmp(text, prefix, strlen(prefix)) == 0) {
     strlcpy(out, text, sz);
   } else {
     snprintf(out, sz, "%s%s", prefix, text);
@@ -1761,7 +1762,8 @@ static void confirm_dialog_delete_cb(lv_event_t *e) {
 }
 
 static void confirm_dialog_finish(eos_confirm_dialog_data_t *data, bool confirmed) {
-  if (!data) return;
+  if (!data || data->hdr.closed) return;
+  data->hdr.closed = true;
   eos_lvgl_confirm_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
   dialog_dismiss_overlay(data->hdr.overlay);
@@ -1823,14 +1825,24 @@ lv_obj_t *eos_lvgl_dialog_confirm(const eos_lvgl_confirm_dialog_cfg_t *cfg) {
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
   lv_obj_set_pos(tlbl, 0, 0);
 
-  // Message body
+  // Message body (scrollable, bounded above button row)
   if (cfg->message) {
-    lv_obj_t *mlbl = lv_label_create(card);
+    int32_t msg_y = m.lh + m.pad_xl;
+    int32_t msg_h = (int32_t)h - m.pad_xl * 2 - msg_y - (m.dlg_btn_h + m.pad_xs * 2);
+    if (msg_h < m.lh) msg_h = m.lh;
+    lv_obj_t *mcont = lv_obj_create(card);
+    lv_obj_set_size(mcont, content_w, msg_h);
+    lv_obj_set_pos(mcont, 0, msg_y);
+    lv_obj_set_style_bg_opa(mcont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mcont, 0, 0);
+    lv_obj_set_style_pad_all(mcont, 0, 0);
+    lv_obj_add_flag(mcont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *mlbl = lv_label_create(mcont);
     lv_label_set_text(mlbl, cfg->message);
     lv_obj_set_width(mlbl, content_w);
     lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
-    lv_obj_set_pos(mlbl, 0, m.lh + m.pad_xl);
+    lv_obj_set_pos(mlbl, 0, 0);
   }
 
   // Button row pinned at bottom
@@ -1897,7 +1909,8 @@ static void info_dialog_delete_cb(lv_event_t *e) {
 }
 
 static void info_dialog_finish(eos_info_dialog_data_t *data) {
-  if (!data) return;
+  if (!data || data->hdr.closed) return;
+  data->hdr.closed = true;
   eos_lvgl_info_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
   dialog_dismiss_overlay(data->hdr.overlay);
@@ -1957,14 +1970,24 @@ lv_obj_t *eos_lvgl_dialog_info(const eos_lvgl_info_dialog_cfg_t *cfg) {
   lv_obj_set_style_text_color(tlbl, lv_color_hex(EOS_COLOR_ACCENT_CYAN), 0);
   lv_obj_set_pos(tlbl, 0, 0);
 
-  // Message body
+  // Message body (scrollable, bounded above button row)
   if (cfg->message) {
-    lv_obj_t *mlbl = lv_label_create(card);
+    int32_t msg_y = m.lh + m.pad_xl;
+    int32_t msg_h = (int32_t)h - m.pad_xl * 2 - msg_y - (m.dlg_btn_h + m.pad_xs * 2);
+    if (msg_h < m.lh) msg_h = m.lh;
+    lv_obj_t *mcont = lv_obj_create(card);
+    lv_obj_set_size(mcont, content_w, msg_h);
+    lv_obj_set_pos(mcont, 0, msg_y);
+    lv_obj_set_style_bg_opa(mcont, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(mcont, 0, 0);
+    lv_obj_set_style_pad_all(mcont, 0, 0);
+    lv_obj_add_flag(mcont, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t *mlbl = lv_label_create(mcont);
     lv_label_set_text(mlbl, cfg->message);
     lv_obj_set_width(mlbl, content_w);
     lv_label_set_long_mode(mlbl, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_color(mlbl, lv_color_hex(EOS_COLOR_TEXT_PRIMARY), 0);
-    lv_obj_set_pos(mlbl, 0, m.lh + m.pad_xl);
+    lv_obj_set_pos(mlbl, 0, 0);
   }
 
   // Dismiss Button
@@ -2004,7 +2027,8 @@ static void alert_dialog_delete_cb(lv_event_t *e) {
 }
 
 static void alert_dialog_finish(eos_alert_dialog_data_t *data, bool ok) {
-  if (!data) return;
+  if (!data || data->hdr.closed) return;
+  data->hdr.closed = true;
   eos_lvgl_alert_cb_t cb = data->cfg.cb;
   void *ud = data->cfg.user_data;
   dialog_dismiss_overlay(data->hdr.overlay);
@@ -2235,7 +2259,7 @@ static bool preview_dialog_handle_key(eos_preview_dialog_data_t *data, uint16_t 
 bool eos_lvgl_dialog_handle_key(lv_obj_t *dialog, uint16_t key) {
   if (!dialog) return false;
   eos_dialog_hdr_t *hdr = (eos_dialog_hdr_t *)lv_obj_get_user_data(dialog);
-  if (!hdr || hdr->magic != EOS_DIALOG_MAGIC || hdr->overlay != dialog) {
+  if (!hdr || hdr->magic != EOS_DIALOG_MAGIC || hdr->overlay != dialog || hdr->closed) {
     return false;
   }
   if (hdr->kind == EOS_DIALOG_KIND_CONFIRM) {
@@ -2744,7 +2768,6 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
   if (!cfg) return NULL;
 
   uint32_t sw = eos_lvgl_get_width();
-  uint32_t sh = eos_lvgl_get_height();
   bool is_small = eos_screen_is_compact();
   lv_obj_t *parent = cfg->parent ? cfg->parent : lv_screen_active();
 
@@ -2780,7 +2803,6 @@ lv_obj_t *eos_popup_menu_create(const eos_menu_cfg_t *cfg) {
   lv_obj_add_event_cb(ov, eos_menu_context_cleanup_cb, LV_EVENT_DELETE, ctx);
 
   int32_t card_w = (int32_t)sw;
-  int32_t card_h = (int32_t)sh;
 
   bool show_hdr = (!cfg->headerless && cfg->title);
   int32_t hdr_h = show_hdr ? EOS_MENU_HEADER_HEIGHT : 0;
@@ -2845,7 +2867,6 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
   if (!cfg) return NULL;
 
   uint32_t sw = eos_lvgl_get_width();
-  uint32_t sh = eos_lvgl_get_height();
   bool is_small = eos_screen_is_compact();
   lv_obj_t *parent = cfg->parent ? cfg->parent : lv_screen_active();
 
@@ -2867,6 +2888,7 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
   }
 
   int32_t total_w = (is_small || cfg->width <= 0) ? (int32_t)sw : cfg->width;
+  uint32_t sh = eos_lvgl_get_height();
   int32_t total_h = cfg->height > 0 ? cfg->height : (int32_t)sh;
 
   lv_obj_t *cont = lv_obj_create(parent);
@@ -2953,12 +2975,13 @@ lv_obj_t *eos_menu_create(const eos_menu_cfg_t *cfg) {
 lv_obj_t *eos_open_menu(const eos_menu_cfg_t *cfg) {
   if (!cfg) return NULL;
   eos_menu_cfg_t menu_cfg = *cfg;
-  if (eos_screen_is_compact()) {
-    menu_cfg.headerless = true; // Headerless mode on small screens
-  }
   menu_cfg.width = 0;  // Full available area by width on all screens
   menu_cfg.height = 0; // Full available area by height on all screens
-  return eos_menu_create(&menu_cfg);
+  if (eos_screen_is_compact()) {
+    menu_cfg.headerless = true; // Headerless mode on small screens
+    return eos_menu_create(&menu_cfg);
+  }
+  return eos_popup_menu_create(&menu_cfg);
 }
 
 void eos_menu_close(lv_obj_t *menu) {
