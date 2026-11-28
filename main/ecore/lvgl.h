@@ -17,7 +17,7 @@ extern "C" {
 #define EOS_LVGL_DEFAULT_KBD_PATH   "/dev/keyboard0"
 #define EOS_LVGL_DEFAULT_TOUCH_PATH "/dev/touch0"
 #define EOS_LVGL_DMA_STRIP_BYTES    16384U
-#define EOS_LVGL_PSRAM_POOL_SIZE    (512U * 1024U)
+#define EOS_LVGL_PCT_SCALE          100U
 #define EOS_LVGL_KEY_QUEUE_SIZE     32U
 #define EOS_LVGL_TOUCH_QUEUE_SIZE   16U
 

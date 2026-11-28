@@ -821,20 +821,72 @@ const lv_font_t *eos_lvgl_get_font(void) {
   return &s_eos_main_font;
 }
 
+#if LV_USE_STDLIB_MALLOC == LV_STDLIB_CUSTOM
+void lv_mem_init(void) {}
+void lv_mem_deinit(void) {}
+
+void *lv_malloc_core(size_t size) {
+  void *ptr = NULL;
+#ifdef MALLOC_CAP_SPIRAM
+  ptr = heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+  if (!ptr) {
+    ptr = heap_caps_malloc(size, MALLOC_CAP_8BIT);
+  }
+  if (ptr) {
+    eos_mem_adopt(ptr, 0);
+  }
+  return ptr;
+}
+
+void *lv_realloc_core(void *p, size_t new_size) {
+  void *ptr = NULL;
+#ifdef MALLOC_CAP_SPIRAM
+  ptr = heap_caps_realloc(p, new_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+  if (!ptr && new_size > 0U) {
+    ptr = heap_caps_realloc(p, new_size, MALLOC_CAP_8BIT);
+  }
+  if (ptr) {
+    eos_mem_adopt(ptr, 0);
+  }
+  return ptr;
+}
+
+void lv_free_core(void *p) {
+  heap_caps_free(p);
+}
+
+void lv_mem_monitor_core(lv_mem_monitor_t *mon_p) {
+  if (!mon_p) {
+    return;
+  }
+  memset(mon_p, 0, sizeof(*mon_p));
+  multi_heap_info_t info;
+#ifdef MALLOC_CAP_SPIRAM
+  heap_caps_get_info(&info, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
+  heap_caps_get_info(&info, MALLOC_CAP_8BIT);
+#endif
+  mon_p->total_size = info.total_free_bytes + info.total_allocated_bytes;
+  mon_p->free_size = info.total_free_bytes;
+  mon_p->free_biggest_size = info.largest_free_block;
+  if (mon_p->total_size > 0U) {
+    mon_p->used_pct = (uint8_t)((info.total_allocated_bytes * EOS_LVGL_PCT_SCALE) / mon_p->total_size);
+  }
+}
+
+lv_result_t lv_mem_test_core(void) {
+  return LV_RESULT_OK;
+}
+#endif
+
 static void lvgl_init_core(void) {
   if (s_lv_core_initialized) {
     return;
   }
   lv_init();
   lv_tick_set_cb(eos_lvgl_tick_cb);
-#if CONFIG_SPIRAM
-  void *psram_pool = heap_caps_malloc(EOS_LVGL_PSRAM_POOL_SIZE, MALLOC_CAP_SPIRAM);
-  if (psram_pool) {
-    if (lv_mem_add_pool(psram_pool, EOS_LVGL_PSRAM_POOL_SIZE)) {
-      EOS_LOGI("LVGL: expanded memory with PSRAM pool (%u bytes)", (unsigned)EOS_LVGL_PSRAM_POOL_SIZE);
-    }
-  }
-#endif
   s_lv_core_initialized = true;
 }
 

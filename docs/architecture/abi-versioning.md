@@ -63,4 +63,5 @@ typedef struct {
 The dynamic loader (`ecore/elf_symbols.c`) exposes kernel and POSIX functions to dynamically loaded ELFs:
 - The symbol table is strictly append-only.
 - New symbols are registered without altering existing indices.
-- Removal of exported symbols is forbidden; deprecated symbols are aliased or preserved with warnings.
+- No ad-hoc `EOS_*_ABI_LEGACY` shims: core runtime code operates strictly on the current ABI (`abi_version == current`, `struct_size == sizeof(...)`).
+- When an ABI version is bumped, add a dedicated per-scope sequential step-upgrader function (`1_to_2`, `2_to_3`, ...) run once at load/import time (`T29`/`T30`).

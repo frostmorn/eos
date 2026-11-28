@@ -1,178 +1,117 @@
 # EOS implementation order
 
-Companion to `eos-tasks.md`. Task IDs match that file. Sizes are rough single-developer guesses (**S** 1–2 days · **M** 3–7 days · **L** 2–3 weeks · **XL** 4+ weeks).
+Companion to [`tasks.md`](tasks.md). Completed phases and tasks (Phase 0 `F01–F06`, Phase 1, `T09`, `T12`, `T23`, `T14–T16`, `T08`) are archived in [`history.md`](history.md). Sizes are rough single-developer guesses (**S** 1–2 days · **M** 3–7 days · **L** 2–3 weeks · **XL** 4+ weeks).
 
 ## Ordering principles
 
-1. **Foundations before features.** About half of the original items need a process table, a terminal layer or a cleanup registry. Building those once costs less than building each feature around its own workaround.
-2. **Decide shared structures once.** The manifest format (F05) is touched by T14 and T08; the ioctl convention (F08) is touched by T02, T14, T15, T16 and T03. Decide before the first user.
-3. **Cheap, independent wins early.** They raise confidence and unblock others (T10, T06, T17, T07).
-4. **Highest-risk and largest items last** (T08 ELF loader, T04 SDL, T03b USB device), when the platform under them is stable.
-5. **Safety work stays ahead of anything that adds threads or loads code.** F02 and F03 come before T05, T11 and T08.
+1. **Foundations before features.** Process table, cleanup registry, manifest ABI, and filesystem registry are in place; remaining foundation work (`F07` TTY, `F08` typed ioctl) gates terminal and driver features.
+2. **Decide shared structures once.** Typed ioctls (`F08`) gate `T02`, `T03`, and `T28`; unified object handles and ABI headers (`T29`) gate loadable `.so` modules (`T30`).
+3. **Cheap, independent wins early.** `T27` (script `#!` + `#$` dispatch), `T25` (`eos_open`), and `T24` (`lvgl_fm` completion) can land ahead of larger driver/loader work.
+4. **Highest-risk and largest items last.** `T04` (SDL) and `T30` (loadable/unloadable `.so` modules with strict PSRAM allocation and refcounting) land after their underlying contracts (`T02`, `T29`) are stable.
 
 ---
 
-## Dependency graph
+## Remaining Dependency Graph
 
 ```mermaid
 graph TD
-  F01[F01 IDF pin + CI]
-  F04[F04 Process table]
-  F02[F02 Memory ownership]
-  F03[F03 Cleanup hooks]
-  F05[F05 Manifest & ABI]
-  F06[F06 Test + audit infra]
-  F08[F08 Typed ioctl]
+  F08[F08 Typed ioctl - Partial]
   F07[F07 TTY layer]
 
-  T06[T06 Hash utils]
-  T10[T10 Env device vars]
-  T17[T17 Stats + loadavg]
-  T07[T07 FS registry + mount]
-  T13[T13 /proc per-pid]
-  T20[T20 ps]
   T18[T18 Signals]
   T19[T19 Job control]
   T01[T01 terminfo + ncurses]
-  T09[T09 time accounting]
+
   T22[T22 NVS fs]
   T21[T21 Autoload init]
-  T12[T12 symlinks + ln]
-  T16[T16 capsmgr]
-  T15[T15 PWM]
-  T14[T14 Colour mode]
+  T24[T24 lvgl_fm - Partial]
+  T25[T25 eos_open]
+  T26[T26 lvgl_edit]
+
   T02[T02 ES8311 + sound split]
-  T03[T03 USB]
+  T03[T03 USB - Partial]
   T05[T05 curl]
   T11[T11 MHD]
   T04[T04 SDL]
-  T08[T08 ELF loader]
 
-  F06 --> F08
-  F06 --> T06
-  F06 --> T07
-  F04 --> F02
-  F04 --> F03
-  F04 --> F07
-  F04 --> T13
-  T13 --> T20
-  T13 --> T09
-  T17 --> T09
+  T27[T27 Script #! + #$ dispatch]
+  T28[T28 Driver cfg/pins VFS]
+  T29[T29 System Object + /proc/objects]
+  T30[T30 Loadable/unloadable .so modules]
+
   F07 --> T18
   T18 --> T19
   F07 --> T19
   F07 --> T01
   T18 --> T01
-  T10 --> T01
-  T07 --> T22
   T22 --> T21
-  T07 --> T21
-  T06 --> T21
   F07 --> T21
-  T07 --> T12
-  T16 --> T15
-  T16 --> T02
   F08 --> T02
-  T16 --> T03
-  T07 --> T03
   F07 --> T03
-  F05 --> T14
-  F03 --> T14
-  T10 --> T14
-  F03 --> T05
-  F03 --> T11
   T02 --> T04
-  T10 --> T04
-  T14 --> T04
-  F02 --> T08
-  F03 --> T08
-  F05 --> T08
-  T06 --> T08
-  T21 --> T08
+  F08 --> T28
+  T29 --> T30
 ```
 
 ---
 
-## Phases
+## Active Phases
 
-### Phase 0 — Foundations
-**Tasks:** F01 → F06 → F04 → (F02, F03 in either order) → F05 → F08
-**Effort:** about 3–4 weeks in total.
+*(Phase 0 `F01–F06`, Phase 1 `T06/T07/T10/T13/T17/T20`, and Phase 6a `T08` are complete — see [`history.md`](history.md).)*
 
-| Step | Why here |
-|---|---|
-| F01 IDF pin and CI | Cheapest insurance; every later wrapper depends on it |
-| F06 test / audit infra | Every following task adds a test and often an audit rule |
-| F04 process table | Root dependency of F02, F03, F07, T13, T18, T19, T20, T09 |
-| F02 memory ownership | Fixes the cross-thread free and attach-lifetime hazards before more threads and apps are added |
-| F03 cleanup hooks | Needed by T05, T11, T14, T08 |
-| F05 manifest v2 | One breaking change, done before T14 and T08 touch the struct |
-| F08 typed ioctl | Convention in place before T02/T15/T16/T14 add ioctls |
-
-**Exit criteria:** CI green on S3, P4 and QEMU; `test_leaks` passes; every binary builds against manifest v2; display scope migrated to the typed ioctl macro.
-
-### Phase 1 — Quick wins and observability base
-**Tasks:** T10, T06, T17, T07, T13, T20
-**Effort:** about 2–3 weeks.
-
-Order inside the phase:
-1. **T10** (S): unblocks T01, T14, T04.
-2. **T06** (S): unblocks T21, T08.
-3. **T17** (S): sdkconfig change plus `/proc/loadavg`; unblocks T09.
-4. **T07** (M): unblocks T22, T21, T12, T03.
-5. **T13** (M) then **T20** (S): the first visible payoff of F04.
-
-**Exit criteria:** `cat /proc/filesystems`, `umount` by path or device, `ps`, `sha256sum`, `uptime` all work on all targets.
+### Phase 0 (Remainder) — Typed IOCTL Audit
+**Tasks:** `F08` (Partial)
+**Exit criteria:** All ioctl macros have typed argument structs and documentation; `layer_audit.py` ioctl rule active.
 
 ### Phase 2 — Terminal and process control
-**Tasks:** F07 → T18 → T19 → T01, and T09 in parallel
-**Effort:** about 6–8 weeks.
+**Tasks:** `F07` → `T18` → `T19` → `T01` *(`T09` already Done)*
+**Effort:** about 5–7 weeks.
 
-- **F07** first (largest piece; echo, termios, line discipline).
+- **F07** first (echo, termios, line discipline).
 - **T18** next; Ctrl-C wiring comes from F07.
 - **T19** after T18.
 - **T01** last in this chain: needs `SIGWINCH`, raw mode, `TERM`.
-- **T09** can run whenever T13 and T17 are done; it only touches the dispatch wrappers.
 
-**Exit criteria:** ncurses `top` runs full-screen over UART; Ctrl-C and Ctrl-Z work against the right job; `time` reports user/sys.
+**Exit criteria:** ncurses `top` runs full-screen over UART; Ctrl-C and Ctrl-Z work against the right job.
 
-### Phase 3 — Persistence and trust
-**Tasks:** T22 → T21, and T12a–c in parallel
+### Phase 3 — Persistence, trust, and userland tools
+**Tasks:** `T22` → `T21`; `T24` (Partial), `T25`, `T26` in parallel *(`T12`, `T23` already Done)*
 **Effort:** about 3–4 weeks.
 
-- **T22** needs T07's pseudo-filesystem mounts and moves NVS init out of `wifi0`.
-- **T21** needs T22 (trust store), T06 (hash), F07 (prompt), T07 (hook).
-- **T12a–c** (symlinks, `ln`, `EXDEV`) are independent of T21. Then write the T12d findings (own VFS or not).
+- **T22** moves NVS init into an `efs` filesystem driver.
+- **T21** needs `T22` (trust store) and `F07` (prompt).
+- **T24 / T25 / T26** (`lvgl_fm`, `eos_open`, `lvgl_edit`) can be completed in parallel.
 
-**Exit criteria:** insert a card with `.eos/init.sh` → prompt → trusted; `ln -s` works; `mv` across filesystems works; NVS files survive reboot.
+**Exit criteria:** `.eos/init.sh` trust prompt works; NVS files survive reboot; `lvgl_fm` opens files via `eos_open` and edits them in `lvgl_edit`.
 
-### Phase 4 — Hardware drivers
-**Tasks:** T16 → T15 → T14, then T02, then T03a → T03b
-**Effort:** about 8–12 weeks (hardware-dependent).
+### Phase 4 (Remainder) — Hardware drivers
+**Tasks:** `T02`, `T03` (Partial: remaining host/device polish) *(`T16`, `T15`, `T14` already Done)*
+**Effort:** about 3–5 weeks (hardware-dependent).
 
-- **T16** first: PWM, DMA and interrupt claims are used by T15, T02 and T03.
-- **T15** gives the backlight consumer; **T14** needs F05, F03 and T10 only, so it can start right after T16 (or even earlier).
-- **T02** (sound split, ES8311): needs the I2S bus abstraction and typed control ioctls.
-- **T03a** host mode before **T03b** device mode. Host reuses TTY, storage and input scopes; device mode has the endpoint-budget and PHY-sharing complications.
+- **T02** (sound split, ES8311): needs I2S bus abstraction and typed control ioctls (`F08`).
+- **T03** remaining USB host/device stabilization and endpoint/PHY edge cases.
 
-**Exit criteria:** backlight dimming on both boards; colour mode switching; play and record via ES8311; USB stick and keyboard in host mode.
+**Exit criteria:** play and record via ES8311; USB host/composite device suites green across boards.
 
 ### Phase 5 — Libraries and applications
-**Tasks:** T05, T11 (either order), then T04
-**Effort:** about 4 weeks for T05+T11, 6+ weeks for T04.
+**Tasks:** `T05`, `T11` (either order), then `T04`
+**Effort:** about 4 weeks for `T05+T11`, 6+ weeks for `T04`.
 
-- **T05 and T11** depend only on F03 (and a working network driver). They are good candidates to interleave with Phase 4 when waiting on hardware.
-- **T04** is last here because it needs audio capture/format control (T02), device selection (T10) and pixel formats (T14). Start its **coverage spike** earlier, since it is a one-day script that sizes the work.
+- **T05 and T11** are good candidates to interleave when waiting on hardware.
+- **T04** stays last here because it needs audio capture/format control (`T02`).
 
 **Exit criteria:** `curl https://…` and a hello-world MHD server work and clean up after themselves; reference SDL programs run on QEMU and hardware.
 
-### Phase 6 — Loadable apps
-**Tasks:** T08
-**Effort:** 4+ weeks, plus the ABI table design started in Phase 0.
+### Phase 6b — Dynamic System Objects, Driver Config VFS & Loadable Modules
+**Tasks:** `T27` (S), then `T28` (M) and `T29` (M) in parallel, then `T30` (L)
+**Effort:** about 4–6 weeks.
 
-Deliberately last: it changes the app model, needs F02 (ownership), F03 (cleanup), F05 (manifest), T06/T21 (trust), and interacts with executable-memory limits that should be measured first (a one-day spike can be done at any time).
+1. **T27 (S):** Direct `#!` shebang dispatch in `exec.c`/`ush` + bounded `#$ Key=Value` script manifests (`EOS_BIN_FLAG_SCRIPT`, zero `eos_bin_t` ABI break).
+2. **T28 (M):** `eos_drv_param_t` reusing `eos_cfg_type_t`, centralized read-only `/dev/<name>/{cfg,pins}/*` VFS + `devctl attach` validation (Step 2a), and opt-in `EOS_PARAM_LIVE` writes (Step 2b). Can run in parallel with `T29`.
+3. **T29 (M):** Tagged `eos_handle_t`, 12-byte `(magic, struct_size, abi_version)` header on `eos_drv_t` and `eos_fs_type_t`, `/proc/objects`, and `layer_audit.py` enforcement of no-legacy-ABI-shims + contiguous `1_to_2`..`(N-1)_to_N` step-upgrader chains.
+4. **T30 (L):** Strict PSRAM-only `.elf`/`.so` allocation (`MALLOC_CAP_SPIRAM`, `-ENOMEM` on failure with zero SRAM fallback), standalone `.so` build target, `eos_mod_objects[]` export, refcounted `rmmod` (`-EBUSY`), and IRAM ISR trampoline rule.
 
-**Exit criteria:** a program built outside the firmware loads from SD, runs, exits, leaks nothing; the ABI index test passes after new exports are added.
+**Exit criteria:** scripts with `#!` + `#$` run from CLI and launcher; `/dev/<drv>/{cfg,pins}/*` validates bounds and stale FDs; `/proc/objects` enumerates all objects; `.so` modules load strictly in PSRAM, upgrade via ABI step-upgraders if needed, refuse unload while busy, and pass 10× leak cycles.
 
 ---
 
@@ -180,42 +119,41 @@ Deliberately last: it changes the app model, needs F02 (ownership), F03 (cleanup
 
 | Path | Length |
 |---|---|
-| F04 → F07 → T18 → T19 → T01 | longest chain; gates the "real terminal" milestone |
-| F06 → T07 → T22 → T21 → T08 | gates trust and loadable apps |
-| T16 → T02 → T04 | gates audio and SDL |
-| F04 → F03 → T05/T11/T08 | gates network libraries and the loader |
+| `F07 → T18 → T19 → T01` | longest terminal chain; gates the "real terminal" milestone |
+| `T22 → T21` (with `F07`) | gates trusted autorun |
+| `F08 → T02 → T04` | gates audio and SDL |
+| `T29 → T30` | gates dynamic loadable/unloadable `.so` drivers and filesystems |
 
 ## Milestones
 
-| | Milestone | After |
+| | Milestone | Status / Gate |
 |---|---|---|
-| M1 | **Observable system** (`ps`, `/proc`, loadavg, filesystems, hashes) | Phase 1 |
+| M1 | **Observable system** (`ps`, `/proc`, loadavg, filesystems, hashes) | Done ([`history.md`](history.md)) |
+| M6a | **Loadable ELF apps** (`T08`) | Done ([`history.md`](history.md)) |
 | M2 | **Real terminal** (job control, signals, ncurses `top`) | Phase 2 |
-| M3 | **Persistent and trusted** (NVS, symlinks, trusted autorun) | Phase 3 |
-| M4 | **Hardware complete** (PWM, colour modes, codec, USB) | Phase 4 |
+| M3 | **Persistent and trusted** (NVS, trusted autorun, `lvgl_fm`/`eos_open`/`lvgl_edit`) | Phase 3 |
+| M4 | **Hardware complete** (ES8311 codec, USB completion) | Phase 4 |
 | M5 | **Ecosystem** (curl, MHD, SDL apps) | Phase 5 |
-| M6 | **Loadable apps** | Phase 6 |
+| M6b | **Dynamic system objects & `.so` modules** (`T27–T30`) | Phase 6b |
 
 ## Parallel work and fallbacks
 
-- **Only QEMU available:** do F01–F08, T06, T07, T10, T13, T17, T18, T19, T20, T09, F07 (UART backend), T12a–c, T22 (flash partition in QEMU), T05/T11 only if QEMU networking exists. Leave T02, T03, T14 (real panels), T15 for when a board is attached.
-- **While a hardware task is blocked on a board:** switch to T05/T11 or the T04 coverage spike.
-- **Short, cheap spikes worth doing at any time** (1 day each): SDL coverage script (T04), executable-memory test on S3 and P4 (T08), IDF VFS limits probe (T12d), endpoint budget on S3 OTG (T03).
+- **Only QEMU available:** do `F08`, `F07` (UART backend), `T18`, `T19`, `T01`, `T22` (flash partition in QEMU), `T25`, `T26`, `T27`, `T28`, `T29`, `T30` (`/tmp` `.so` fixtures). Leave `T02` and physical USB `T03` checks for when a board is attached.
+- **Quick wins anytime:** `T27` (S), `T25` (S), and `T24` remaining items.
 
 ## If time is short
 
 | Budget | Do | Defer |
 |---|---|---|
-| ~1 month | Phase 0 + Phase 1 | everything else |
-| ~3 months | Phases 0–2 + T22/T21 | USB device mode, SDL, loader |
-| ~6 months | Phases 0–4 | T04 full port, T08 |
+| ~1 month | `F08` + `T27` + `T25` + `T24`/`T26` | Phase 2 TTY, SDL, `.so` modules |
+| ~3 months | Phases 2–3 + `T28` + `T29` | `T04` SDL, `T30` `.so` modules |
+| ~6 months | Phases 2–4 + Phase 6b (`T27–T30`) | `T04` full port |
 
 ## Candidates to cut or shrink
 
 | Item | Suggestion |
 |---|---|
-| T12d own VFS | Do not start without evidence from the VFS-limits probe; T07 + T12a–c cover most needs |
-| T03b "ppp-modem" | Replace by CDC-NCM; keep PPP as optional |
-| T04 | Keep to the reference programs; do not aim at "complete SDL" |
-| T05 `curl_multi` | Leave until a real consumer exists |
-| T08 signing | Start with hash allow-list only |
+| `T03b` "ppp-modem" | Replace by CDC-NCM; keep PPP as optional |
+| `T04` | Keep to the reference programs; do not aim at "complete SDL" |
+| `T05` `curl_multi` | Leave until a real consumer exists |
+| `T28` live writes | Start with Step 2a (read-only VFS + attach validation); add `EOS_PARAM_LIVE` opt-in incrementally |

@@ -1,10 +1,8 @@
-# EOS task list (revised)
+# EOS task list
 
-Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit snapshot) and the earlier architecture review. I have **not read the source code**. Statements marked *(verify)* are inferred from the docs and must be checked in code before the task starts.
-
-- **IDs:** `T01…T22` keep the original numbering. `F01…F08` are new foundation tasks that the original list silently depends on.
+- **IDs:** `T01…T30` cover functional tasks. `F01…F08` are foundation tasks.
 - **Sizes** (one developer, rough guesses): **S** 1–2 days · **M** 3–7 days · **L** 2–3 weeks · **XL** 4+ weeks.
-- **Order of work** is in `eos-implementation-order.md`. Open design decisions and new `layer_audit` rules are in `eos-decisions-and-audit-rules.md`.
+- **Order of work** is in [`implementation-order.md`](implementation-order.md). Architectural decisions and `layer_audit` rules are in [`decisions-and-audit-rules.md`](decisions-and-audit-rules.md). Completed work is archived in [`history.md`](history.md).
 
 ---
 
@@ -46,6 +44,10 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 | Partial | T24 | lvgl_fm — Graphical File Manager | Apps | M | T07, T10 | 3 |
 | Pending | T25 | eos_open — File opener and MIME dispatcher | Userland | S | T08 | 3 |
 | Pending | T26 | lvgl_edit — Graphical text editor and viewer | Apps | M | T10 | 3 |
+| Pending | T27 | Script Metadata (`#!` + `#$ Key=Value`) & Shebang Dispatch | Loader | S | T08 | 6 |
+| Pending | T28 | Driver Config & Pin Schema VFS (`/dev/<name>/{cfg,pins}/*`) | Drivers | M | F08, T16 | 6 |
+| Pending | T29 | Unified System Object (`eos_handle_t`, ABI/Magic Header, `/proc/objects`) | Foundation | M | F05, T13 | 6 |
+| Pending | T30 | Dynamic Loadable/Unloadable `.elf`/`.so` Modules (Strict PSRAM & ABI Upgraders) | Loader | L | T08, T29 | 6 |
 
 ---
 
@@ -95,7 +97,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 ### F03 — Cleanup-hook registry [DONE]
 `Size: M · Depends: F04`
 
-**Why:** The tracker covers fds, dirs and heap. The docs do not mention sockets, timers, spawned tasks, ISR registrations or device claims *(verify)*. T05, T11, T14 and T16 each add such a resource.
+**Why:** The tracker covers fds, dirs and heap; sockets, timers, spawned tasks, ISR registrations and device claims are also tracked here for T05, T11, T14 and T16.
 
 **Scope**
 - `eos_proc_on_exit(fn, arg)` / `eos_proc_cancel_exit(handle)`; hooks run in reverse order before memory is freed.
@@ -390,7 +392,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 **Scope**
 - `pwm` driver, `/dev/pwmN`: ioctls `SET_FREQ`, `SET_DUTY` (16-bit, scaled to hardware resolution), `SET_POLARITY`, `ENABLE`, `FADE(target, ms)`, `GET_CAPS`.
 - Channels that share a frequency share an LEDC timer (reference-counted); a channel requesting a different frequency on an occupied timer is rejected with a clear error. Resolution depends on frequency, so `GET_CAPS` reports the achievable bits.
-- First consumer: **display backlight** (`bl` pin is currently a plain pin argument *(verify)*). Fallback to on/off when no PWM is attached.
+- First consumer: **display backlight** (`bl` pin). Fallback to on/off when no PWM is attached.
 - Other consumers: buzzer/tone, servo helper (50 Hz). MCPWM is out of scope.
 - `devctl attach` syntax documented with examples.
 
@@ -422,7 +424,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - `SET_CONFIG` stays atomic (it already is in the sound doc).
 - Full-duplex support where the SoC allows it; capture path with the same PSRAM/DMA rules as the sound doc.
 - MCLK pin claim via capsmgr.
-- ES8311 first (most likely on the JC4880P4 board *(verify)*); `max98357` migrated to the new structure without behaviour change.
+- ES8311 first (JC4880P4 board); `max98357` migrated to the new structure without behaviour change.
 - Hearing-protection volume cap stays at the control node.
 
 **Acceptance:** play and record on the board; changing volume through the control node during playback; `test_sound` passes unchanged for max98357; docs updated with the new structure.
@@ -431,7 +433,7 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 `Size: L (a) + XL (b) · Depends: T16, T07, F07 · Orig #3`
 
 **Facts that shape the design**
-- On ESP32-S3 the built-in USB-Serial-JTAG and the OTG controller **share one PHY**. Enabling device mode via TinyUSB takes over the pins, so the built-in console and JTAG go away. Document this and give a CDC function as the replacement console. P4 has separate PHYs *(verify)*.
+- On ESP32-S3 the built-in USB-Serial-JTAG and the OTG controller **share one PHY**. Enabling device mode takes over the pins, so the built-in console and JTAG go away and CDC provides the replacement console. ESP32-P4 has separate PHYs (USB-Serial-JTAG on port 0 + dedicated HS/FS OTG).
 - The S3 OTG controller has a small fixed endpoint budget. Not every function fits at once (MSC + CDC + NCM + HID). Check the budget at attach time using the existing **attach veto**.
 - An MSC function backed by an SD card that EOS also has mounted corrupts the filesystem. Rule: expose a block device only after unmounting it, read-only by default, or expose a dedicated partition.
 
@@ -559,3 +561,83 @@ Revision of `Eos_tasks` (22 items), based on the repo docs (`docs/`, 333-commit 
 - Headless smoke test mode (`--auto`, `-t <timeout_ms>`).
 
 **Acceptance:** Opens and renders text files; supports editing and saving; exits cleanly without leaks.
+
+---
+
+### Phase 6b — Dynamic System Objects, Driver Config VFS & Script Dispatch
+
+#### T27 — Script Metadata (`#!` + `#$ Key=Value`) & Shebang Dispatch
+`Size: S · Depends: T08`
+
+**Implementation Details**
+- **No `eos_bin_t` ABI Break (`main/ecore/bin.h`):** Keep `EOS_BIN_ABI_VERSION` at `1`; add `EOS_BIN_FLAG_SCRIPT` to `EOS_BIN_FLAG_*`. Do **not** add `interpreter[]` or `origin_path[]` arrays to static flash `eos_bin_t` records (avoids ~10 KB flash growth across 77 static bins). Resolve interpreter paths transiently during script parse/exec, and compute paths dynamically via `eos_obj_get_path()`.
+- **Direct `#!` Shebang Dispatch (`main/ecore/exec.c`, `main/ebin/ush/ush.c`):** When executing a non-ELF regular file, read line 1; if it begins with `#!<interpreter>` (e.g. `#!/bin/ush`, `#!/bin/lua`), invoke `[interpreter, script_path, ...argv]`.
+- **Bounded `#$ Key=Value` Script Manifest Parser (`main/ecore/bin_script.c` or `main/ecore/exec.c`):**
+  - Read at most the leading ~1 KB of the file and stop immediately on the first non-`#` line.
+  - Parse contiguous `#$ Key=Value` lines (`Name=`, `Group=`, `Description=`, `Flags=GUI|HIDDEN`, `Hint=`, `MinW=`, `MinH=`) into a transient `eos_bin_t` with `EOS_BIN_FLAG_SCRIPT` set.
+  - Scope GUI launcher script discovery to configured roots (`$PATH` / `/sdcard/apps`) rather than walking the entire SD card; do not eagerly cache full `eos_bin_t` structs for every file in RAM.
+
+**Acceptance & Tests**
+- Host unit tests (`tools/host_tests/`): valid `#!/bin/ush` & `#!/bin/lua` with `#$ Key=Value`, missing shebang, unknown interpreter, CRLF, non-`#$` comments, ~1 KB bounded scan, malformed `Key=Value`, integer overflow, and `EOS_*_STR_LEN` truncation.
+- Target tests (`tools/hardware_test.py -x`): execute `#!/bin/ush` + `#$` script from `/tmp` with args/exit status; verify missing interpreter (`ENOENT`/`ENOEXEC`), `eos_obj_get_path()`, and launcher `GUI`/`HIDDEN` filtering.
+
+#### T28 — Driver Config & Pin Schema VFS (`/dev/<name>/{cfg,pins}/*`)
+`Size: M · Depends: F08, T16`
+
+**Implementation Details**
+- **Flash-Resident Parameter Schema (`main/ecore/driver.h`):**
+  - Reuse existing `eos_cfg_type_t` (`main/emisc/types.h`: `EOS_CFG_INT`, `EOS_CFG_FLOAT`, `EOS_CFG_STR`, `EOS_CFG_PTR`) instead of defining a duplicate type enum.
+  - Define `eos_drv_param_t` (`name`, `description`, `type`, `group` [`EOS_PARAM_GRP_CFG` / `EOS_PARAM_GRP_PIN`], `flags` [`EOS_PARAM_RO`, `EOS_PARAM_ATTACH_ONLY`, `EOS_PARAM_LIVE`], `int64_t min_val`, `int64_t max_val`, `default_val`, `enum_vals`).
+  - Add `const eos_drv_param_t *params; size_t param_count;` to `eos_drv_t` (zero-initialized `NULL, 0` by default; `const` in `.rodata` = 0 B RAM).
+- **Step 2a — Centralized Read-Only VFS & Attach Validation (`main/ecore/dev.c`, `main/efs/devfs/`):**
+  - Intercept `/dev/<devname>/cfg`, `/dev/<devname>/cfg/<key>`, `/dev/<devname>/pins`, and `/dev/<devname>/pins/<key>` centrally in `devfs` / `eos_dev_*` (**0 extra `esp_vfs` slots**, zero per-driver VFS boilerplate).
+  - `read()` exposes current `dev->cfg` / `dev->pins` value + schema bounds/type/flags.
+  - `eos_dev_attach()` validates `cfg` and `pins` against `dev->driver->params` before calling `driver->init(dev)`.
+  - Store minimal per-open FD `(dev, param_idx, offset, generation)` and `DIR *` `(dev, idx, generation)` state so detached devices reject stale FDs (`-ENODEV`).
+- **Step 2b — Opt-In Live Writes:**
+  - Allow `write()` only on `EOS_PARAM_LIVE` parameters for drivers opting in via `EOS_IOCTL_PARAM_SET`. Reject `EOS_PARAM_RO` (`-EACCES`), `EOS_PARAM_ATTACH_ONLY`/pins while attached (`-EBUSY`), and out-of-range values (`-EINVAL`).
+
+**Acceptance & Tests**
+- Host unit tests (`tools/host_tests/`): `eos_drv_param_t` type/range checks at boundaries (`min_val`, `max_val`, `min_val - 1`, `max_val + 1`), invalid enums, `EOS_PARAM_RO`, and `EOS_PARAM_ATTACH_ONLY`.
+- Target tests (`tools/hardware_test.py -x`, extending `test_devctl` & `test_devtree_detach_reattach_cycle`): enumerate `/dev/<drv>/{cfg,pins}` without FD/`DIR*` leaks; verify `-EINVAL` / `-EBUSY` rejections, `devctl attach` validation, `EOS_PARAM_LIVE` writes, and stale-FD rejection after detach.
+
+#### T29 — Unified System Object (`eos_handle_t`, ABI/Magic Header, `/proc/objects`)
+`Size: M · Depends: F05, T13`
+
+**Implementation Details**
+- **Tagged `eos_handle_t` (`main/ecore/obj.h`, `main/ecore/obj.c`):**
+  - Define `eos_obj_kind_t` (`EOS_OBJ_DRIVER = 1`, `EOS_OBJ_FS = 2`, `EOS_OBJ_BIN = 3`) and `eos_handle_t { eos_obj_kind_t kind; const void *ptr; }`. Keeps `eos_drv_t`, `eos_fs_type_t`, and `eos_bin_t` separate in flash without merging ~31 VFS pointers onto `bin`/`fs`.
+  - Provide `eos_obj_name(eos_handle_t)`, `eos_obj_scope(eos_handle_t)`, and `eos_obj_get_path(eos_handle_t, char *out, size_t len)` (computed for static objects: `"/bin/<filename>"`, `"/dev/<devname>"`).
+- **12-Byte ABI & Magic Header (`main/ecore/driver.h`, `main/ecore/fs.h`):**
+  - Mirror the first 3 fields of `eos_bin_t` (`uint32_t magic; uint32_t struct_size; uint32_t abi_version;`) at the top of `eos_drv_t` (`EOS_DRV_MAGIC`, `EOS_DRV_ABI_VERSION`) and `eos_fs_type_t` (`EOS_FS_MAGIC`, `EOS_FS_ABI_VERSION`), populated via `EOS_DRV_INIT` and the 7 static `eos_fs_type_t` definitions.
+- **No-Legacy-Shims & `layer_audit.py` Enforcement (`tools/layer_audit.py`, `tools/layer_audit_rules.json`):**
+  - **No Ad-Hoc Legacy Shims:** Core subsystems operate strictly on current ABI (`abi_version == current`, `struct_size == sizeof(...)`); ban `EOS_.*_LEGACY` symbols/macros and `abi_version` branching outside the dedicated ABI upgrader/loader module.
+  - **Sequential ABI Step-Upgraders:** Any future bump to `EOS_*_ABI_VERSION > 1` must provide a contiguous per-scope transposition chain (`1_to_2`, `2_to_3`, ..., `(N-1)_to_N`), enforced by `tools/layer_audit.py`.
+- **`/proc/objects` (`main/efs/procfs/procfs.c`):**
+  - Expose `/proc/objects` iterating `_eos_drivers_start..end`, `_eos_fs_start..end`, `_eos_bins_start..end`, and dynamically loaded objects.
+
+**Acceptance & Tests**
+- `python3 tools/layer_audit.py -x` passes with 0 violations including the no-legacy-shim and ABI step-upgrader chain rules.
+- Target tests (`tools/hardware_test.py -x`, extending `test_procfs`): `/proc/objects` lists drivers, filesystems, and bins with valid `kind`, `scope`, and `name` with zero regressions.
+
+#### T30 — Dynamic Loadable/Unloadable `.elf`/`.so` Modules (Strict PSRAM & ABI Upgraders)
+`Size: L · Depends: T08, T29`
+
+**Implementation Details**
+- **PSRAM-First `.elf`/`.so` Allocation (`main/ecore/elf.c`, `components/elf_loader`):**
+  - All `.elf` and `.so` loading—both the staging `payload` buffer and relocated `.text`/`.rodata`/`.data`/`.bss` sections—allocates in **PSRAM first** (`MALLOC_CAP_SPIRAM`). On PSRAM-equipped boards (`CONFIG_SPIRAM`), fail cleanly with `-ENOMEM` if PSRAM is exhausted unless explicitly opted in; allow internal SRAM fallback only when `!CONFIG_SPIRAM`.
+  - Free the raw staging `payload` immediately after `esp_elf_relocate()`.
+- **Build Target (`Makefile`, `tools/`):**
+  - Add a standalone `.so` module build target for loadable drivers/filesystems and deterministic test fixtures.
+- **Single Canonical Export (`eos_mod_objects`):**
+  - Loadable `.so`/`.elf` modules export a single null-terminated `const eos_handle_t eos_mod_objects[]` symbol (mirroring `eos_app_manifest` in `main/ecore/elf.h`).
+  - After relocation, verify `magic` matches `kind`, `min_api` passes, and if `abi_version < current` run the per-scope sequential ABI step-upgrader chain (`v -> v+1 -> ... -> current`) once before registering into a dynamic PSRAM `kvec` (mutex-protected; never hold registry mutex across blocking I/O, `driver->init()`, or `fs->mount()`).
+  - Update `eos_drv_find()` and `eos_fs_find()` to search the dynamic registry after static flash sections.
+- **Lifetime, Refcounting, CLI & ISR Rules:**
+  - Track `open_fd_count`, `attached_dev_count`, `mounted_fs_count`, and `active_ktask_count` per loaded module. Unload (`modprobe -r` / `rmmod` / `eos_mod_unload()`) returns `-EBUSY` until refcount == 0.
+  - Keep ISR-bearing drivers built-in or route interrupts through IRAM-resident core trampolines (PSRAM code cannot run in strict IRAM / cache-disabled ISR contexts).
+
+**Acceptance & Tests**
+- Target tests (`tools/hardware_test.py -x`, extending `test_elf_loader` with `/tmp` `.so` fixture): load `.so`, verify `/proc/objects` + `eos_drv_find()`/`eos_fs_find()`, attach/open/ioctl/close, verify `-EBUSY` refcount guard on `rmmod`, clean unload, and error paths (bad magic, ABI mismatch, unresolved symbol, PSRAM `-ENOMEM`).
+- Leak & concurrency tests (`test_leaks`): 10× load/attach/use/detach/unload cycles assert both internal SRAM and PSRAM free bytes return to baseline; concurrent `/proc/objects` reads during load/unload do not deadlock.
+- `python3 tools/layer_audit.py -x`, `python3 tools/wrapcheck.py`, and `make build` pass across `esp32s3_qemu`, `lilka_v23`, and `jc4880p443c_i_w_y`.

@@ -72,14 +72,21 @@ EOS supports diverse screen form factors ranging from compact handhelds (e.g. Li
 
 ---
 
-## 6. Automated Testing & Fail-Fast Execution
+## 6. Automated Verification Pipeline & Fail-Fast Execution
+
+* **Standard Development Flow:**
+  Every change should pass the full verification pipeline in order:
+  1. `python3 tools/layer_audit.py -x` (architectural & complexity rules)
+  2. `python3 tools/host_tests/hash_host_test.py` (host unit tests)
+  3. `make build` (target firmware build)
+  4. `python3 tools/mem_audit.py` (static internal SRAM `+512 B` / PSRAM `10 KB` budget check against `tools/mem_baseline.json`; use `--update` only when intentionally accepting a baseline change)
+  5. Flash target (`make flash`, `esptool`, or OpenOCD)
+  6. `python3 tools/hardware_test.py -p /dev/ttyACM0 --suite all -x` (fail-fast target tests + runtime `/proc/meminfo` check)
+  7. `python3 tools/wrapcheck.py` (linker wrapper audit)
+  8. `python3 tools/status_matrix.py --check` (status matrix consistency)
 
 * **Mandatory Fail-Fast Testing (`-x` / `--failfast`)**:
-  - Both `tools/layer_audit.py` and `tools/hardware_test.py` support the fail-fast flag (`-x` or `--failfast`) to halt execution immediately on the first failure. This drastically speeds up iteration cycles and root-cause analysis:
-    ```bash
-    python3 tools/layer_audit.py -x
-    python3 tools/hardware_test.py -p /dev/ttyACM0 --suite all -x
-    ```
+  - Both `tools/layer_audit.py` and `tools/hardware_test.py` support `-x` / `--failfast` to halt immediately on the first failure.
   - **Zero Regressions**: All modifications must pass with 0 failures on physical target devices (ESP32-P4 and ESP32-S3) and QEMU.
   - **Mandatory Reset-Reason Verification**: Every hardware test that triggers a reboot or reset (`reboot`, `kcmd`, or JTAG/hardware reset) **must** verify `cat /proc/uptime` for the expected `reset reason:` (e.g., `reset reason: software` after `reboot`) and forbid `panic` / `wdt` / `brownout`, so a crash followed by a double-reboot cannot be masked by a recovered shell prompt.
 
@@ -156,6 +163,23 @@ On devices with a single physical USB controller (e.g. ESP32-S3 on Lilka v2.3), 
      python3 -m esptool --chip esp32s3 --port /dev/ttyACM<N> --before no-reset --after watchdog-reset chip-id
      ```
    - **Entering ROM Download Mode from EOS Shell**: Run `reboot -b` (or `reboot --bootloader`) from `ush` to set `FORCE_DOWNLOAD_BOOT` and restart directly into ROM Download mode.
+
+---
+
+## 10. Performance & Benchmark-Guided Optimization
+
+Refer to measured hardware baselines in [`docs/benchmarks/performance_report.md`](docs/benchmarks/performance_report.md) and validate compute/memory changes with `cpubench` and `membench`:
+
+* **Keep Hot Random-Access Buffers in Internal DRAM, Bulk/Cold Data in PSRAM:**
+  - Random 32-bit reads in 16 KB DRAM take **18.2 ns** (ESP32-P4) / **45.2 ns** (ESP32-S3), whereas 1 MB PSRAM random cache-miss reads cost **556–577 ns** (~12–31× slower).
+  - Reserve PSRAM (`kvec_psram_t`, `MALLOC_CAP_SPIRAM`) for bulk/cold data (full framebuffers, file listings, loaded `.elf`/`.so` modules), and keep small hot scratch/partial render buffers or tight lookup tables in internal DRAM when budget allows.
+* **Strictly Prefer `float` (FP32) or Fixed-Point over `double` (FP64):**
+  - Both ESP32-P4 (**835.7 MFLOPS**) and ESP32-S3 (**198.3 MFLOPS**) have hardware single-precision FPUs, while FP64 falls back to software emulation (**3.99 / 2.78 MFLOPS** — 71–209× slower). Never use `double` or un-suffixed `sin`/`cos`/`sqrt` in audio, graphics, or DSP hot paths.
+* **Batch Hardware-Accelerated Hashing:**
+  - `emisc/eos_hash.c` achieves **76–111 MB/s** via hardware SHA-256 when fed `16–64 KB` buffers; avoid tiny per-byte or sub-kilobyte `eos_hash_buf()` loops that pay repeated PSA setup overhead.
+* **Account for `-Og` vs `-O2` in `sdkconfig`:**
+  - Development board configs default to `CONFIG_COMPILER_OPTIMIZATION_DEBUG=y` (`-Og`), which limits loop unrolling and array-index hoisting in kernels like `MatMul` and `FFT`. Profile with `cpubench --<test>` before optimizing.
+
 
 
 

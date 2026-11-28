@@ -25,14 +25,15 @@ EOS provides declarative board configurations under `main/eboard/`:
 
 ## Supported Peripherals & Drivers
 
-*   **Bus Drivers (`edriver/bus/`):** Root bus, SPI, I2C, SDIO (SDMMC host, slot 0 and slot 1), USB, and GPIO.
-*   **Display Drivers (`edriver/display/`):** ST7789 (SPI TFT), ST7701s (MIPI-DSI / RGB), and QEMU RGB virtual display.
+*   **Bus Drivers (`edriver/bus/`):** Root bus, SPI, I2C, SDIO (SDMMC host, slot 0 and slot 1), USB, ADC, and GPIO.
+*   **Display Drivers (`edriver/display/`):** ST7789 (SPI TFT), ST7701s (MIPI-DSI / RGB), QEMU RGB virtual display, and PWM backlight (`edriver/backlight/`).
 *   **Input Drivers (`edriver/input/`):** Keyboard/keypad active-low polling and GT911 capacitive touchscreens.
 *   **Audio Drivers (`edriver/sound/`):** MAX98357 I2S audio codec.
 *   **Storage & Block Drivers (`edriver/storage/`):** SD/SDIO cards, flash storage, and partition management (`diskpart.c`).
+*   **Power & USB Drivers (`edriver/power/`, `edriver/usb/`):** Battery SoC monitoring, USB CDC-ACM serial, USB Mass Storage (`msc`), and USB MTP (`mtp`).
 *   **Network Drivers & Subsystems (`edriver/net/`):** Wi-Fi physical radio (`net/wifi`), STA mode (`net/sta`), AP mode (`net/ap`), and network bridging (`net/bridge`) with parent-child ioctl communication.
-*   **Filesystem Subsystems (`ecore/`):** Root `tmpfs`, hierarchical `devfs`, executable `binfs` (supporting ELF binaries and embedded scripts), process filesystem `procfs`, and pipe ring-buffers `pipefs`.
-*   **Execution & Compatibility Layers:** Statically linked ELF binaries (`.eos_bins`), POSIX/FreeRTOS thread context wrappers with leak detection, and SDL 1.2 / 2.0 VFS compatibility layers.
+*   **Filesystem Subsystems (`main/efs/`):** Root `tmpfs`, hierarchical `devfs`, executable `binfs` (supporting ELF binaries and embedded scripts), `procfs`, `pipefs`, and `fat`.
+*   **Execution & Compatibility Layers:** Statically linked binaries (`.eos_bins`), dynamic ELF loader (`ecore/elf.c`), POSIX/FreeRTOS thread context wrappers with leak detection, and SDL 1.2 / 2.0 VFS compatibility layers.
 
 ---
 
@@ -40,7 +41,7 @@ EOS provides declarative board configurations under `main/eboard/`:
 
 *   **1-Wire Bus Driver:** Driver source stub (`onewire.c`) is planned for future releases.
 *   **Bluetooth / BLE Stack Integration:** Full Bluetooth stack or BLE GATT profile abstractions are not yet integrated into the Unified Device Model.
-*   **USB OTG Mass Storage Class:** USB host/device mass storage class driver emulation is planned but not fully implemented.
+*   **USB Host Mass Storage / HID:** USB host-mode class drivers are planned (`T03a`), while USB composite device mode (`serial`, `msc`, `mtp`) is implemented.
 *   **MMU-based Process Isolation / fork():** Due to microcontroller architecture constraints, tasks run in isolated thread contexts with shared memory space rather than full virtual memory process separation (no POSIX `fork()`).
 *   **Arbitrary Deep-Sleep State Retention:** Power-management deep sleep state retention for arbitrary peripheral driver states is currently limited.
 

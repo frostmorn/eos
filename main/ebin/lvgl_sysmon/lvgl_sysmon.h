@@ -11,6 +11,7 @@
 #define SYSMON_STATS_Y             184
 #define SYSMON_BAR_MARGIN          20
 #define SYSMON_BAR_H               14
+#define SYSMON_SCROLL_STEP         24
 #define SYSMON_REFRESH_INTERVAL_MS 250ULL
 
 int lvgl_sysmon_main(int argc, char **argv);

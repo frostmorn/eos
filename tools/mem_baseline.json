@@ -1,0 +1,20 @@
+{
+  "esp32s3_qemu": {
+    "flash_bytes": 1656438,
+    "internal_sram_bytes": 133583,
+    "runtime_internal_free_kb": 255,
+    "runtime_spiram_free_kb": 30754
+  },
+  "jc4880p443c_i_w_y": {
+    "flash_bytes": 1725344,
+    "internal_sram_bytes": 125855,
+    "runtime_internal_free_kb": 414,
+    "runtime_spiram_free_kb": 30940
+  },
+  "lilka_v23": {
+    "flash_bytes": 1813090,
+    "internal_sram_bytes": 151015,
+    "runtime_internal_free_kb": 193,
+    "runtime_spiram_free_kb": 7768
+  }
+}

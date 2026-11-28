@@ -12,8 +12,9 @@ This documentation center is structured into dedicated topic directories for eve
 docs/
 ├── Readme.md                          # Master documentation index & quick reference
 ├── binaries/                          # Executable binaries & execution environment
-│   ├── catalog.md                     # Everyday command catalog (all 57 binaries with options & syntax)
+│   ├── catalog.md                     # Everyday command catalog (options & syntax)
 │   ├── execution-architecture.md      # BinFS (/bin), statically linked .eos_bins, ush shell, execve
+│   ├── hash-and-checksum-tools.md     # md5sum/sha*sum/cksum/base64 shared library & formats
 │   ├── manifest-flags-and-stacks.md   # eos_bin_t flags, PSRAM stack routing, graceful SRAM fallback
 │   └── elf-applications.md            # Dynamic ELF loading, standalone apps, compilation & runtime symbols
 ├── drivers/                           # Driver contracts, IOCTL tables, scopes & lifecycles
@@ -24,38 +25,40 @@ docs/
 │   ├── sound.md                       # Sound scope (max98357), audio streaming, sample rates, power mult
 │   ├── storage.md                     # Storage scope (sd, flash), block IOCTLs, partitions, 2GB limits
 │   ├── network.md                     # Network scope (wifi, sta, ap, bridge), radio lifecycle, IOCTLs
+│   ├── usb.md                         # USB bus, composite device (CDC-ACM, MSC, MTP) & usbctl
 │   └── adc-and-power.md               # ADC bus & battery power drivers, voltage curve, SoC engine
 ├── architecture/                      # Overall system architecture
+│   ├── abi-versioning.md              # Binary manifest & ABI versioning policy
 │   ├── kernel-core.md                 # Unified Device Model, Device Tree, capsmgr, proc, fapi, asset
-│   ├── vfs-and-filesystems.md         # VFS hierarchy: tmpfs (/), devfs (/dev), binfs (/bin), pipefs, procfs
+│   ├── vfs-and-filesystems.md         # VFS hierarchy: tmpfs (/), devfs (/dev), binfs (/bin), pipefs, procfs, fat
 │   ├── wrappers-and-syscalls.md       # Linker wrappers (-Wl,--wrap), memory leak tracking, reentrant syscalls
 │   ├── memory-and-stacks.md           # Internal SRAM vs External PSRAM, DMA constraints, kvec optimization
 │   └── shared-lvgl-interface.md       # Shared LVGL UI layer, display compositor, modals, keyboard, IPC
+├── benchmarks/                        # Measured hardware & QEMU performance reports
+│   └── performance_report.md          # Automated test results, latency breakdown & FLOPS measurements
 ├── hardware/                          # Hardware targets & board specifications
 │   ├── board-porting.md               # Declarative hardware architecture (init.sh, sdkconfig), setboard.py
 │   ├── targets.md                     # Hardware target reference (lilka_v23, jc4880p443c_i_w_y, esp32s3_qemu)
 │   └── jc4880p4-coprocessor.md        # Guition JC4880P4 (ESP32-P4 + C6) ESP-Hosted SDIO co-processor guide
-├── roadmap/                           # System roadmap, task breakdown & architectural decisions
-│   ├── tasks.md                       # Comprehensive task specification (F01-F08 foundations, T01-T22 features)
-│   ├── implementation-order.md        # Execution phases (0-6), dependency graph, critical paths, milestones
-│   └── decisions-and-audit-rules.md   # Architectural decisions (D1-D15), test strategy & declarative audit rules
-└── reports/                           # Historical & cleaned-up technical reports & audits
-    ├── ebin-audit-and-roadmap.md      # Audit of ebin utilities, implemented coreutils, evolution roadmap
-    └── psram-heap-migration-report.md # PSRAM heap allocation audit, DMA constraints, and completed status
+└── roadmap/                           # System roadmap, task breakdown & architectural decisions
+    ├── tasks.md                       # Task specification (F01-F08 foundations, T01-T30 features)
+    ├── implementation-order.md        # Active execution phases, dependency graph, critical paths, milestones
+    ├── decisions-and-audit-rules.md   # Architectural decisions, test strategy & declarative audit rules
+    └── history.md                     # Archive of completed phases, tasks & resolved decisions
 ```
 
 ---
 
 ## 1. Binaries & Command-Line Tools (`docs/binaries/`)
 
-* [**Executable Binaries Catalog**](./binaries/catalog.md) — Comprehensive reference for all 64 native binaries:
+* [**Executable Binaries Catalog**](./binaries/catalog.md) — Reference for all native binaries (`main/ebin/`):
   * **Core Utilities:** `cat`, `cd`, `cp`, `echo`, `ln`, `ls`, `mkdir`, `mv`, `ps`, `pwd`, `readlink`, `rm`, `rmdir`, `sleep`, `time`, `touch`, `tree`, `uptime`, `write`.
   * **Checksums & Encoding:** `md5sum`, `sha1sum`, `sha224sum`, `sha256sum`, `sha384sum`, `sha512sum`, `cksum`, `base64`.
-  * **System & Shell:** `ush`, `launcher`, `mount`, `umount`, `statusbar`, `toolbar`.
-  * **Hardware & Bus Control:** `battery`, `devctl`, `lsi2c`, `soldercheck`.
+  * **System & Shell:** `ush`, `launcher`, `mount`, `umount`, `reboot`, `statusbar`, `toolbar`.
+  * **Hardware & Bus Control:** `battery`, `devctl`, `lsi2c`, `soldercheck`, `usbctl`.
   * **Network Management:** `netctl`, `wlanctl`.
-  * **GUI Applications:** `lvgl_calc`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`.
-  * **Diagnostics & Tests:** `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_hash`, `test_sound`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, etc.
+  * **GUI Applications:** `lvgl_calc`, `lvgl_fm`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`, `lvgl_usb`.
+  * **Diagnostics & Tests:** `argvexpose`, `cpubench`, `fdsetcheck`, `membench`, `test_coreutils`, `test_gui_logic`, `test_hash`, `test_sound`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, etc.
 * [**Hash, Checksum & Base64 Tools**](./binaries/hash-and-checksum-tools.md) — `md5sum`/`sha*sum`/`cksum`/`base64`: shared library, check-list format, differences from GNU coreutils, memory behaviour, and how the tools are tested.
 * [**BinFS, Native Binaries & Execution**](./binaries/execution-architecture.md) — Linker section `.eos_bins`, script assets (`init.sh`), execution pipeline (`exec.c`), MicroShell (`ush.c`), pipes, and redirections.
 * [**Dynamic ELF Applications & Runtime Loader**](./binaries/elf-applications.md) — Standalone dynamic apps, runtime symbol resolution, PSRAM execution, app compilation, and toolchain discovery.
@@ -94,18 +97,12 @@ docs/
 
 ---
 
-## 5. Technical Reports & Audits (`docs/reports/`)
+## 5. System Roadmap, Decisions & Governance (`docs/roadmap/`)
 
-* [**Executable Binaries Audit & Roadmap**](./reports/ebin-audit-and-roadmap.md) — Comprehensive inventory of all commands, review of completed core POSIX utilities (`rm`, `cp`, `mv`, `sleep`, `test_coreutils`), and future roadmap.
-* [**PSRAM Heap Migration Report**](./reports/psram-heap-migration-report.md) — Memory audit across kernel core and drivers, DMA hardware constraints, and completed PSRAM migrations (+56.3 KB SRAM from Pratt parser, 48–64 KB from sniffer queue, 16 KB per GUI stack).
-
----
-
-## 6. System Roadmap, Decisions & Governance (`docs/roadmap/`)
-
-* [**Comprehensive Task Specification**](./roadmap/tasks.md) — Detailed breakdown of foundation tasks (F01–F08) and functional epics (T01–T22: Terminal, Observability, Filesystems, Security, Drivers, Network Libraries, Apps & Loader).
-* [**Implementation Order & Phasing**](./roadmap/implementation-order.md) — Strategic execution sequence across Phases 0–6, dependency tree, critical paths, and milestone criteria.
-* [**Architectural Decisions & Audit Rules**](./roadmap/decisions-and-audit-rules.md) — Pre-implementation decisions (D1–D15), test harness classification (`qemu` vs `hardware-only`), and declarative `layer_audit` enforcement rules.
+* [**Comprehensive Task Specification**](./roadmap/tasks.md) — Task index (`F01–F08`, `T01–T30`) and detailed specs for pending/partial work.
+* [**Implementation Order & Phasing**](./roadmap/implementation-order.md) — Active execution sequence, dependency tree, critical paths, and milestone criteria.
+* [**Architectural Decisions & Audit Rules**](./roadmap/decisions-and-audit-rules.md) — Active architectural decisions, test harness classification, and declarative `layer_audit` enforcement rules.
+* [**Roadmap History**](./roadmap/history.md) — Archive of completed phases (`F01–F06`, Phase 1, `T08`, `T14–T16`, etc.) and resolved decisions.
 * [**Architecture & Status Matrix**](./status.md) — Auto-generated verification matrix tracking peripheral driver states, core kernel subsystems, test suite coverage, and board support.
 
 ---
@@ -133,8 +130,9 @@ make bin                                         # Scaffold new binary under mai
 make app                                         # Scaffold new standalone dynamic ELF application under apps/
 
 # 4. Verification & Testing:
-python3 tools/layer_audit.py                     # Verify 0 layer violations
-python3 -u tools/hardware_test.py -p /dev/ttyACM0 --suite all  # Run hardware test suite
+python3 tools/layer_audit.py -x                  # Verify 0 layer violations
+python3 tools/wrapcheck.py                       # Verify all linker wrappers are documented
+python3 -u tools/hardware_test.py -p /dev/ttyACM0 --suite all -x  # Run hardware test suite (fail-fast)
 ```
 
 ---

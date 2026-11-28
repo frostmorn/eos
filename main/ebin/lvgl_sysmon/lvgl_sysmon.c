@@ -19,6 +19,9 @@ typedef struct {
   lv_obj_t *lbl_dma;
   lv_obj_t *bar_dma;
   lv_obj_t *lbl_lvgl;
+  uint32_t prev_flushes;
+  uint64_t prev_ms;
+  uint32_t fps;
   bool quit;
 } sysmon_ui_t;
 
@@ -52,10 +55,21 @@ static void sysmon_refresh(sysmon_ui_t *ui, uint64_t start_ms) {
 
   eos_lvgl_ctx_t *ctx = eos_lvgl_get_ctx();
   if (ctx) {
+    uint32_t total_flushes = ctx->partial_flushes + ctx->full_flushes;
+    if (ui->prev_ms > 0 && now > ui->prev_ms) {
+      uint64_t dt = now - ui->prev_ms;
+      uint32_t df = (total_flushes >= ui->prev_flushes) ? (total_flushes - ui->prev_flushes) : 0U;
+      ui->fps = (uint32_t)((df * (uint64_t)EOS_MS_PER_SEC) / dt);
+    }
+    ui->prev_flushes = total_flushes;
+    ui->prev_ms = now;
+
+    char load_buf[EOS_XSMALL_STR_LEN];
+    sysmon_logic_read_loadavg(load_buf, sizeof(load_buf));
+
     char lbuf[EOS_TITLE_STR_LEN];
-    snprintf(lbuf, sizeof(lbuf), "LVGL Flushes: P:%u F:%u (%ux%u)",
-             (unsigned)ctx->partial_flushes, (unsigned)ctx->full_flushes,
-             (unsigned)ctx->width, (unsigned)ctx->height);
+    snprintf(lbuf, sizeof(lbuf), "Load: %s  FPS: %u (%ux%u)",
+             load_buf, (unsigned)ui->fps, (unsigned)ctx->width, (unsigned)ctx->height);
     lv_label_set_text(ui->lbl_lvgl, lbuf);
   }
 }
@@ -83,7 +97,8 @@ int lvgl_sysmon_main(int argc, char **argv) {
   lv_obj_t *scr = lv_screen_active();
   lv_obj_set_style_bg_color(scr, lv_color_hex(EOS_THEME_BG_COLOR), 0);
   lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(scr, LV_DIR_VER);
 
   ui.lbl_uptime = lv_label_create(scr);
   lv_obj_set_style_text_color(ui.lbl_uptime, lv_color_hex(EOS_THEME_INFO_BLUE), 0);
@@ -122,12 +137,8 @@ int lvgl_sysmon_main(int argc, char **argv) {
   // LVGL stats box
   ui.lbl_lvgl = lv_label_create(scr);
   lv_obj_set_style_text_color(ui.lbl_lvgl, lv_color_hex(EOS_THEME_ACCENT_GREEN), 0);
+  lv_obj_set_style_pad_bottom(ui.lbl_lvgl, SYSMON_BAR_H, 0);
   lv_obj_align(ui.lbl_lvgl, LV_ALIGN_TOP_LEFT, 10, SYSMON_STATS_Y);
-
-  lv_obj_t *hint = lv_label_create(scr);
-  lv_label_set_text(hint, "A/Tap: Refresh    B/X: Exit");
-  lv_obj_set_style_text_color(hint, lv_color_hex(EOS_THEME_TEXT_MUTED), 0);
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 
   // Standard touch exit/back button
   eos_lvgl_create_back_btn(scr, sysmon_back_btn_cb, &ui);
@@ -140,6 +151,12 @@ int lvgl_sysmon_main(int argc, char **argv) {
     uint16_t key = 0;
     while (eos_lvgl_poll_key(&key)) {
       switch (key) {
+      case KEY_UP:
+        lv_obj_scroll_by_bounded(scr, 0, SYSMON_SCROLL_STEP, LV_ANIM_OFF);
+        break;
+      case KEY_DOWN:
+        lv_obj_scroll_by_bounded(scr, 0, -SYSMON_SCROLL_STEP, LV_ANIM_OFF);
+        break;
       case KEY_A:
       case KEY_ENTER:
         sysmon_refresh(&ui, start_ms);

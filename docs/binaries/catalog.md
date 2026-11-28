@@ -13,7 +13,7 @@ All binaries reside in `main/ebin/` and are exposed as executable nodes under `/
 - [Hardware & Bus Control](#3-hardware--bus-control): `battery`, `devctl`, `lsi2c`, `soldercheck`, `usbctl`
 - [Network Management](#4-network-management): `netctl`, `wlanctl`
 - [GUI Applications (LVGL)](#5-gui-applications-lvgl): `lvgl_backlight`, `lvgl_calc`, `lvgl_fm`, `lvgl_keypad`, `lvgl_net`, `lvgl_snake`, `lvgl_sysmon`, `lvgl_term`, `lvgl_usb`
-- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
+- [Diagnostics & Test Suites](#6-diagnostics--test-suites): `argvexpose`, `cpubench`, `fdsetcheck`, `membench`, `test_coreutils`, `test_disp_bars`, `test_disp_colors`, `test_disp_doom_fire`, `test_disp_gradient`, `test_elf_loader`, `test_emisc`, `test_hash`, `test_input`, `test_leaks`, `test_lvgl`, `test_proc`, `test_sdl`, `test_sdl2`, `test_sdl_input`, `test_sound`
 
 ---
 
@@ -592,6 +592,11 @@ All GUI binaries automatically declare `EOS_BIN_FLAG_GUI` and execute on dedicat
 * **Syntax:** `fdsetcheck`
 * **Flags:** `0` | **Stack:** Default (8 KB SRAM)
 * **Function:** Validates the maximum concurrent open file descriptors against POSIX `FD_SETSIZE` limits, checking table allocation bounds in `ecore/vfs.c`.
+
+### `cpubench` — CPU, DSP & Memory Latency Benchmark
+* **Syntax:** `cpubench [--all] [--int32] [--fp32] [--fp64] [--memcpy] [--rand] [--fft] [--matmul] [--sha256] [-h|--help]`
+* **Flags:** `0` | **Stack:** Default (8 KB SRAM)
+* **Function:** Measures INT32 MAC (MOPS), FP32/FP64 MAC (MFLOPS), 1024-point radix-2 FP32 FFT, 32x32 FP32 matrix multiplication, in-RAM SHA-256 throughput, small-block DRAM `memcpy` (32/64/128 B), and random RAM read latency (16 KB DRAM vs 1 MB PSRAM). Flags can be combined to run selected tests.
 
 ### `membench` — Memory Throughput Benchmark
 * **Syntax:** `membench`
